@@ -19,8 +19,6 @@ void AppDisplay::begin() {
   digitalWrite(EPD_PWR_PIN, LOW);
   delay(50);
   driver.EPD_Init();
-  clear();
-  driver.EPD_Display();
   partialReady = false;
 }
 
@@ -38,17 +36,23 @@ void AppDisplay::clear() {
 }
 
 void AppDisplay::flush() {
+  if (partialReady) {
+    driver.EPD_DisplayPart();
+    return;
+  }
+
   driver.EPD_Init();
   driver.EPD_Display();
-  partialReady = false;
+  driver.EPD_LoadPartBaseImage();
+  driver.EPD_Init_Partial();
+  partialReady = true;
 }
 
 void AppDisplay::flushPartial(int16_t, int16_t, int16_t, int16_t) {
   if (!partialReady) {
-    driver.EPD_DisplayPartBaseImage();
-    driver.EPD_Init_Partial();
-    partialReady = true;
+    flush();
     return;
   }
+
   driver.EPD_DisplayPart();
 }

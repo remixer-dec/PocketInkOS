@@ -61,6 +61,7 @@ public:
     void EPD_Display();
     void EPD_DisplayRegion(int16_t x, int16_t y, int16_t w, int16_t h);
     
+    void EPD_LoadPartBaseImage();
     void EPD_DisplayPartBaseImage();
     void EPD_Init_Partial();
     void EPD_DisplayPart();

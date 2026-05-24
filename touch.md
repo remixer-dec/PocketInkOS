@@ -100,9 +100,10 @@ The first true rectangular partial-region attempt was not usable on hardware. It
 
 Current status: the app uses the safer full-buffer partial flow:
 
-1. Full screen/screen-change renders call `EPD_DisplayPartBaseImage()`.
-2. After that base image is on the panel, `EPD_Init_Partial()` enables the partial waveform.
-3. In-screen updates call `EPD_DisplayPart()`, which sends the full 5 KB framebuffer but uses the partial waveform.
+1. The first render calls `EPD_Display()` for a real full refresh.
+2. The same framebuffer is then copied into the controller old-image RAM with `EPD_LoadPartBaseImage()`; this does not turn the panel on again.
+3. `EPD_Init_Partial()` enables the partial waveform immediately after the full render.
+4. Screen changes and in-screen updates use `EPD_DisplayPart()` while the partial baseline is valid. This still sends the full 5 KB framebuffer, but uses the partial waveform to avoid the multi-blink full refresh.
 
 This is not true rectangle-only refresh yet. It is an intermediate hardware-safe step intended to avoid the destructive full black/white refresh while preserving correct layout and framebuffer ordering.
 

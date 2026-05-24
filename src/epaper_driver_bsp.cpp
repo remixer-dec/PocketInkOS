@@ -310,6 +310,13 @@ void epaper_driver_display::EPD_DisplayRegion(int16_t, int16_t, int16_t, int16_t
     EPD_DisplayPart();
 }
 
+void epaper_driver_display::EPD_LoadPartBaseImage() {
+    int buffer_len = lcd_spi_data.buffer_len;
+    EPD_SendCommand(0x26);
+    assert(buffer);
+    writeBytes(buffer,buffer_len);
+}
+
 void epaper_driver_display::EPD_DisplayPartBaseImage() {
     int buffer_len = lcd_spi_data.buffer_len;
     EPD_SendCommand(0x24);

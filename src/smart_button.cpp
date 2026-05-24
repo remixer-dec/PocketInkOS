@@ -32,9 +32,12 @@ void SmartButton::update() {
     // 3. Button just released
     if (_bounce.released()) {
         if (!_isLongPressing) {
-            // It was a short press
-            _clickCount++;
-            _lastReleaseTime = currentMillis;
+            if (_cbDoubleClick) {
+                _clickCount++;
+                _lastReleaseTime = currentMillis;
+            } else if (_cbSingleClick) {
+                _cbSingleClick();
+            }
         }
     }
 

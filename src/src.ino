@@ -179,5 +179,5 @@ void loop() {
   if (dirty) {
     render();
   }
-  delay(10);
+  delay(1);
 }
