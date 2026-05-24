@@ -27,7 +27,7 @@ private:
     const custom_lcd_spi_t lcd_spi_data;
     const int Width;
     const int Height;
-    spi_device_handle_t spi;
+    spi_device_handle_t spi = NULL;
     uint8_t *buffer = NULL;
 
     void spi_gpio_init();
@@ -59,6 +59,7 @@ public:
     void EPD_Init();
     void EPD_Clear();
     void EPD_Display();
+    void EPD_DisplayRegion(int16_t x, int16_t y, int16_t w, int16_t h);
     
     void EPD_DisplayPartBaseImage();
     void EPD_Init_Partial();

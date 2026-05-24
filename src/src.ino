@@ -32,7 +32,12 @@ void switchTo(Screen next) {
 void drawMenu() {
   display.setTextColor(1);
   display.setTextSize(2);
-  display.setCursor(60, 10);
+  int16_t titleX;
+  int16_t titleY;
+  uint16_t titleW;
+  uint16_t titleH;
+  display.getTextBounds("APPS", 0, 10, &titleX, &titleY, &titleW, &titleH);
+  display.setCursor((EPD_WIDTH - titleW) / 2, 10);
   display.print("APPS");
 
   const char icons[9] = {'T', 'M', 'A', 'B', 'C', 'D', 'E', 'F', 'G'};
@@ -75,7 +80,7 @@ void handleMenuTouch(const TouchPoint &point) {
   }
 }
 
-void handleKeyboardTouch(const TouchPoint &point) {
+bool handleKeyboardTouch(const TouchPoint &point) {
   KeyboardEvent event = keyboard.hitTest(point);
   switch (event.action) {
   case KEY_CHAR:
@@ -91,9 +96,9 @@ void handleKeyboardTouch(const TouchPoint &point) {
     typedText = "";
     break;
   case KEY_NONE:
-    return;
+    return false;
   }
-  dirty = true;
+  return true;
 }
 
 void render() {
@@ -120,8 +125,8 @@ void setup() {
   Serial.begin(115200);
   delay(300);
 
-  touch.begin();
   display.begin();
+  touch.begin();
 
   mainButton.begin();
   backButton.begin();
@@ -146,16 +151,27 @@ void loop() {
   if (touch.read(point)) {
     switch (screen) {
     case SCREEN_KEYBOARD:
-      handleKeyboardTouch(point);
+      if (handleKeyboardTouch(point)) {
+        keyboard.drawInput(display, typedText);
+        display.flushPartial(4, 4, 192, 34);
+      }
       break;
     case SCREEN_MENU:
       handleMenuTouch(point);
       break;
     case SCREEN_TICTACTOE:
-      dirty = ticTacToe.handleTouch(point) || dirty;
+      if (ticTacToe.handleTouch(point)) {
+        display.fillRect(0, 32, 200, 168, 0);
+        ticTacToe.draw(display);
+        display.flushPartial(0, 32, 200, 168);
+      }
       break;
     case SCREEN_MINESWEEPER:
-      dirty = minesweeper.handleTouch(point) || dirty;
+      if (minesweeper.handleTouch(point)) {
+        display.fillRect(0, 16, 200, 184, 0);
+        minesweeper.draw(display);
+        display.flushPartial(0, 16, 200, 184);
+      }
       break;
     }
   }

@@ -20,7 +20,8 @@ void AppDisplay::begin() {
   delay(50);
   driver.EPD_Init();
   clear();
-  flush();
+  driver.EPD_Display();
+  partialReady = false;
 }
 
 void AppDisplay::drawPixel(int16_t x, int16_t y, uint16_t color) {
@@ -36,4 +37,18 @@ void AppDisplay::clear() {
   fillScreen(0);
 }
 
-void AppDisplay::flush() { driver.EPD_Display(); }
+void AppDisplay::flush() {
+  driver.EPD_Init();
+  driver.EPD_Display();
+  partialReady = false;
+}
+
+void AppDisplay::flushPartial(int16_t, int16_t, int16_t, int16_t) {
+  if (!partialReady) {
+    driver.EPD_DisplayPartBaseImage();
+    driver.EPD_Init_Partial();
+    partialReady = true;
+    return;
+  }
+  driver.EPD_DisplayPart();
+}

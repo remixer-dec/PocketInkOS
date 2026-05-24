@@ -91,6 +91,7 @@ void epaper_driver_display::spi_gpio_init() {
 }
 
 void epaper_driver_display::spi_port_init() {
+    if (spi != NULL) return;
     int mosi = lcd_spi_data.mosi;
     int scl = lcd_spi_data.scl;
     int spi_host = lcd_spi_data.spi_host;
@@ -303,6 +304,10 @@ void epaper_driver_display::EPD_Display() {
     assert(buffer);
     writeBytes(buffer,buffer_len);
     EPD_TurnOnDisplay();
+}
+
+void epaper_driver_display::EPD_DisplayRegion(int16_t, int16_t, int16_t, int16_t) {
+    EPD_DisplayPart();
 }
 
 void epaper_driver_display::EPD_DisplayPartBaseImage() {

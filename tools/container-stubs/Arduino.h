@@ -10,6 +10,8 @@
 #define INPUT 0
 #define INPUT_PULLUP 2
 #define INPUT_PULLDOWN 3
+#define FALLING 2
+#define IRAM_ATTR
 #define GPIO_NUM_0 0
 #define GPIO_NUM_18 18
 using gpio_num_t = int;
@@ -30,6 +32,9 @@ struct SerialStub {
   void begin(int) {}
   void println(const char *) {}
   void println(const String &) {}
+  void println(int) {}
+  void println(unsigned int) {}
+  void println(unsigned char) {}
   void print(const char *) {}
   void print(const String &) {}
   void print(int) {}
@@ -37,7 +42,10 @@ struct SerialStub {
 };
 inline SerialStub Serial;
 inline void delay(unsigned long) {}
+inline void delayMicroseconds(unsigned int) {}
 inline unsigned long millis() { static unsigned long t = 0; return t += 16; }
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}
+inline int digitalPinToInterrupt(int pin) { return pin; }
+inline void attachInterrupt(int, void (*)(), int) {}
 inline int digitalRead(int) { return HIGH; }

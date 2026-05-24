@@ -20,11 +20,12 @@ struct KeyboardEvent {
 class KeyboardComponent {
 public:
   void draw(Adafruit_GFX &gfx, const String &text);
+  void drawInput(Adafruit_GFX &gfx, const String &text);
   KeyboardEvent hitTest(const TouchPoint &point) const;
 
 private:
   KeyboardEvent hitRow(const TouchPoint &point, const char *keys, int count,
-                       int x, int y) const;
+                       int x, int y, int keyW) const;
 };
 
 #endif

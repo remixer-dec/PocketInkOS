@@ -23,4 +23,8 @@
 #define EPD_WIDTH 200
 #define EPD_HEIGHT 200
 
+#define TOUCH_SWAP_XY 0
+#define TOUCH_INVERT_X 0
+#define TOUCH_INVERT_Y 0
+
 #endif
