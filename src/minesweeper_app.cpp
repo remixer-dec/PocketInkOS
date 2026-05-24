@@ -3,7 +3,7 @@
 
 static const int MINE_COUNT = 4;
 static const int GRID_X = 15;
-static const int GRID_Y = 18;
+static const int GRID_Y = 16;
 static const int CELL_SIZE = 34;
 static const int MODE_Y = 188;
 static const UiRect OPEN_BUTTON = {16, MODE_Y, 76, 12};
@@ -25,6 +25,7 @@ void MinesweeperApp::reset() {
     }
   }
   flagMode = false;
+  started = false;
   lost = false;
   won = false;
 }
@@ -32,9 +33,9 @@ void MinesweeperApp::reset() {
 void MinesweeperApp::draw(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  gfx.setCursor(8, 4);
+  gfx.setCursor(GRID_X, 4);
   gfx.print("MINES");
-  gfx.setCursor(116, 4);
+  gfx.setCursor(GRID_X + CELL_SIZE * 3, 4);
   if (lost)
     gfx.print("BOOM");
   else if (won)
@@ -101,6 +102,7 @@ bool MinesweeperApp::handleTouch(const TouchPoint &point) {
   }
 
   int i = idx(x, y);
+  started = true;
   if (flagMode) {
     if (!revealed[i])
       flagged[i] = !flagged[i];
@@ -109,6 +111,10 @@ bool MinesweeperApp::handleTouch(const TouchPoint &point) {
   }
   checkWin();
   return true;
+}
+
+bool MinesweeperApp::hasActiveSession() const {
+  return started && !lost && !won;
 }
 
 int MinesweeperApp::neighborMines(int x, int y) const {

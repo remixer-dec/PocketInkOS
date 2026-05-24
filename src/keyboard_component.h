@@ -4,7 +4,15 @@
 #include "touch_input.h"
 #include <Adafruit_GFX.h>
 
-enum KeyboardAction { KEY_NONE, KEY_CHAR, KEY_BACKSPACE, KEY_SPACE, KEY_CLEAR };
+enum KeyboardAction {
+  KEY_NONE,
+  KEY_CHAR,
+  KEY_BACKSPACE,
+  KEY_SPACE,
+  KEY_SHIFT,
+  KEY_NAV,
+  KEY_OK
+};
 
 struct KeyboardEvent {
   KeyboardAction action;
@@ -14,10 +22,17 @@ struct KeyboardEvent {
 class KeyboardComponent {
 public:
   void draw(Adafruit_GFX &gfx, const String &text);
+  void draw(Adafruit_GFX &gfx, const String &text, int maxLength);
   void drawInput(Adafruit_GFX &gfx, const String &text);
-  KeyboardEvent hitTest(const TouchPoint &point) const;
+  void drawInput(Adafruit_GFX &gfx, const String &text, int maxLength);
+  KeyboardEvent hitTest(const TouchPoint &point);
+  KeyboardEvent hitTest(const TouchPoint &point, int currentLength,
+                        int maxLength);
 
 private:
+  bool caps = false;
+  int inputLimit = 0;
+
   KeyboardEvent hitRow(const TouchPoint &point, const char *keys, int count,
                        int x, int y, int keyW) const;
 };

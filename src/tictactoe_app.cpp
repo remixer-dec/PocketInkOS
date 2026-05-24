@@ -100,6 +100,18 @@ bool TicTacToeApp::handleTouch(const TouchPoint &point) {
   return true;
 }
 
+bool TicTacToeApp::hasActiveSession() const {
+  if (winner) {
+    return false;
+  }
+  for (int i = 0; i < 9; i++) {
+    if (board[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void TicTacToeApp::makeMove(int cell) {
   if (winner || board[cell])
     return;

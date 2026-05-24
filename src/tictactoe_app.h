@@ -9,6 +9,7 @@ public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
+  bool hasActiveSession() const;
 
 private:
   char board[9] = {0};

@@ -9,6 +9,7 @@ public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
+  bool hasActiveSession() const;
 
 private:
   static const int W = 5;
@@ -17,6 +18,7 @@ private:
   bool revealed[W * H] = {false};
   bool flagged[W * H] = {false};
   bool flagMode = false;
+  bool started = false;
   bool lost = false;
   bool won = false;
 

@@ -10,11 +10,17 @@ COMMON=(-std=c++17 -Wall -Wextra -Werror -fsyntax-only -I"$STUBS" -I"$ROOT/src")
 
 for file in \
   "$ROOT/src/app_display.cpp" \
+  "$ROOT/src/cube_app.cpp" \
+  "$ROOT/src/hangman_app.cpp" \
   "$ROOT/src/keyboard_component.cpp" \
   "$ROOT/src/minesweeper_app.cpp" \
+  "$ROOT/src/qwerty_zoom_keyboard_component.cpp" \
   "$ROOT/src/smart_button.cpp" \
+  "$ROOT/src/sudoku_app.cpp" \
+  "$ROOT/src/t9_keyboard_component.cpp" \
   "$ROOT/src/tictactoe_app.cpp" \
-  "$ROOT/src/touch_input.cpp"; do
+  "$ROOT/src/touch_input.cpp" \
+  "$ROOT/src/wordle_app.cpp"; do
   g++ "${COMMON[@]}" "$file"
 done
 
