@@ -108,3 +108,5 @@ Current status: the app uses the safer full-buffer partial flow:
 This is not true rectangle-only refresh yet. It is an intermediate hardware-safe step intended to avoid the destructive full black/white refresh while preserving correct layout and framebuffer ordering.
 
 `EPD_DisplayRegion(...)` is deliberately neutralized to use `EPD_DisplayPart()` until a correct controller-specific rectangular window sequence is proven on hardware.
+
+Touch input is sampled by a small FreeRTOS task on the other core. The app loop consumes the queued press after display refresh returns, so short taps made during synchronous e-paper updates are not lost.

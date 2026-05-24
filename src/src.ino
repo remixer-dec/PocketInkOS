@@ -161,16 +161,16 @@ void loop() {
       break;
     case SCREEN_TICTACTOE:
       if (ticTacToe.handleTouch(point)) {
-        display.fillRect(0, 32, 200, 168, 0);
+        display.clear();
         ticTacToe.draw(display);
-        display.flushPartial(0, 32, 200, 168);
+        display.flushPartial(0, 0, 200, 200);
       }
       break;
     case SCREEN_MINESWEEPER:
       if (minesweeper.handleTouch(point)) {
-        display.fillRect(0, 16, 200, 184, 0);
+        display.clear();
         minesweeper.draw(display);
-        display.flushPartial(0, 16, 200, 184);
+        display.flushPartial(0, 0, 200, 200);
       }
       break;
     }

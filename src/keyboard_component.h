@@ -4,13 +4,7 @@
 #include "touch_input.h"
 #include <Adafruit_GFX.h>
 
-enum KeyboardAction {
-  KEY_NONE,
-  KEY_CHAR,
-  KEY_BACKSPACE,
-  KEY_SPACE,
-  KEY_CLEAR
-};
+enum KeyboardAction { KEY_NONE, KEY_CHAR, KEY_BACKSPACE, KEY_SPACE, KEY_CLEAR };
 
 struct KeyboardEvent {
   KeyboardAction action;

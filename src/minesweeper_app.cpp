@@ -1,4 +1,13 @@
 #include "minesweeper_app.h"
+#include "ui_helpers.h"
+
+static const int MINE_COUNT = 4;
+static const int GRID_X = 15;
+static const int GRID_Y = 18;
+static const int CELL_SIZE = 34;
+static const int MODE_Y = 188;
+static const UiRect OPEN_BUTTON = {16, MODE_Y, 76, 12};
+static const UiRect FLAG_BUTTON = {108, MODE_Y, 76, 12};
 
 void MinesweeperApp::reset() {
   for (int i = 0; i < W * H; i++) {
@@ -6,9 +15,14 @@ void MinesweeperApp::reset() {
     revealed[i] = false;
     flagged[i] = false;
   }
-  const int preset[] = {2, 8, 16, 23};
-  for (int i = 0; i < 4; i++) {
-    mines[preset[i]] = true;
+  randomSeed((unsigned long)micros());
+  int placed = 0;
+  while (placed < MINE_COUNT) {
+    int cell = random(W * H);
+    if (!mines[cell]) {
+      mines[cell] = true;
+      placed++;
+    }
   }
   flagMode = false;
   lost = false;
@@ -17,13 +31,20 @@ void MinesweeperApp::reset() {
 
 void MinesweeperApp::draw(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  gfx.setCursor(22, 8);
+  gfx.setTextSize(1);
+  gfx.setCursor(8, 4);
   gfx.print("MINES");
+  gfx.setCursor(116, 4);
+  if (lost)
+    gfx.print("BOOM");
+  else if (won)
+    gfx.print("CLEAR");
+  else
+    gfx.print(flagMode ? "FLAG" : "OPEN");
 
-  int originX = 25;
-  int originY = 36;
-  int cell = 30;
+  int originX = GRID_X;
+  int originY = GRID_Y;
+  int cell = CELL_SIZE;
   gfx.setTextSize(2);
   for (int y = 0; y < H; y++) {
     for (int x = 0; x < W; x++) {
@@ -52,35 +73,18 @@ void MinesweeperApp::draw(Adafruit_GFX &gfx) {
     }
   }
 
-  gfx.drawRect(16, 188, 76, 12, 1);
-  gfx.drawRect(108, 188, 76, 12, 1);
-  if (!flagMode) gfx.fillRect(17, 189, 74, 10, 1);
-  if (flagMode) gfx.fillRect(109, 189, 74, 10, 1);
-  gfx.setTextSize(1);
-  gfx.setTextColor(flagMode ? 1 : 0);
-  gfx.setCursor(40, 191);
-  gfx.print("OPEN");
-  gfx.setTextColor(flagMode ? 0 : 1);
-  gfx.setCursor(132, 191);
-  gfx.print("FLAG");
-  gfx.setTextColor(1);
-
-  gfx.setCursor(116, 16);
-  if (lost) gfx.print("BOOM");
-  else if (won) gfx.print("CLEAR");
-  else gfx.print(flagMode ? "FLAG" : "OPEN");
+  uiDrawButton(gfx, OPEN_BUTTON, "OPEN", !flagMode);
+  uiDrawButton(gfx, FLAG_BUTTON, "FLAG", flagMode);
 }
 
 bool MinesweeperApp::handleTouch(const TouchPoint &point) {
-  if (point.y >= 188) {
-    if (point.x >= 16 && point.x < 92) {
-      flagMode = false;
-      return true;
-    }
-    if (point.x >= 108 && point.x < 184) {
-      flagMode = true;
-      return true;
-    }
+  if (uiContains(OPEN_BUTTON, point)) {
+    flagMode = false;
+    return true;
+  }
+  if (uiContains(FLAG_BUTTON, point)) {
+    flagMode = true;
+    return true;
   }
 
   if (lost || won) {
@@ -88,16 +92,18 @@ bool MinesweeperApp::handleTouch(const TouchPoint &point) {
     return true;
   }
 
-  int x = (point.x - 25) / 30;
-  int y = (point.y - 36) / 30;
-  if (point.x < 25 || point.x >= 175 || point.y < 36 || point.y >= 186 ||
-      x < 0 || x >= W || y < 0 || y >= H) {
+  int x = (point.x - GRID_X) / CELL_SIZE;
+  int y = (point.y - GRID_Y) / CELL_SIZE;
+  if (point.x < GRID_X || point.x >= GRID_X + W * CELL_SIZE ||
+      point.y < GRID_Y || point.y >= GRID_Y + H * CELL_SIZE || x < 0 ||
+      x >= W || y < 0 || y >= H) {
     return false;
   }
 
   int i = idx(x, y);
   if (flagMode) {
-    if (!revealed[i]) flagged[i] = !flagged[i];
+    if (!revealed[i])
+      flagged[i] = !flagged[i];
   } else if (!flagged[i]) {
     reveal(x, y);
   }
@@ -109,7 +115,8 @@ int MinesweeperApp::neighborMines(int x, int y) const {
   int count = 0;
   for (int dy = -1; dy <= 1; dy++) {
     for (int dx = -1; dx <= 1; dx++) {
-      if (dx == 0 && dy == 0) continue;
+      if (dx == 0 && dy == 0)
+        continue;
       int nx = x + dx;
       int ny = y + dy;
       if (nx >= 0 && nx < W && ny >= 0 && ny < H && mines[idx(nx, ny)]) {
@@ -122,29 +129,35 @@ int MinesweeperApp::neighborMines(int x, int y) const {
 
 void MinesweeperApp::reveal(int x, int y) {
   int i = idx(x, y);
-  if (revealed[i] || flagged[i]) return;
+  if (revealed[i] || flagged[i])
+    return;
   revealed[i] = true;
   if (mines[i]) {
     lost = true;
     for (int j = 0; j < W * H; j++) {
-      if (mines[j]) revealed[j] = true;
+      if (mines[j])
+        revealed[j] = true;
     }
     return;
   }
-  if (neighborMines(x, y) != 0) return;
+  if (neighborMines(x, y) != 0)
+    return;
   for (int dy = -1; dy <= 1; dy++) {
     for (int dx = -1; dx <= 1; dx++) {
       int nx = x + dx;
       int ny = y + dy;
-      if (nx >= 0 && nx < W && ny >= 0 && ny < H) reveal(nx, ny);
+      if (nx >= 0 && nx < W && ny >= 0 && ny < H)
+        reveal(nx, ny);
     }
   }
 }
 
 void MinesweeperApp::checkWin() {
-  if (lost) return;
+  if (lost)
+    return;
   for (int i = 0; i < W * H; i++) {
-    if (!mines[i] && !revealed[i]) return;
+    if (!mines[i] && !revealed[i])
+      return;
   }
   won = true;
 }

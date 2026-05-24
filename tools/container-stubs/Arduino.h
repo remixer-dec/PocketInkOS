@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <cstdlib>
 #define HIGH 1
 #define LOW 0
 #define OUTPUT 1
@@ -44,6 +45,9 @@ inline SerialStub Serial;
 inline void delay(unsigned long) {}
 inline void delayMicroseconds(unsigned int) {}
 inline unsigned long millis() { static unsigned long t = 0; return t += 16; }
+inline unsigned long micros() { static unsigned long t = 0; return t += 16000; }
+inline void randomSeed(unsigned long seed) { srand(seed); }
+inline long random(long max) { return max > 0 ? rand() % max : 0; }
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}
 inline int digitalPinToInterrupt(int pin) { return pin; }

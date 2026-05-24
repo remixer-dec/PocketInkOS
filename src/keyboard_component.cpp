@@ -6,8 +6,7 @@ static const int ROW1_KEY_W = 18;
 static const int ROW2_KEY_W = 20;
 static const int ROW3_KEY_W = 22;
 
-static void drawKey(Adafruit_GFX &gfx, int x, int y, int w, int h,
-                    const char *label) {
+static void drawKey(Adafruit_GFX &gfx, int x, int y, int w, int h, const char *label) {
   gfx.drawRect(x, y, w, h, 1);
   gfx.setTextSize(1);
   gfx.setTextColor(1);
@@ -71,19 +70,25 @@ KeyboardEvent KeyboardComponent::hitRow(const TouchPoint &point,
 
 KeyboardEvent KeyboardComponent::hitTest(const TouchPoint &point) const {
   KeyboardEvent event = hitRow(point, "QWERTYUIOP", 10, 1, 46, ROW1_KEY_W);
-  if (event.action != KEY_NONE) return event;
+  if (event.action != KEY_NONE)
+    return event;
   event = hitRow(point, "ASDFGHJKL", 9, 10, 80, ROW2_KEY_W);
-  if (event.action != KEY_NONE) return event;
+  if (event.action != KEY_NONE)
+    return event;
   event = hitRow(point, "ZXCVBNM", 7, 1, 114, ROW3_KEY_W);
-  if (event.action != KEY_NONE) return event;
+  if (event.action != KEY_NONE)
+    return event;
 
   if (point.y >= 114 && point.y < 144 && point.x >= 171) {
     return {KEY_BACKSPACE, 0};
   }
   if (point.y >= 154 && point.y < 188) {
-    if (point.x >= 1 && point.x < 47) return {KEY_CLEAR, 0};
-    if (point.x >= 53 && point.x < 145) return {KEY_SPACE, ' '};
-    if (point.x >= 151 && point.x < 199) return {KEY_BACKSPACE, 0};
+    if (point.x >= 1 && point.x < 47)
+      return {KEY_CLEAR, 0};
+    if (point.x >= 53 && point.x < 145)
+      return {KEY_SPACE, ' '};
+    if (point.x >= 151 && point.x < 199)
+      return {KEY_BACKSPACE, 0};
   }
   return {KEY_NONE, 0};
 }

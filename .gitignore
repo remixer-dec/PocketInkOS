@@ -4,3 +4,5 @@ build
 .opencode-container-id
 /build/
 /reference-project/
+node_modules
+package.json

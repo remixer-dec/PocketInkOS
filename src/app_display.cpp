@@ -1,14 +1,14 @@
 #include "app_display.h"
 
-static custom_lcd_spi_t spiSettings = {
-    .cs = EPD_CS_PIN,
-    .dc = EPD_DC_PIN,
-    .rst = EPD_RST_PIN,
-    .busy = EPD_BUSY_PIN,
-    .mosi = EPD_MOSI_PIN,
-    .scl = EPD_SCK_PIN,
-    .spi_host = EPD_SPI_HOST,
-    .buffer_len = (EPD_WIDTH * EPD_HEIGHT) / 8};
+static custom_lcd_spi_t spiSettings = {.cs = EPD_CS_PIN,
+                                       .dc = EPD_DC_PIN,
+                                       .rst = EPD_RST_PIN,
+                                       .busy = EPD_BUSY_PIN,
+                                       .mosi = EPD_MOSI_PIN,
+                                       .scl = EPD_SCK_PIN,
+                                       .spi_host = EPD_SPI_HOST,
+                                       .buffer_len =
+                                           (EPD_WIDTH * EPD_HEIGHT) / 8};
 
 AppDisplay::AppDisplay()
     : Adafruit_GFX(EPD_WIDTH, EPD_HEIGHT),

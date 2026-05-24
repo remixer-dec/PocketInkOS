@@ -1,12 +1,24 @@
 #include "touch_input.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "global.h"
 #include <driver/i2c_master.h>
 
 #define FT6336_ADDR 0x38
 
+static const uint32_t TOUCH_POLL_MS = 5;
+static const uint32_t TOUCH_TASK_STACK_WORDS = 4096;
+static const UBaseType_t TOUCH_TASK_PRIORITY = 1;
+static const BaseType_t TOUCH_TASK_CORE = 0;
+
 static i2c_master_bus_handle_t touchBus = NULL;
 static i2c_master_dev_handle_t touchDev = NULL;
 static bool touchReady = false;
+static TaskHandle_t touchTaskHandle = NULL;
+static volatile bool pendingTouch = false;
+static volatile uint16_t pendingX = 0;
+static volatile uint16_t pendingY = 0;
+static bool fallbackWasDown = false;
 
 struct TouchSample {
   uint8_t count;
@@ -18,7 +30,8 @@ static bool readRegister(uint8_t reg, uint8_t *buf, size_t len) {
   if (!touchReady || touchDev == NULL) {
     return false;
   }
-  return i2c_master_transmit_receive(touchDev, &reg, 1, buf, len, 100) == ESP_OK;
+  return i2c_master_transmit_receive(touchDev, &reg, 1, buf, len, 100) ==
+         ESP_OK;
 }
 
 static bool readSample(TouchSample &sample) {
@@ -71,6 +84,43 @@ static void mapTouch(uint16_t rawX, uint16_t rawY, TouchPoint &point) {
   point.y = mappedY;
 }
 
+static bool pollTouchPress(TouchPoint &point, bool &wasDown) {
+  TouchSample sample = {};
+  if (!readSample(sample) || sample.count == 0) {
+    wasDown = false;
+    return false;
+  }
+  if (wasDown) {
+    return false;
+  }
+  wasDown = true;
+
+  mapTouch(sample.rawX, sample.rawY, point);
+  return true;
+}
+
+static void queueTouch(const TouchPoint &point) {
+  if (pendingTouch) {
+    return;
+  }
+  pendingX = point.x;
+  pendingY = point.y;
+  pendingTouch = true;
+}
+
+static void touchTask(void *) {
+  bool taskWasDown = false;
+  while (true) {
+    if (touchReady) {
+      TouchPoint point;
+      if (pollTouchPress(point, taskWasDown)) {
+        queueTouch(point);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+  }
+}
+
 static bool beginTouchBus() {
   if (touchBus == NULL) {
     i2c_master_bus_config_t busConfig = {};
@@ -116,24 +166,26 @@ void TouchInput::begin() {
   delay(300);
 
   touchReady = beginTouchBus();
+  if (touchReady && touchTaskHandle == NULL) {
+    if (xTaskCreatePinnedToCore(touchTask, "touch", TOUCH_TASK_STACK_WORDS,
+                                NULL, TOUCH_TASK_PRIORITY, &touchTaskHandle,
+                                TOUCH_TASK_CORE) != pdPASS) {
+      touchTaskHandle = NULL;
+    }
+  }
 }
 
 bool TouchInput::read(TouchPoint &point) {
-  if (!touchReady || digitalRead(EPD_BUSY_PIN) == HIGH) {
-    wasDown = false;
+  if (touchTaskHandle == NULL) {
+    return touchReady && pollTouchPress(point, fallbackWasDown);
+  }
+
+  if (!pendingTouch) {
     return false;
   }
 
-  TouchSample sample = {};
-  if (!readSample(sample) || sample.count == 0) {
-    wasDown = false;
-    return false;
-  }
-  if (wasDown) {
-    return false;
-  }
-  wasDown = true;
-
-  mapTouch(sample.rawX, sample.rawY, point);
+  point.x = pendingX;
+  point.y = pendingY;
+  pendingTouch = false;
   return true;
 }

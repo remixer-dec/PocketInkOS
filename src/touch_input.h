@@ -12,9 +12,6 @@ class TouchInput {
 public:
   void begin();
   bool read(TouchPoint &point);
-
-private:
-  bool wasDown = false;
 };
 
 #endif
