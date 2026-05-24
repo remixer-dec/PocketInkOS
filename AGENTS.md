@@ -1,0 +1,4 @@
+- We prioritize simplicity over complexity
+- We try to make things modular in order to improve future maintanibility
+- We write comments where its needed and not obvious
+- We prefer minimalism and structural coherence

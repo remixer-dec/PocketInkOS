@@ -1,0 +1,6 @@
+.DS_Store
+build
+
+.opencode-container-id
+/build/
+/reference-project/
