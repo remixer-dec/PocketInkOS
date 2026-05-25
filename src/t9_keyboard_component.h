@@ -20,6 +20,7 @@ private:
   void drawInput(Adafruit_GFX &gfx, const String &text, int maxLength);
   void drawKey(Adafruit_GFX &gfx, int key, int x, int y, int w, int h,
                bool disabled);
+  bool isPendingActive() const;
   void clearPending();
   bool expirePending();
   char currentChar() const;

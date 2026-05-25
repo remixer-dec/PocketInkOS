@@ -2,6 +2,7 @@
 #include "ui_helpers.h"
 
 #include <Arduino.h>
+#include <cstdio>
 #include <cstring>
 
 static const char *CPU_WORDS[] = {
@@ -48,6 +49,18 @@ static void drawDiagonalHatch(Adafruit_GFX &gfx, int x, int y, int w, int h,
   }
 }
 
+static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
+                             uint8_t textSize) {
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+}
+
 void WordleApp::reset() {
   state = STATE_INTRO;
   target[0] = 0;
@@ -55,7 +68,7 @@ void WordleApp::reset() {
   row = 0;
   keyboardOpen = false;
   for (int i = 0; i < 6; i++) {
-    guesses[i][0] = 0;
+    memset(guesses[i], 0, sizeof(guesses[i]));
     for (int j = 0; j < 5; j++) {
       marks[i][j] = MARK_NONE;
     }
@@ -79,6 +92,10 @@ void WordleApp::draw(Adafruit_GFX &gfx) {
     return;
   }
   drawGame(gfx);
+}
+
+bool WordleApp::update() {
+  return keyboardOpen && inputKeyboard.update();
 }
 
 bool WordleApp::handleTouch(const TouchPoint &point) {
@@ -138,7 +155,7 @@ void WordleApp::beginGuessing(const char *word) {
   strncpy(target, word, sizeof(target) - 1);
   target[5] = 0;
   for (int i = 0; i < 6; i++) {
-    guesses[i][0] = 0;
+    memset(guesses[i], 0, sizeof(guesses[i]));
     for (int j = 0; j < 5; j++) {
       marks[i][j] = MARK_NONE;
     }
@@ -154,13 +171,8 @@ void WordleApp::beginGuessing(const char *word) {
 
 void WordleApp::drawIntro(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  gfx.setCursor(56, 20);
-  gfx.print("WORDLE");
-
-  gfx.setTextSize(1);
-  gfx.setCursor(29, 44);
-  gfx.print("Choose game mode");
+  drawCenteredText(gfx, "WORDLE", 20, 2);
+  drawCenteredText(gfx, "Choose game mode", 44, 1);
   uiDrawButton(gfx, CPU_BUTTON, "VS CPU");
   uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER");
 }
@@ -188,15 +200,14 @@ void WordleApp::drawEntry(Adafruit_GFX &gfx) {
 void WordleApp::drawGame(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  gfx.setCursor(62, 4);
   if (state == STATE_WON) {
-    gfx.print("SOLVED");
+    drawCenteredText(gfx, "SOLVED", 4, 1);
   } else if (state == STATE_LOST) {
-    gfx.print(target);
+    drawCenteredText(gfx, target, 4, 1);
   } else {
-    gfx.print("TRY ");
-    gfx.print(row + 1);
-    gfx.print("/6");
+    char label[8];
+    snprintf(label, sizeof(label), "TRY %d/6", row + 1);
+    drawCenteredText(gfx, label, 4, 1);
   }
   drawBoard(gfx);
   uiDrawButton(gfx, INPUT_BUTTON, "INPUT");
@@ -205,12 +216,13 @@ void WordleApp::drawGame(Adafruit_GFX &gfx) {
 void WordleApp::drawBoard(Adafruit_GFX &gfx) {
   char submitted[6] = {0};
   copyCurrentWord(submitted);
+  bool showSubmitted = strlen(submitted) == WORD_LENGTH;
   for (int r = 0; r < 6; r++) {
     for (int c = 0; c < 5; c++) {
       int x = BOARD_X + c * (TILE + TILE_GAP);
       int y = BOARD_Y + r * (TILE - 2);
       char letter = guesses[r][c];
-      if (r == row && state == STATE_GUESSING) {
+      if (r == row && state == STATE_GUESSING && showSubmitted) {
         letter = submitted[c];
       }
       drawTile(gfx, x, y, letter, marks[r][c], r == row);
@@ -225,8 +237,6 @@ void WordleApp::drawTile(Adafruit_GFX &gfx, int x, int y, char letter,
     gfx.fillRect(x + 1, y + 1, TILE - 2, TILE - 6, 1);
   } else if (mark == MARK_PRESENT) {
     drawDiagonalHatch(gfx, x + 2, y + 2, TILE - 4, TILE - 8, true);
-  } else if (mark == MARK_ABSENT) {
-    drawDiagonalHatch(gfx, x + 2, y + 2, TILE - 4, TILE - 8, false);
   } else if (active) {
     gfx.drawPixel(x + TILE - 3, y + TILE - 7, 1);
   }

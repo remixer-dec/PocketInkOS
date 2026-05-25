@@ -1,10 +1,12 @@
 #include "app_display.h"
+#include "calculator_app.h"
 #include "chess_app.h"
 #include "cube_app.h"
 #include "hangman_app.h"
 #include "keyboard_component.h"
 #include "minesweeper_app.h"
 #include "qwerty_zoom_keyboard_component.h"
+#include "qr_app.h"
 #include "smart_button.h"
 #include "sudoku_app.h"
 #include "tictactoe_app.h"
@@ -28,12 +30,18 @@ enum Screen {
   SCREEN_SUDOKU,
   SCREEN_WORDLE,
   SCREEN_CHESS,
-  SCREEN_CUBE
+  SCREEN_CUBE,
+  SCREEN_CALCULATOR,
+  SCREEN_QR
 };
+
+enum MenuCategory { MENU_GAMES, MENU_APPS };
 
 AppDisplay display;
 TouchInput touch;
 CubeApp cubeApp;
+CalculatorApp calculator;
+QrApp qrApp;
 KeyboardComponent keyboard;
 QwertyZoomKeyboardComponent qwertyZoomKeyboard;
 T9KeyboardComponent t9Keyboard;
@@ -50,6 +58,7 @@ Screen screen = SCREEN_HOME;
 String typedText;
 bool dirty = true;
 bool confirmQuit = false;
+MenuCategory menuCategory = MENU_GAMES;
 unsigned long quitDialogOpenedAt = 0;
 unsigned long lastHomeSecond = 0;
 TaskHandle_t buttonTaskHandle = NULL;
@@ -94,6 +103,10 @@ bool isSessionScreen() {
     return chess.hasActiveSession();
   case SCREEN_CUBE:
     return cubeApp.hasActiveSession();
+  case SCREEN_CALCULATOR:
+    return calculator.hasActiveSession();
+  case SCREEN_QR:
+    return qrApp.hasActiveSession();
   default:
     return false;
   }
@@ -101,6 +114,12 @@ bool isSessionScreen() {
 
 void handleMenuButton() {
   if (confirmQuit) {
+    return;
+  }
+  if (screen != SCREEN_CHESS && isSessionScreen()) {
+    confirmQuit = true;
+    quitDialogOpenedAt = millis();
+    dirty = true;
     return;
   }
   if (screen == SCREEN_CHESS && chess.handleMenuButton()) {
@@ -149,8 +168,15 @@ void handleOtherButton() {
     }
     return;
   }
+  if (screen == SCREEN_MINESWEEPER) {
+    if (minesweeper.handlePowerButton()) {
+      dirty = true;
+    }
+    return;
+  }
   if (screen == SCREEN_TICTACTOE || screen == SCREEN_MINESWEEPER ||
-      screen == SCREEN_SUDOKU || screen == SCREEN_CUBE) {
+      screen == SCREEN_SUDOKU || screen == SCREEN_CUBE ||
+      screen == SCREEN_CALCULATOR || screen == SCREEN_QR) {
     return;
   }
   if (screen == SCREEN_CHESS) {
@@ -158,9 +184,18 @@ void handleOtherButton() {
       switchTo(SCREEN_MENU);
       return;
     }
+    if (chess.isHistoryOpen() && chess.hasActiveSession()) {
+      confirmQuit = true;
+      quitDialogOpenedAt = millis();
+      dirty = true;
+      return;
+    }
     if (chess.handlePowerButton()) {
       dirty = true;
     }
+    return;
+  }
+  if (screen == SCREEN_HOME || screen == SCREEN_MENU) {
     return;
   }
   switchKeyboardMode();
@@ -204,13 +239,16 @@ void drawHome() {
   uint16_t w;
   uint16_t h;
   display.getTextBounds("Pocket Ink", 0, 0, &x, &y, &w, &h);
-  display.setCursor((EPD_WIDTH - w) / 2, 78);
+  display.setCursor((EPD_WIDTH - w) / 2, 72);
   display.print("Pocket Ink");
+  display.setTextSize(1);
+  display.getTextBounds("os", 0, 0, &x, &y, &w, &h);
+  display.setCursor((EPD_WIDTH - w) / 2, 94);
+  display.print("os");
 
   char text[16];
   unsigned long uptimeSeconds = millis() / 1000;
 
-  display.setTextSize(1);
   display.setCursor(4, 8);
   display.print("TIME --:--");
 
@@ -219,8 +257,8 @@ void drawHome() {
   display.setCursor(EPD_WIDTH - w - 4, 8);
   display.print(text);
 
-  display.setCursor(34, 182);
-  display.print("BOOT: apps  PWR: keyboard");
+  display.setCursor(58, 182);
+  display.print("BOOT: apps");
 }
 
 static const UiRect QUIT_YES_BUTTON = {44, 112, 48, 24};
@@ -258,40 +296,91 @@ bool handleQuitDialogTouch(const TouchPoint &point) {
 void drawMenu() {
   display.setTextColor(1);
   display.setTextSize(2);
+  display.setCursor(8, 10);
+  display.print("<");
+  display.setCursor(184, 10);
+  display.print(">");
+  display.setTextSize(2);
   int16_t titleX;
   int16_t titleY;
   uint16_t titleW;
   uint16_t titleH;
-  display.getTextBounds("APPS", 0, 10, &titleX, &titleY, &titleW, &titleH);
+  const char *title = menuCategory == MENU_GAMES ? "GAMES" : "APPS";
+  display.getTextBounds(title, 0, 10, &titleX, &titleY, &titleW, &titleH);
   display.setCursor((EPD_WIDTH - titleW) / 2, 10);
-  display.print("APPS");
+  display.print(title);
 
-  const char *icons[9] = {"T", "M", "H", "S", "W", "C", "K", "", ""};
+  const char *gameIcons[9] = {"T", "M", "H", "S", "W", "C", "", "", ""};
+  const char *gameLabels[9] = {"tictac", "mines", "hangman", "sudoku", "wordle",
+                               "chess",  "",      "",        ""};
+  const char *appIcons[9] = {"3", "=", "Q", "", "", "", "", "", ""};
+  const char *appLabels[9] = {"3dcube", "calc", "qr", "", "", "", "", "", ""};
+  const char **icons = menuCategory == MENU_GAMES ? gameIcons : appIcons;
+  const char **labels = menuCategory == MENU_GAMES ? gameLabels : appLabels;
   int n = 0;
   for (int row = 0; row < 3; row++) {
     for (int col = 0; col < 3; col++) {
       int x = 20 + col * 60;
-      int y = 42 + row * 48;
-      display.drawRect(x, y, 40, 36, 1);
+      int y = 38 + row * 52;
+      int labelIndex = row * 3 + col;
+      if (labels[labelIndex][0] == '\0') {
+        n++;
+        continue;
+      }
+      display.drawRect(x, y, 40, 32, 1);
       display.setTextSize(2);
-      display.setCursor(x + 14, y + 10);
+      display.setCursor(x + 14, y + 8);
       display.print(icons[n++]);
+      display.setTextSize(1);
+      int16_t labelX;
+      int16_t labelY;
+      uint16_t labelW;
+      uint16_t labelH;
+      display.getTextBounds(labels[labelIndex], 0, 0, &labelX, &labelY,
+                            &labelW, &labelH);
+      display.setCursor(x + (40 - static_cast<int>(labelW)) / 2 - labelX,
+                        y + 35);
+      display.print(labels[labelIndex]);
     }
   }
 
   display.setTextSize(1);
-  display.setCursor(36, 188);
-  display.print("PWR: keyboard");
 }
 
 void handleMenuTouch(const TouchPoint &point) {
-  if (point.x < 20 || point.x >= 200 || point.y < 42 || point.y >= 186) {
+  if (point.y < 34) {
+    if (point.x < 48 || point.x > 152) {
+      menuCategory = menuCategory == MENU_GAMES ? MENU_APPS : MENU_GAMES;
+      dirty = true;
+    }
+    return;
+  }
+  if (point.x < 20 || point.x >= 200 || point.y < 38 || point.y >= 194) {
     return;
   }
   int col = (point.x - 20) / 60;
-  int row = (point.y - 42) / 48;
+  int row = (point.y - 38) / 52;
   if (col < 0 || col > 2 || row < 0 || row > 2) return;
   int app = row * 3 + col;
+  if (menuCategory == MENU_APPS) {
+    switch (app) {
+    case 0:
+      cubeApp.reset();
+      switchTo(SCREEN_CUBE);
+      break;
+    case 1:
+      calculator.reset();
+      switchTo(SCREEN_CALCULATOR);
+      break;
+    case 2:
+      qrApp.reset();
+      switchTo(SCREEN_QR);
+      break;
+    default:
+      break;
+    }
+    return;
+  }
   switch (app) {
   case 0:
     ticTacToe.reset();
@@ -314,10 +403,6 @@ void handleMenuTouch(const TouchPoint &point) {
     switchTo(SCREEN_WORDLE);
     break;
   case 5:
-    cubeApp.reset();
-    switchTo(SCREEN_CUBE);
-    break;
-  case 6:
     chess.reset();
     switchTo(SCREEN_CHESS);
     break;
@@ -396,6 +481,12 @@ void render() {
   case SCREEN_CUBE:
     cubeApp.draw(display);
     break;
+  case SCREEN_CALCULATOR:
+    calculator.draw(display);
+    break;
+  case SCREEN_QR:
+    qrApp.draw(display);
+    break;
   }
   if (confirmQuit) {
     drawQuitDialog();
@@ -434,6 +525,8 @@ void setup() {
   sudoku.reset();
   wordle.reset();
   chess.reset();
+  calculator.reset();
+  qrApp.reset();
   dirty = true;
 }
 
@@ -523,12 +616,41 @@ void loop() {
         display.flushPartial(0, 0, 200, 200);
       }
       break;
+    case SCREEN_CALCULATOR:
+      if (calculator.handleTouch(point)) {
+        display.clear();
+        calculator.draw(display);
+        display.flushPartial(0, 0, 200, 200);
+      }
+      break;
+    case SCREEN_QR:
+      if (qrApp.handleTouch(point)) {
+        display.clear();
+        qrApp.draw(display);
+        display.flushPartial(0, 0, 200, 200);
+      }
+      break;
     }
   }
 
   if (screen == SCREEN_T9_KEYBOARD && t9Keyboard.update()) {
     display.clear();
     t9Keyboard.draw(display, typedText);
+    display.flushPartial(0, 0, 200, 200);
+  }
+  if (screen == SCREEN_HANGMAN && hangman.update()) {
+    display.clear();
+    hangman.draw(display);
+    display.flushPartial(0, 0, 200, 200);
+  }
+  if (screen == SCREEN_WORDLE && wordle.update()) {
+    display.clear();
+    wordle.draw(display);
+    display.flushPartial(0, 0, 200, 200);
+  }
+  if (screen == SCREEN_QR && qrApp.update()) {
+    display.clear();
+    qrApp.draw(display);
     display.flushPartial(0, 0, 200, 200);
   }
   if (screen == SCREEN_CHESS && chess.update()) {

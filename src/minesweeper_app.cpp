@@ -113,6 +113,14 @@ bool MinesweeperApp::handleTouch(const TouchPoint &point) {
   return true;
 }
 
+bool MinesweeperApp::handlePowerButton() {
+  if (lost || won) {
+    return false;
+  }
+  flagMode = !flagMode;
+  return true;
+}
+
 bool MinesweeperApp::hasActiveSession() const {
   return started && !lost && !won;
 }

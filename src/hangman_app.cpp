@@ -15,6 +15,18 @@ static const UiRect INPUT_BUTTON = {50, 176, 100, 22};
 static const int SECRET_MAX = 12;
 static const int GUESS_MAX = 1;
 
+static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
+                             uint8_t textSize) {
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+}
+
 void HangmanApp::reset() {
   state = STATE_INTRO;
   word[0] = 0;
@@ -41,6 +53,10 @@ void HangmanApp::draw(Adafruit_GFX &gfx) {
     return;
   }
   drawGame(gfx);
+}
+
+bool HangmanApp::update() {
+  return keyboardOpen && inputKeyboard.update();
 }
 
 bool HangmanApp::handleTouch(const TouchPoint &point) {
@@ -117,13 +133,8 @@ void HangmanApp::beginGuessing(const char *secret) {
 
 void HangmanApp::drawIntro(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  gfx.setCursor(44, 20);
-  gfx.print("HANGMAN");
-
-  gfx.setTextSize(1);
-  gfx.setCursor(29, 48);
-  gfx.print("Choose game mode");
+  drawCenteredText(gfx, "HANGMAN", 20, 2);
+  drawCenteredText(gfx, "Choose game mode", 48, 1);
   uiDrawButton(gfx, CPU_BUTTON, "VS CPU");
   uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER");
 }

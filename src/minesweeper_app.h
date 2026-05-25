@@ -9,6 +9,7 @@ public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
+  bool handlePowerButton();
   bool hasActiveSession() const;
 
 private:

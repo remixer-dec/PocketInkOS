@@ -64,7 +64,7 @@ void T9KeyboardComponent::drawInput(Adafruit_GFX &gfx, const String &text,
 
 void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
                                   int w, int h, bool disabled) {
-  const bool active = key == pendingKey;
+  const bool active = key == pendingKey && isPendingActive();
   if (active && !disabled) {
     gfx.fillRect(x, y, w, h, 1);
     gfx.setTextColor(0);
@@ -113,12 +113,14 @@ void T9KeyboardComponent::draw(Adafruit_GFX &gfx, const String &text,
 
   const int keys[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
   bool maxReached = maxLength > 0 && (int)text.length() >= maxLength;
+  bool pendingActive = isPendingActive();
   for (int row = 0; row < 4; row++) {
     for (int col = 0; col < 3; col++) {
       int x = GRID_X + col * (KEY_W + KEY_GAP);
       int y = GRID_Y + row * (KEY_H + KEY_GAP);
       int key = keys[row * 3 + col];
-      bool disabled = maxReached && key != 10 && key != 11;
+      bool disabled = maxReached && key != 10 && key != 11 &&
+                      !(pendingActive && key == pendingKey);
       drawKey(gfx, key, x, y, KEY_W, KEY_H, disabled);
     }
   }
@@ -142,8 +144,12 @@ void T9KeyboardComponent::clearPending() {
   pendingAt = 0;
 }
 
+bool T9KeyboardComponent::isPendingActive() const {
+  return pendingKey >= 0 && millis() - pendingAt < T9_WAIT_MS;
+}
+
 bool T9KeyboardComponent::expirePending() {
-  if (pendingKey < 0 || millis() - pendingAt < T9_WAIT_MS) {
+  if (pendingKey < 0 || isPendingActive()) {
     return false;
   }
   clearPending();
@@ -187,12 +193,12 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
     return {KEY_OK, 0};
   }
 
+  const bool sameKey = pendingKey == key && isPendingActive();
   int limit = maxLength > 0 ? maxLength : 64;
-  if ((int)text.length() >= limit && pendingKey != key) {
+  if ((int)text.length() >= limit && !sameKey) {
     return {KEY_NONE, 0};
   }
 
-  const bool sameKey = pendingKey == key && millis() - pendingAt < T9_WAIT_MS;
   if (sameKey) {
     pendingIndex = (pendingIndex + 1) % strlen(lettersForKey(key));
     if (text.length() > 0) {

@@ -68,6 +68,18 @@ static const int PICKER_GRID_X = 56;
 static const int PICKER_GRID_Y = 48;
 static const int PICKER_CELL = 28;
 
+static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
+                             uint8_t textSize) {
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+}
+
 void SudokuApp::reset() {
   state = STATE_DIFFICULTY;
   selected = -1;
@@ -161,13 +173,8 @@ void SudokuApp::start(Difficulty nextDifficulty) {
 
 void SudokuApp::drawDifficulty(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  gfx.setCursor(56, 18);
-  gfx.print("SUDOKU");
-
-  gfx.setTextSize(1);
-  gfx.setCursor(35, 38);
-  gfx.print("Select difficulty");
+  drawCenteredText(gfx, "SUDOKU", 18, 2);
+  drawCenteredText(gfx, "Select difficulty", 38, 1);
   uiDrawButton(gfx, EASY_BUTTON, "EASY");
   uiDrawButton(gfx, MEDIUM_BUTTON, "MEDIUM");
   uiDrawButton(gfx, HARD_BUTTON, "HARD");
