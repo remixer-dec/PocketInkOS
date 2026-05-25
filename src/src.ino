@@ -12,6 +12,8 @@
 #include "touch_input.h"
 #include "ui_helpers.h"
 #include "wordle_app.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 
 enum Screen {
@@ -48,7 +50,27 @@ Screen screen = SCREEN_HOME;
 String typedText;
 bool dirty = true;
 bool confirmQuit = false;
+unsigned long quitDialogOpenedAt = 0;
 unsigned long lastHomeSecond = 0;
+TaskHandle_t buttonTaskHandle = NULL;
+volatile uint8_t pendingMenuClicks = 0;
+volatile uint8_t pendingMenuLongPresses = 0;
+volatile uint8_t pendingPowerClicks = 0;
+volatile uint8_t pendingPowerLongPresses = 0;
+
+void queueButtonEvent(volatile uint8_t &counter) {
+  if (counter < 255) {
+    counter++;
+  }
+}
+
+bool consumeButtonEvent(volatile uint8_t &counter) {
+  if (counter == 0) {
+    return false;
+  }
+  counter--;
+  return true;
+}
 
 void switchTo(Screen next) {
   screen = next;
@@ -68,6 +90,8 @@ bool isSessionScreen() {
     return sudoku.hasActiveSession();
   case SCREEN_WORDLE:
     return wordle.hasActiveSession();
+  case SCREEN_CHESS:
+    return chess.hasActiveSession();
   case SCREEN_CUBE:
     return cubeApp.hasActiveSession();
   default:
@@ -79,12 +103,29 @@ void handleMenuButton() {
   if (confirmQuit) {
     return;
   }
-  if (isSessionScreen()) {
-    confirmQuit = true;
+  if (screen == SCREEN_CHESS && chess.handleMenuButton()) {
     dirty = true;
     return;
   }
   switchTo(screen == SCREEN_MENU ? SCREEN_HOME : SCREEN_MENU);
+}
+
+void handleMenuLongButton() {
+  if (confirmQuit) {
+    return;
+  }
+  if (screen == SCREEN_CHESS && chess.handleMenuLongPress()) {
+    confirmQuit = true;
+    quitDialogOpenedAt = millis();
+    dirty = true;
+    return;
+  }
+  if (isSessionScreen()) {
+    confirmQuit = true;
+    quitDialogOpenedAt = millis();
+    dirty = true;
+    return;
+  }
 }
 
 void switchKeyboardMode() {
@@ -109,11 +150,43 @@ void handleOtherButton() {
     return;
   }
   if (screen == SCREEN_TICTACTOE || screen == SCREEN_MINESWEEPER ||
-      screen == SCREEN_SUDOKU || screen == SCREEN_CHESS ||
-      screen == SCREEN_CUBE) {
+      screen == SCREEN_SUDOKU || screen == SCREEN_CUBE) {
+    return;
+  }
+  if (screen == SCREEN_CHESS) {
+    if (chess.isGameOver()) {
+      switchTo(SCREEN_MENU);
+      return;
+    }
+    if (chess.handlePowerButton()) {
+      dirty = true;
+    }
     return;
   }
   switchKeyboardMode();
+}
+
+void buttonTask(void *) {
+  while (true) {
+    mainButton.update();
+    backButton.update();
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
+void consumeQueuedButtons() {
+  while (consumeButtonEvent(pendingMenuLongPresses)) {
+    handleMenuLongButton();
+  }
+  while (consumeButtonEvent(pendingMenuClicks)) {
+    handleMenuButton();
+  }
+  while (consumeButtonEvent(pendingPowerLongPresses)) {
+    handleOtherButton();
+  }
+  while (consumeButtonEvent(pendingPowerClicks)) {
+    handleOtherButton();
+  }
 }
 
 void formatSeconds(unsigned long totalSeconds, char *buffer, size_t size) {
@@ -167,6 +240,9 @@ void drawQuitDialog() {
 }
 
 bool handleQuitDialogTouch(const TouchPoint &point) {
+  if (millis() - quitDialogOpenedAt < 350) {
+    return true;
+  }
   if (uiContains(QUIT_YES_BUTTON, point)) {
     switchTo(SCREEN_MENU);
     return true;
@@ -340,10 +416,17 @@ void setup() {
   mainButton.setLongPressMs(1200);
   backButton.setLongPressMs(1200);
 
-  mainButton.attachSingleClick([]() { handleMenuButton(); });
-  mainButton.attachLongPressStart([]() { handleMenuButton(); });
-  backButton.attachSingleClick([]() { handleOtherButton(); });
-  backButton.attachLongPressStart([]() { handleOtherButton(); });
+  mainButton.attachSingleClick([]() { queueButtonEvent(pendingMenuClicks); });
+  mainButton.attachLongPressStart(
+      []() { queueButtonEvent(pendingMenuLongPresses); });
+  backButton.attachSingleClick([]() { queueButtonEvent(pendingPowerClicks); });
+  backButton.attachLongPressStart(
+      []() { queueButtonEvent(pendingPowerLongPresses); });
+
+  if (buttonTaskHandle == NULL) {
+    xTaskCreatePinnedToCore(buttonTask, "buttons", 2048, NULL, 2,
+                            &buttonTaskHandle, 0);
+  }
 
   ticTacToe.reset();
   minesweeper.reset();
@@ -355,8 +438,7 @@ void setup() {
 }
 
 void loop() {
-  mainButton.update();
-  backButton.update();
+  consumeQueuedButtons();
 
   TouchPoint point;
   if (touch.read(point)) {
@@ -447,6 +529,11 @@ void loop() {
   if (screen == SCREEN_T9_KEYBOARD && t9Keyboard.update()) {
     display.clear();
     t9Keyboard.draw(display, typedText);
+    display.flushPartial(0, 0, 200, 200);
+  }
+  if (screen == SCREEN_CHESS && chess.update()) {
+    display.clear();
+    chess.draw(display);
     display.flushPartial(0, 0, 200, 200);
   }
 

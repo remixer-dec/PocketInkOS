@@ -60,8 +60,14 @@ class ChessApp {
 public:
   void reset();
   void draw(Adafruit_GFX &gfx);
+  bool update();
   bool handleTouch(const TouchPoint &point);
+  bool handlePowerButton();
+  bool handleMenuButton();
+  bool handleMenuLongPress();
   bool hasActiveSession() const;
+  bool isGameOver() const;
+  bool loadPosition(const char *fen, PieceColor sideToMove);
 
 private:
   struct Piece {
@@ -70,13 +76,108 @@ private:
     bool present;
   };
 
+  enum class Mode { Setup, Playing, History };
+  enum class PendingSelection { Source, Target };
+
+  struct Move {
+    int from;
+    int to;
+    PieceType promotion;
+    bool hasPromotion;
+  };
+
   Piece board[64] = {};
+  Mode mode = Mode::Setup;
+  PendingSelection pendingSelection = PendingSelection::Source;
+  PieceColor turn = PieceColor::White;
+  PieceColor humanColor = PieceColor::White;
+  bool vsAi = false;
+  uint8_t aiLevel = 1;
+  bool sourceConfirmed = false;
+  bool targetConfirmed = false;
+  bool awaitingPromotion = false;
+  int selectedFrom = -1;
+  int selectedTo = -1;
+  Move promotionMove = {-1, -1, PieceType::Queen, true};
+  int enPassantSquare = -1;
+  bool whiteKingMoved = false;
+  bool blackKingMoved = false;
+  bool whiteKingsideRookMoved = false;
+  bool whiteQueensideRookMoved = false;
+  bool blackKingsideRookMoved = false;
+  bool blackQueensideRookMoved = false;
+  bool gameOver = false;
+  bool started = false;
+  bool alertVisible = false;
+  char alertText[32] = {};
+  char hintText[24] = {};
+  char history[96][10] = {};
+  PieceType historyPiece[96] = {};
+  PieceColor historyColor[96] = {};
+  PieceType historyCapturedPiece[96] = {};
+  PieceColor historyCapturedColor[96] = {};
+  bool historyHasCapture[96] = {};
+  uint8_t historyCount = 0;
+  uint8_t historyOffset = 0;
+  unsigned long lastAnimationMs = 0;
+  bool selectionBorderPhase = false;
+  bool hasLastMove = false;
+  int lastMoveFrom = -1;
+  int lastMoveTo = -1;
+  PieceColor lastMoveColor = PieceColor::White;
 
   void placeInitialPieces();
+  void resetGameState();
+  void startGame();
+  void clearSelection();
+  void setAlert(const char *text);
+  void setHint(const char *text);
+  void maybeRunAi();
+  bool isHumanTurn() const;
+  bool isInsideBoardPoint(const TouchPoint &point) const;
+  int pointToSquare(const TouchPoint &point) const;
+  int resolveSourceSquare(int square) const;
+  int displayRowToBoardRow(int displayRow) const;
+  int boardRowToDisplayRow(int boardRow) const;
   void drawBoard(Adafruit_GFX &gfx);
+  void drawExperimentalCoordinates(Adafruit_GFX &gfx);
+  void drawSetup(Adafruit_GFX &gfx);
+  void drawHistory(Adafruit_GFX &gfx);
+  void drawStatus(Adafruit_GFX &gfx);
+  void drawMoveOutline(Adafruit_GFX &gfx, int square);
+  void drawSelection(Adafruit_GFX &gfx, int square);
+  void drawPromotionChooser(Adafruit_GFX &gfx);
+  void drawAlert(Adafruit_GFX &gfx);
   void drawPiece(Adafruit_GFX &gfx, int row, int col, const Piece &piece);
   const CaseFontGlyph *findGlyph(PieceType type, PieceColor color,
                                  BoardColor boardColor) const;
+  bool tryMoveSelection();
+  bool isPromotionMove(const Move &move) const;
+  bool finishPromotion(PieceType promotion);
+  bool makeLegalMove(const Move &move, bool recordHistory);
+  void applyMoveUnchecked(const Move &move, Piece moving, Piece captured,
+                          bool simulation);
+  bool isLegalMove(const Move &move) const;
+  bool isPseudoLegalMove(const Move &move) const;
+  bool wouldLeaveKingInCheck(const Move &move) const;
+  bool pathClear(int from, int to, int rowStep, int colStep) const;
+  bool isSquareAttacked(int square, PieceColor byColor) const;
+  bool isSquareAttackedOnBoard(const Piece *position, int square,
+                               PieceColor byColor) const;
+  bool isInCheck(PieceColor color) const;
+  int findKingOnBoard(const Piece *position, PieceColor color) const;
+  bool hasAnyLegalMove(PieceColor color) const;
+  int findKing(PieceColor color) const;
+  bool collectLegalMoves(PieceColor color, Move *moves, int maxMoves,
+                         int &count) const;
+  Move chooseAiMove() const;
+  int evaluateBoard(PieceColor perspective) const;
+  int moveScore(const Move &move, PieceColor perspective) const;
+  int pieceValue(PieceType type) const;
+  void appendHistory(const Move &move, Piece moving, Piece captured);
+  void appendHistorySuffix(char suffix);
+  void squareName(int square, char *out) const;
+  PieceColor opposite(PieceColor color) const;
 };
 
 #endif
