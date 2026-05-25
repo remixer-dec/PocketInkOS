@@ -1,4 +1,5 @@
 #include "app_display.h"
+#include "chess_app.h"
 #include "cube_app.h"
 #include "hangman_app.h"
 #include "keyboard_component.h"
@@ -24,6 +25,7 @@ enum Screen {
   SCREEN_HANGMAN,
   SCREEN_SUDOKU,
   SCREEN_WORDLE,
+  SCREEN_CHESS,
   SCREEN_CUBE
 };
 
@@ -38,6 +40,7 @@ MinesweeperApp minesweeper;
 HangmanApp hangman;
 SudokuApp sudoku;
 WordleApp wordle;
+ChessApp chess;
 SmartButton mainButton(BOOT_BUTTON_PIN);
 SmartButton backButton(PWR_BUTTON_PIN);
 
@@ -106,7 +109,8 @@ void handleOtherButton() {
     return;
   }
   if (screen == SCREEN_TICTACTOE || screen == SCREEN_MINESWEEPER ||
-      screen == SCREEN_SUDOKU || screen == SCREEN_CUBE) {
+      screen == SCREEN_SUDOKU || screen == SCREEN_CHESS ||
+      screen == SCREEN_CUBE) {
     return;
   }
   switchKeyboardMode();
@@ -186,7 +190,7 @@ void drawMenu() {
   display.setCursor((EPD_WIDTH - titleW) / 2, 10);
   display.print("APPS");
 
-  const char *icons[9] = {"T", "M", "H", "S", "W", "C", "", "", ""};
+  const char *icons[9] = {"T", "M", "H", "S", "W", "C", "K", "", ""};
   int n = 0;
   for (int row = 0; row < 3; row++) {
     for (int col = 0; col < 3; col++) {
@@ -236,6 +240,10 @@ void handleMenuTouch(const TouchPoint &point) {
   case 5:
     cubeApp.reset();
     switchTo(SCREEN_CUBE);
+    break;
+  case 6:
+    chess.reset();
+    switchTo(SCREEN_CHESS);
     break;
   default:
     break;
@@ -306,6 +314,9 @@ void render() {
   case SCREEN_WORDLE:
     wordle.draw(display);
     break;
+  case SCREEN_CHESS:
+    chess.draw(display);
+    break;
   case SCREEN_CUBE:
     cubeApp.draw(display);
     break;
@@ -339,6 +350,7 @@ void setup() {
   hangman.reset();
   sudoku.reset();
   wordle.reset();
+  chess.reset();
   dirty = true;
 }
 
@@ -408,17 +420,24 @@ void loop() {
         display.flushPartial(0, 0, 200, 200);
       }
       break;
-    case SCREEN_WORDLE:
-      if (wordle.handleTouch(point)) {
-        display.clear();
-        wordle.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_CUBE:
-      if (cubeApp.handleTouch(point)) {
-        display.clear();
-        cubeApp.draw(display);
+  case SCREEN_WORDLE:
+    if (wordle.handleTouch(point)) {
+      display.clear();
+      wordle.draw(display);
+      display.flushPartial(0, 0, 200, 200);
+    }
+    break;
+  case SCREEN_CHESS:
+    if (chess.handleTouch(point)) {
+      display.clear();
+      chess.draw(display);
+      display.flushPartial(0, 0, 200, 200);
+    }
+    break;
+  case SCREEN_CUBE:
+    if (cubeApp.handleTouch(point)) {
+      display.clear();
+      cubeApp.draw(display);
         display.flushPartial(0, 0, 200, 200);
       }
       break;

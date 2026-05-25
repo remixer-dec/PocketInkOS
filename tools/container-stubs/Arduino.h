@@ -13,6 +13,7 @@
 #define INPUT_PULLDOWN 3
 #define FALLING 2
 #define IRAM_ATTR
+#define PROGMEM
 #define GPIO_NUM_0 0
 #define GPIO_NUM_18 18
 using gpio_num_t = int;

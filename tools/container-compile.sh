@@ -10,6 +10,7 @@ COMMON=(-std=c++17 -Wall -Wextra -Werror -fsyntax-only -I"$STUBS" -I"$ROOT/src")
 
 for file in \
   "$ROOT/src/app_display.cpp" \
+  "$ROOT/src/chess_app.cpp" \
   "$ROOT/src/cube_app.cpp" \
   "$ROOT/src/hangman_app.cpp" \
   "$ROOT/src/keyboard_component.cpp" \
