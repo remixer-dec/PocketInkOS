@@ -67,6 +67,7 @@ public:
   bool handleMenuLongPress();
   bool hasActiveSession() const;
   bool isGameOver() const;
+  bool isHistoryOpen() const;
   bool loadPosition(const char *fen, PieceColor sideToMove);
 
 private:
@@ -135,6 +136,7 @@ private:
   void maybeRunAi();
   bool isHumanTurn() const;
   bool isInsideBoardPoint(const TouchPoint &point) const;
+  bool isBoardRowPoint(const TouchPoint &point) const;
   int pointToSquare(const TouchPoint &point) const;
   int resolveSourceSquare(int square) const;
   int displayRowToBoardRow(int displayRow) const;
@@ -171,6 +173,8 @@ private:
   bool collectLegalMoves(PieceColor color, Move *moves, int maxMoves,
                          int &count) const;
   Move chooseAiMove() const;
+  void buildPositionAfterMove(const Move &move, Piece *position) const;
+  int destinationRiskAfter(const Move &move, PieceColor perspective) const;
   int evaluateBoard(PieceColor perspective) const;
   int moveScore(const Move &move, PieceColor perspective) const;
   int pieceValue(PieceType type) const;

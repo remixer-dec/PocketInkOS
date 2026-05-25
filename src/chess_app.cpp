@@ -8,19 +8,32 @@ static const int BOARD_X = 8;
 static const int BOARD_Y = 8;
 static const int BOARD_SIZE = 184;
 static const int CELL = BOARD_SIZE / 8;
+static const int AI_MOVE_LIMIT = 96;
 
-static const UiRect PVP_BUTTON = {10, 46, 54, 20};
-static const UiRect AI1_BUTTON = {72, 46, 36, 20};
-static const UiRect AI2_BUTTON = {114, 46, 36, 20};
-static const UiRect AI3_BUTTON = {156, 46, 36, 20};
-static const UiRect COLOR_BUTTON = {28, 86, 64, 22};
-static const UiRect START_BUTTON = {108, 86, 64, 22};
+static const UiRect PVP_BUTTON = {8, 54, 42, 28};
+static const UiRect AI1_BUTTON = {56, 54, 42, 28};
+static const UiRect AI2_BUTTON = {104, 54, 42, 28};
+static const UiRect AI3_BUTTON = {152, 54, 42, 28};
+static const UiRect COLOR_BUTTON = {48, 118, 104, 30};
+static const UiRect START_BUTTON = {48, 156, 104, 30};
 static const UiRect PROMOTION_BUTTONS[4] = {{28, 94, 30, 24},
                                             {68, 94, 30, 24},
                                             {108, 94, 30, 24},
                                             {148, 94, 30, 24}};
 static const PieceType PROMOTION_TYPES[4] = {
     PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight};
+
+static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
+                             uint8_t textSize) {
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+}
 
 void ChessApp::reset() {
   placeInitialPieces();
@@ -146,6 +159,8 @@ bool ChessApp::hasActiveSession() const { return started && !gameOver; }
 
 bool ChessApp::isGameOver() const { return started && gameOver; }
 
+bool ChessApp::isHistoryOpen() const { return mode == Mode::History; }
+
 bool ChessApp::update() {
   if (mode != Mode::Playing || (selectedFrom < 0 && selectedTo < 0)) {
     return false;
@@ -223,12 +238,8 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
       startGame();
       return true;
     }
-    if (isInsideBoardPoint(point)) {
-      startGame();
-    } else {
-      setHint("Tap START first");
-      return true;
-    }
+    setHint("Tap START first");
+    return true;
   }
 
   if (mode == Mode::History) {
@@ -249,7 +260,7 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
     return true;
   }
 
-  if (gameOver || !isInsideBoardPoint(point)) {
+  if (gameOver || !isBoardRowPoint(point)) {
     return false;
   }
   if (!isHumanTurn()) {
@@ -349,6 +360,10 @@ bool ChessApp::isInsideBoardPoint(const TouchPoint &point) const {
          point.y >= BOARD_Y && point.y < BOARD_Y + BOARD_SIZE;
 }
 
+bool ChessApp::isBoardRowPoint(const TouchPoint &point) const {
+  return point.y >= BOARD_Y && point.y < BOARD_Y + BOARD_SIZE;
+}
+
 int ChessApp::displayRowToBoardRow(int displayRow) const {
   return humanColor == PieceColor::White ? displayRow : 7 - displayRow;
 }
@@ -358,7 +373,13 @@ int ChessApp::boardRowToDisplayRow(int boardRow) const {
 }
 
 int ChessApp::pointToSquare(const TouchPoint &point) const {
-  int displayCol = (point.x - BOARD_X) / CELL;
+  int clampedX = point.x;
+  if (clampedX < BOARD_X) {
+    clampedX = BOARD_X;
+  } else if (clampedX >= BOARD_X + BOARD_SIZE) {
+    clampedX = BOARD_X + BOARD_SIZE - 1;
+  }
+  int displayCol = (clampedX - BOARD_X) / CELL;
   int displayRow = (point.y - BOARD_Y) / CELL;
   int row = displayRowToBoardRow(displayRow);
   int col = humanColor == PieceColor::White ? displayCol : 7 - displayCol;
@@ -415,17 +436,8 @@ void ChessApp::draw(Adafruit_GFX &gfx) {
 
 void ChessApp::drawSetup(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  int16_t titleX;
-  int16_t titleY;
-  uint16_t titleW;
-  uint16_t titleH;
-  gfx.getTextBounds("CHESS", 0, 0, &titleX, &titleY, &titleW, &titleH);
-  gfx.setCursor((200 - titleW) / 2 - titleX, 12);
-  gfx.print("CHESS");
-  gfx.setTextSize(1);
-  gfx.setCursor(16, 30);
-  gfx.print("Choose mode and side");
+  drawCenteredText(gfx, "CHESS", 10, 2);
+  drawCenteredText(gfx, "Choose mode and side", 34, 1);
   uiDrawButton(gfx, PVP_BUTTON, "PVP", !vsAi);
   uiDrawButton(gfx, AI1_BUTTON, "AI1", vsAi && aiLevel == 1);
   uiDrawButton(gfx, AI2_BUTTON, "AI2", vsAi && aiLevel == 2);
@@ -434,12 +446,6 @@ void ChessApp::drawSetup(Adafruit_GFX &gfx) {
                humanColor == PieceColor::White ? "WHITE" : "BLACK",
                humanColor == PieceColor::Black);
   uiDrawButton(gfx, START_BUTTON, "START");
-  gfx.setCursor(12, 132);
-  gfx.print("Touch piece, pwr confirms.");
-  gfx.setCursor(12, 146);
-  gfx.print("Then touch target, pwr moves.");
-  gfx.setCursor(12, 174);
-  gfx.print("MENU during game: history");
 }
 
 void ChessApp::drawStatus(Adafruit_GFX &gfx) {
@@ -1153,13 +1159,13 @@ void ChessApp::maybeRunAi() {
 }
 
 ChessApp::Move ChessApp::chooseAiMove() const {
-  Move moves[160];
+  Move moves[AI_MOVE_LIMIT];
   int count = 0;
-  collectLegalMoves(turn, moves, 160, count);
+  collectLegalMoves(turn, moves, AI_MOVE_LIMIT, count);
   if (count <= 0) {
     return {-1, -1, PieceType::Queen, true};
   }
-  int storedCount = count < 160 ? count : 160;
+  int storedCount = count < AI_MOVE_LIMIT ? count : AI_MOVE_LIMIT;
 
   if (aiLevel == 1) {
     return moves[random(storedCount)];
@@ -1168,10 +1174,22 @@ ChessApp::Move ChessApp::chooseAiMove() const {
   int bestIndex = 0;
   int bestScore = -30000;
   for (int i = 0; i < storedCount; ++i) {
-    int score = moveScore(moves[i], turn);
+    int score = 0;
     if (aiLevel >= 3) {
-      score += pieceValue(board[moves[i].from].type) / 20;
-      score += board[moves[i].to].present ? 25 : 0;
+      const Piece &target = board[moves[i].to];
+      if (target.present) {
+        score += pieceValue(target.type);
+      }
+      int centerDistance =
+          abs((moves[i].to / 8) - 3) + abs((moves[i].to % 8) - 3);
+      score += 8 - centerDistance;
+      score -= destinationRiskAfter(moves[i], turn);
+      if (hasLastMove && moves[i].from == lastMoveTo &&
+          moves[i].to == lastMoveFrom) {
+        score -= 250;
+      }
+    } else {
+      score = moveScore(moves[i], turn);
     }
     if (score > bestScore) {
       bestScore = score;
@@ -1179,6 +1197,55 @@ ChessApp::Move ChessApp::chooseAiMove() const {
     }
   }
   return moves[bestIndex];
+}
+
+void ChessApp::buildPositionAfterMove(const Move &move, Piece *position) const {
+  for (int i = 0; i < 64; ++i) {
+    position[i] = board[i];
+  }
+
+  Piece moving = board[move.from];
+  int oldEnPassant = enPassantSquare;
+  if (moving.type == PieceType::Pawn && move.to == oldEnPassant &&
+      !position[move.to].present) {
+    int capturedSquare = move.to + (moving.color == PieceColor::White ? 8 : -8);
+    position[capturedSquare] = {};
+  }
+
+  position[move.to] = moving;
+  position[move.from] = {};
+
+  int toRow = move.to / 8;
+  if (moving.type == PieceType::Pawn && (toRow == 0 || toRow == 7)) {
+    position[move.to].type =
+        move.hasPromotion ? move.promotion : PieceType::Queen;
+  }
+
+  if (moving.type == PieceType::King && move.to - move.from == 2) {
+    position[move.from + 1] = position[move.from + 3];
+    position[move.from + 3] = {};
+  } else if (moving.type == PieceType::King && move.from - move.to == 2) {
+    position[move.from - 1] = position[move.from - 4];
+    position[move.from - 4] = {};
+  }
+}
+
+int ChessApp::destinationRiskAfter(const Move &move,
+                                   PieceColor perspective) const {
+  Piece position[64];
+  buildPositionAfterMove(move, position);
+
+  Piece moving = board[move.from];
+  PieceColor enemy = opposite(perspective);
+  if (!isSquareAttackedOnBoard(position, move.to, enemy)) {
+    return 0;
+  }
+
+  int penalty = pieceValue(moving.type);
+  if (board[move.to].present) {
+    penalty -= pieceValue(board[move.to].type);
+  }
+  return penalty > 0 ? penalty : 0;
 }
 
 int ChessApp::moveScore(const Move &move, PieceColor perspective) const {
