@@ -110,6 +110,8 @@ void QwertyZoomKeyboardComponent::movePage(int delta) {
   }
 }
 
+void QwertyZoomKeyboardComponent::toggleCaps() { caps = !caps; }
+
 char QwertyZoomKeyboardComponent::keyAt(int row, int col) const {
   int keyColumn = pageColumn + col;
   const char *keys = QWERTY_ZOOM_ROWS[row];

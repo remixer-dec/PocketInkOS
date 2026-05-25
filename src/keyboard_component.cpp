@@ -82,6 +82,8 @@ void KeyboardComponent::draw(Adafruit_GFX &gfx, const String &text,
   inputLimit = 0;
 }
 
+void KeyboardComponent::toggleCaps() { caps = !caps; }
+
 KeyboardEvent KeyboardComponent::hitRow(const TouchPoint &point,
                                         const char *keys, int count, int x,
                                         int y, int keyW) const {

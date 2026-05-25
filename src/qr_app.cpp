@@ -68,6 +68,8 @@ void QrApp::reset() {
   mode = MODE_TEXT;
   inputText = "";
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  keyboardMode = KEYBOARD_T9;
   hasQr = false;
   memset(modules, 0, sizeof(modules));
 }
@@ -79,9 +81,39 @@ void QrApp::setText(const char *text) {
   encodeQr(inputText.c_str());
 }
 
+bool QrApp::handleMenuButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.toggleCaps();
+  } else {
+    inputKeyboard.toggleCaps();
+  }
+  return true;
+}
+
+bool QrApp::handleMenuDoubleButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardMode = keyboardMode == KEYBOARD_QWERTY_ZOOM ? KEYBOARD_T9
+                                                      : KEYBOARD_QWERTY_ZOOM;
+  return true;
+}
+
+bool QrApp::handleMenuLongButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  return true;
+}
+
 void QrApp::draw(Adafruit_GFX &gfx) {
   if (keyboardOpen) {
-    inputKeyboard.draw(gfx, inputText, MAX_PAYLOAD);
+    drawKeyboard(gfx);
     return;
   }
   if (hasQr) {
@@ -91,18 +123,13 @@ void QrApp::draw(Adafruit_GFX &gfx) {
   drawMenu(gfx);
 }
 
-bool QrApp::update() { return keyboardOpen && inputKeyboard.update(); }
+bool QrApp::update() {
+  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
+}
 
 bool QrApp::handleTouch(const TouchPoint &point) {
   if (keyboardOpen) {
-    KeyboardEvent event = inputKeyboard.hitTest(point, inputText, MAX_PAYLOAD);
-    if (event.action == KEY_NONE) {
-      return false;
-    }
-    if (event.action == KEY_OK) {
-      submit();
-    }
-    return true;
+    return handleKeyboardTouch(point);
   }
   if (hasQr) {
     hasQr = false;
@@ -140,12 +167,46 @@ void QrApp::openKeyboard() {
     inputText = "https://";
   }
   keyboardOpen = true;
+  keyboardMode = KEYBOARD_T9;
+  setActiveMenuButtonConsumer(this);
+}
+
+void QrApp::drawKeyboard(Adafruit_GFX &gfx) {
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.draw(gfx, inputText, MAX_PAYLOAD);
+    return;
+  }
+  inputKeyboard.draw(gfx, inputText, MAX_PAYLOAD);
+}
+
+bool QrApp::handleKeyboardTouch(const TouchPoint &point) {
+  KeyboardEvent event =
+      keyboardMode == KEYBOARD_QWERTY_ZOOM
+          ? zoomKeyboard.hitTest(point, inputText.length(), MAX_PAYLOAD)
+          : inputKeyboard.hitTest(point, inputText, MAX_PAYLOAD);
+  if (event.action == KEY_NONE) {
+    return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    if (event.action == KEY_CHAR && inputText.length() < MAX_PAYLOAD) {
+      inputText += event.value;
+    } else if (event.action == KEY_SPACE && inputText.length() < MAX_PAYLOAD) {
+      inputText += ' ';
+    } else if (event.action == KEY_BACKSPACE && inputText.length() > 0) {
+      inputText.remove(inputText.length() - 1);
+    }
+  }
+  if (event.action == KEY_OK) {
+    submit();
+  }
+  return true;
 }
 
 void QrApp::submit() {
   char payload[MAX_PAYLOAD + 1];
   buildPayload(payload, sizeof(payload));
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
   hasQr = encodeQr(payload);
 }
 

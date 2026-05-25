@@ -4,7 +4,9 @@
 #include "cube_app.h"
 #include "hangman_app.h"
 #include "keyboard_component.h"
+#include "menu_button_consumer.h"
 #include "minesweeper_app.h"
+#include "paint_app.h"
 #include "qwerty_zoom_keyboard_component.h"
 #include "qr_app.h"
 #include "smart_button.h"
@@ -32,7 +34,8 @@ enum Screen {
   SCREEN_CHESS,
   SCREEN_CUBE,
   SCREEN_CALCULATOR,
-  SCREEN_QR
+  SCREEN_QR,
+  SCREEN_PAINT
 };
 
 enum MenuCategory { MENU_GAMES, MENU_APPS };
@@ -42,6 +45,7 @@ TouchInput touch;
 CubeApp cubeApp;
 CalculatorApp calculator;
 QrApp qrApp;
+PaintApp paintApp;
 KeyboardComponent keyboard;
 QwertyZoomKeyboardComponent qwertyZoomKeyboard;
 T9KeyboardComponent t9Keyboard;
@@ -54,7 +58,60 @@ ChessApp chess;
 SmartButton mainButton(BOOT_BUTTON_PIN);
 SmartButton backButton(PWR_BUTTON_PIN);
 
+class ActiveApp {
+public:
+  virtual void draw(Adafruit_GFX &gfx) = 0;
+  virtual bool handleTouch(const TouchPoint &point) = 0;
+  virtual bool update() { return false; }
+  virtual bool hasActiveSession() const = 0;
+};
+
+template <typename T, bool SupportsUpdate = false>
+class AppScreen : public ActiveApp {
+public:
+  explicit AppScreen(T &target) : app(target) {}
+
+  void draw(Adafruit_GFX &gfx) override { app.draw(gfx); }
+  bool handleTouch(const TouchPoint &point) override {
+    return app.handleTouch(point);
+  }
+  bool update() override {
+    if constexpr (SupportsUpdate) {
+      return app.update();
+    }
+    return false;
+  }
+  bool hasActiveSession() const override { return app.hasActiveSession(); }
+
+private:
+  T &app;
+};
+
+class PaintScreen : public ActiveApp {
+public:
+  explicit PaintScreen(PaintApp &target) : app(target) {}
+
+  void draw(Adafruit_GFX &gfx) override { app.draw(gfx); }
+  bool handleTouch(const TouchPoint &) override { return false; }
+  bool hasActiveSession() const override { return app.hasActiveSession(); }
+
+private:
+  PaintApp &app;
+};
+
+AppScreen<TicTacToeApp> ticTacToeScreen(ticTacToe);
+AppScreen<MinesweeperApp> minesweeperScreen(minesweeper);
+AppScreen<HangmanApp, true> hangmanScreen(hangman);
+AppScreen<SudokuApp> sudokuScreen(sudoku);
+AppScreen<WordleApp, true> wordleScreen(wordle);
+AppScreen<ChessApp, true> chessScreen(chess);
+AppScreen<CubeApp> cubeScreen(cubeApp);
+AppScreen<CalculatorApp> calculatorScreen(calculator);
+AppScreen<QrApp, true> qrScreen(qrApp);
+PaintScreen paintScreen(paintApp);
+
 Screen screen = SCREEN_HOME;
+ActiveApp *activeApp = nullptr;
 String typedText;
 bool dirty = true;
 bool confirmQuit = false;
@@ -63,6 +120,7 @@ unsigned long quitDialogOpenedAt = 0;
 unsigned long lastHomeSecond = 0;
 TaskHandle_t buttonTaskHandle = NULL;
 volatile uint8_t pendingMenuClicks = 0;
+volatile uint8_t pendingMenuDoubleClicks = 0;
 volatile uint8_t pendingMenuLongPresses = 0;
 volatile uint8_t pendingPowerClicks = 0;
 volatile uint8_t pendingPowerLongPresses = 0;
@@ -81,45 +139,69 @@ bool consumeButtonEvent(volatile uint8_t &counter) {
   return true;
 }
 
-void switchTo(Screen next) {
+void switchTo(Screen next, ActiveApp *nextApp = nullptr) {
+  if (screen == SCREEN_PAINT && next != SCREEN_PAINT) {
+    paintApp.stop();
+  }
   screen = next;
+  activeApp = nextApp;
+  if (screen == SCREEN_PAINT) {
+    paintApp.start(display);
+  }
   confirmQuit = false;
   dirty = true;
 }
 
-bool isSessionScreen() {
+void switchKeyboardMode();
+
+bool toggleActiveKeyboardCaps() {
   switch (screen) {
-  case SCREEN_TICTACTOE:
-    return ticTacToe.hasActiveSession();
-  case SCREEN_MINESWEEPER:
-    return minesweeper.hasActiveSession();
-  case SCREEN_HANGMAN:
-    return hangman.hasActiveSession();
-  case SCREEN_SUDOKU:
-    return sudoku.hasActiveSession();
-  case SCREEN_WORDLE:
-    return wordle.hasActiveSession();
-  case SCREEN_CHESS:
-    return chess.hasActiveSession();
-  case SCREEN_CUBE:
-    return cubeApp.hasActiveSession();
-  case SCREEN_CALCULATOR:
-    return calculator.hasActiveSession();
-  case SCREEN_QR:
-    return qrApp.hasActiveSession();
+  case SCREEN_KEYBOARD:
+    keyboard.toggleCaps();
+    return true;
+  case SCREEN_T9_KEYBOARD:
+    t9Keyboard.toggleCaps();
+    return true;
+  case SCREEN_QWERTY_ZOOM_KEYBOARD:
+    qwertyZoomKeyboard.toggleCaps();
+    return true;
   default:
     return false;
   }
+}
+
+bool isKeyboardScreen() {
+  return screen == SCREEN_KEYBOARD || screen == SCREEN_T9_KEYBOARD ||
+         screen == SCREEN_QWERTY_ZOOM_KEYBOARD;
+}
+
+bool isSessionScreen() {
+  return activeApp != nullptr && activeApp->hasActiveSession();
+}
+
+void openQuitDialog() {
+  if (screen == SCREEN_PAINT) {
+    paintApp.stop();
+  }
+  confirmQuit = true;
+  quitDialogOpenedAt = millis();
+  dirty = true;
 }
 
 void handleMenuButton() {
   if (confirmQuit) {
     return;
   }
-  if (screen != SCREEN_CHESS && isSessionScreen()) {
-    confirmQuit = true;
-    quitDialogOpenedAt = millis();
+  if (handleActiveMenuButton()) {
     dirty = true;
+    return;
+  }
+  if (toggleActiveKeyboardCaps()) {
+    dirty = true;
+    return;
+  }
+  if (screen != SCREEN_CHESS && isSessionScreen()) {
+    openQuitDialog();
     return;
   }
   if (screen == SCREEN_CHESS && chess.handleMenuButton()) {
@@ -129,20 +211,36 @@ void handleMenuButton() {
   switchTo(screen == SCREEN_MENU ? SCREEN_HOME : SCREEN_MENU);
 }
 
+void handleMenuDoubleButton() {
+  if (confirmQuit) {
+    return;
+  }
+  if (handleActiveMenuDoubleButton()) {
+    dirty = true;
+    return;
+  }
+  if (isKeyboardScreen()) {
+    switchKeyboardMode();
+  }
+}
+
 void handleMenuLongButton() {
   if (confirmQuit) {
     return;
   }
-  if (screen == SCREEN_CHESS && chess.handleMenuLongPress()) {
-    confirmQuit = true;
-    quitDialogOpenedAt = millis();
+  if (handleActiveMenuLongButton()) {
     dirty = true;
     return;
   }
+  if (isKeyboardScreen()) {
+    return;
+  }
+  if (screen == SCREEN_CHESS && chess.handleMenuLongPress()) {
+    openQuitDialog();
+    return;
+  }
   if (isSessionScreen()) {
-    confirmQuit = true;
-    quitDialogOpenedAt = millis();
-    dirty = true;
+    openQuitDialog();
     return;
   }
 }
@@ -174,6 +272,10 @@ void handleOtherButton() {
     }
     return;
   }
+  if (screen == SCREEN_PAINT) {
+    paintApp.clear();
+    return;
+  }
   if (screen == SCREEN_TICTACTOE || screen == SCREEN_MINESWEEPER ||
       screen == SCREEN_SUDOKU || screen == SCREEN_CUBE ||
       screen == SCREEN_CALCULATOR || screen == SCREEN_QR) {
@@ -185,9 +287,7 @@ void handleOtherButton() {
       return;
     }
     if (chess.isHistoryOpen() && chess.hasActiveSession()) {
-      confirmQuit = true;
-      quitDialogOpenedAt = millis();
-      dirty = true;
+      openQuitDialog();
       return;
     }
     if (chess.handlePowerButton()) {
@@ -213,6 +313,9 @@ void consumeQueuedButtons() {
   while (consumeButtonEvent(pendingMenuLongPresses)) {
     handleMenuLongButton();
   }
+  while (consumeButtonEvent(pendingMenuDoubleClicks)) {
+    handleMenuDoubleButton();
+  }
   while (consumeButtonEvent(pendingMenuClicks)) {
     handleMenuButton();
   }
@@ -234,16 +337,22 @@ void formatSeconds(unsigned long totalSeconds, char *buffer, size_t size) {
 void drawHome() {
   display.setTextColor(1);
   display.setTextSize(2);
-  int16_t x;
-  int16_t y;
-  uint16_t w;
-  uint16_t h;
-  display.getTextBounds("Pocket Ink", 0, 0, &x, &y, &w, &h);
-  display.setCursor((EPD_WIDTH - w) / 2, 72);
+  int16_t titleX;
+  int16_t titleY;
+  uint16_t titleW;
+  uint16_t titleH;
+  display.getTextBounds("Pocket Ink", 0, 0, &titleX, &titleY, &titleW,
+                        &titleH);
+  display.setCursor((EPD_WIDTH - titleW) / 2 - titleX, 72);
   display.print("Pocket Ink");
   display.setTextSize(1);
-  display.getTextBounds("os", 0, 0, &x, &y, &w, &h);
-  display.setCursor((EPD_WIDTH - w) / 2, 94);
+  int16_t osX;
+  int16_t osY;
+  uint16_t osW;
+  uint16_t osH;
+  display.getTextBounds("os", 0, 0, &osX, &osY, &osW, &osH);
+  display.setCursor((EPD_WIDTH - titleW) / 2 - titleX + titleW - osW - osX,
+                    94);
   display.print("os");
 
   char text[16];
@@ -253,8 +362,12 @@ void drawHome() {
   display.print("TIME --:--");
 
   formatSeconds(uptimeSeconds, text, sizeof(text));
-  display.getTextBounds(text, 0, 0, &x, &y, &w, &h);
-  display.setCursor(EPD_WIDTH - w - 4, 8);
+  int16_t timeX;
+  int16_t timeY;
+  uint16_t timeW;
+  uint16_t timeH;
+  display.getTextBounds(text, 0, 0, &timeX, &timeY, &timeW, &timeH);
+  display.setCursor(EPD_WIDTH - timeW - 4 - timeX, 8);
   display.print(text);
 
   display.setCursor(58, 182);
@@ -287,6 +400,9 @@ bool handleQuitDialogTouch(const TouchPoint &point) {
   }
   if (uiContains(QUIT_NO_BUTTON, point)) {
     confirmQuit = false;
+    if (screen == SCREEN_PAINT) {
+      paintApp.start(display);
+    }
     dirty = true;
     return true;
   }
@@ -313,8 +429,9 @@ void drawMenu() {
   const char *gameIcons[9] = {"T", "M", "H", "S", "W", "C", "", "", ""};
   const char *gameLabels[9] = {"tictac", "mines", "hangman", "sudoku", "wordle",
                                "chess",  "",      "",        ""};
-  const char *appIcons[9] = {"3", "=", "Q", "", "", "", "", "", ""};
-  const char *appLabels[9] = {"3dcube", "calc", "qr", "", "", "", "", "", ""};
+  const char *appIcons[9] = {"3", "=", "Q", "P", "", "", "", "", ""};
+  const char *appLabels[9] = {"3dcube", "calc", "qr", "paint", "",
+                              "",       "",     "",   ""};
   const char **icons = menuCategory == MENU_GAMES ? gameIcons : appIcons;
   const char **labels = menuCategory == MENU_GAMES ? gameLabels : appLabels;
   int n = 0;
@@ -366,15 +483,19 @@ void handleMenuTouch(const TouchPoint &point) {
     switch (app) {
     case 0:
       cubeApp.reset();
-      switchTo(SCREEN_CUBE);
+      switchTo(SCREEN_CUBE, &cubeScreen);
       break;
     case 1:
       calculator.reset();
-      switchTo(SCREEN_CALCULATOR);
+      switchTo(SCREEN_CALCULATOR, &calculatorScreen);
       break;
     case 2:
       qrApp.reset();
-      switchTo(SCREEN_QR);
+      switchTo(SCREEN_QR, &qrScreen);
+      break;
+    case 3:
+      paintApp.reset();
+      switchTo(SCREEN_PAINT, &paintScreen);
       break;
     default:
       break;
@@ -384,27 +505,27 @@ void handleMenuTouch(const TouchPoint &point) {
   switch (app) {
   case 0:
     ticTacToe.reset();
-    switchTo(SCREEN_TICTACTOE);
+    switchTo(SCREEN_TICTACTOE, &ticTacToeScreen);
     break;
   case 1:
     minesweeper.reset();
-    switchTo(SCREEN_MINESWEEPER);
+    switchTo(SCREEN_MINESWEEPER, &minesweeperScreen);
     break;
   case 2:
     hangman.reset();
-    switchTo(SCREEN_HANGMAN);
+    switchTo(SCREEN_HANGMAN, &hangmanScreen);
     break;
   case 3:
     sudoku.reset();
-    switchTo(SCREEN_SUDOKU);
+    switchTo(SCREEN_SUDOKU, &sudokuScreen);
     break;
   case 4:
     wordle.reset();
-    switchTo(SCREEN_WORDLE);
+    switchTo(SCREEN_WORDLE, &wordleScreen);
     break;
   case 5:
     chess.reset();
-    switchTo(SCREEN_CHESS);
+    switchTo(SCREEN_CHESS, &chessScreen);
     break;
   default:
     break;
@@ -442,8 +563,12 @@ bool handleQwertyZoomTouch(const TouchPoint &point) {
   return applyKeyboardEvent(qwertyZoomKeyboard.hitTest(point));
 }
 
-void render() {
-  display.clear();
+void drawActiveScreen() {
+  if (activeApp != nullptr) {
+    activeApp->draw(display);
+    return;
+  }
+
   switch (screen) {
   case SCREEN_HOME:
     drawHome();
@@ -460,38 +585,48 @@ void render() {
   case SCREEN_MENU:
     drawMenu();
     break;
-  case SCREEN_TICTACTOE:
-    ticTacToe.draw(display);
-    break;
-  case SCREEN_MINESWEEPER:
-    minesweeper.draw(display);
-    break;
-  case SCREEN_HANGMAN:
-    hangman.draw(display);
-    break;
-  case SCREEN_SUDOKU:
-    sudoku.draw(display);
-    break;
-  case SCREEN_WORDLE:
-    wordle.draw(display);
-    break;
-  case SCREEN_CHESS:
-    chess.draw(display);
-    break;
-  case SCREEN_CUBE:
-    cubeApp.draw(display);
-    break;
-  case SCREEN_CALCULATOR:
-    calculator.draw(display);
-    break;
-  case SCREEN_QR:
-    qrApp.draw(display);
+  default:
     break;
   }
+}
+
+void redrawActiveScreenPartial() {
+  display.lock();
+  display.clear();
+  drawActiveScreen();
+  display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+  display.unlock();
+}
+
+bool handleScreenTouch(const TouchPoint &point) {
+  if (activeApp != nullptr) {
+    return activeApp->handleTouch(point);
+  }
+
+  switch (screen) {
+  case SCREEN_KEYBOARD:
+    return handleKeyboardTouch(point);
+  case SCREEN_T9_KEYBOARD:
+    return t9Keyboard.hitTest(point, typedText).action != KEY_NONE;
+  case SCREEN_QWERTY_ZOOM_KEYBOARD:
+    return handleQwertyZoomTouch(point);
+  case SCREEN_MENU:
+    handleMenuTouch(point);
+    return false;
+  default:
+    return false;
+  }
+}
+
+void render() {
+  display.lock();
+  display.clear();
+  drawActiveScreen();
   if (confirmQuit) {
     drawQuitDialog();
   }
   display.flush();
+  display.unlock();
   dirty = false;
 }
 
@@ -508,6 +643,8 @@ void setup() {
   backButton.setLongPressMs(1200);
 
   mainButton.attachSingleClick([]() { queueButtonEvent(pendingMenuClicks); });
+  mainButton.attachDoubleClick(
+      []() { queueButtonEvent(pendingMenuDoubleClicks); });
   mainButton.attachLongPressStart(
       []() { queueButtonEvent(pendingMenuLongPresses); });
   backButton.attachSingleClick([]() { queueButtonEvent(pendingPowerClicks); });
@@ -527,136 +664,34 @@ void setup() {
   chess.reset();
   calculator.reset();
   qrApp.reset();
+  paintApp.reset();
   dirty = true;
 }
 
 void loop() {
   consumeQueuedButtons();
 
-  TouchPoint point;
-  if (touch.read(point)) {
-    if (confirmQuit) {
-      handleQuitDialogTouch(point);
-      delay(1);
-      return;
+  if (screen == SCREEN_PAINT && !confirmQuit) {
+    TouchEvent event;
+    while (touch.readEvent(event)) {
+      paintApp.handleTouchEvent(event);
     }
-    switch (screen) {
-    case SCREEN_HOME:
-      break;
-    case SCREEN_KEYBOARD:
-      if (handleKeyboardTouch(point)) {
-        display.clear();
-        keyboard.draw(display, typedText);
-        display.flushPartial(0, 0, 200, 200);
+  } else {
+    TouchPoint point;
+    if (touch.read(point)) {
+      if (confirmQuit) {
+        handleQuitDialogTouch(point);
+        delay(1);
+        return;
       }
-      break;
-    case SCREEN_T9_KEYBOARD:
-      if (t9Keyboard.hitTest(point, typedText).action != KEY_NONE) {
-        display.clear();
-        t9Keyboard.draw(display, typedText);
-        display.flushPartial(0, 0, 200, 200);
+      if (handleScreenTouch(point)) {
+        redrawActiveScreenPartial();
       }
-      break;
-    case SCREEN_QWERTY_ZOOM_KEYBOARD:
-      if (handleQwertyZoomTouch(point)) {
-        display.clear();
-        qwertyZoomKeyboard.draw(display, typedText);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_MENU:
-      handleMenuTouch(point);
-      break;
-    case SCREEN_TICTACTOE:
-      if (ticTacToe.handleTouch(point)) {
-        display.clear();
-        ticTacToe.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_MINESWEEPER:
-      if (minesweeper.handleTouch(point)) {
-        display.clear();
-        minesweeper.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_HANGMAN:
-      if (hangman.handleTouch(point)) {
-        display.clear();
-        hangman.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_SUDOKU:
-      if (sudoku.handleTouch(point)) {
-        display.clear();
-        sudoku.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-  case SCREEN_WORDLE:
-    if (wordle.handleTouch(point)) {
-      display.clear();
-      wordle.draw(display);
-      display.flushPartial(0, 0, 200, 200);
-    }
-    break;
-  case SCREEN_CHESS:
-    if (chess.handleTouch(point)) {
-      display.clear();
-      chess.draw(display);
-      display.flushPartial(0, 0, 200, 200);
-    }
-    break;
-  case SCREEN_CUBE:
-    if (cubeApp.handleTouch(point)) {
-      display.clear();
-      cubeApp.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_CALCULATOR:
-      if (calculator.handleTouch(point)) {
-        display.clear();
-        calculator.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
-    case SCREEN_QR:
-      if (qrApp.handleTouch(point)) {
-        display.clear();
-        qrApp.draw(display);
-        display.flushPartial(0, 0, 200, 200);
-      }
-      break;
     }
   }
 
-  if (screen == SCREEN_T9_KEYBOARD && t9Keyboard.update()) {
-    display.clear();
-    t9Keyboard.draw(display, typedText);
-    display.flushPartial(0, 0, 200, 200);
-  }
-  if (screen == SCREEN_HANGMAN && hangman.update()) {
-    display.clear();
-    hangman.draw(display);
-    display.flushPartial(0, 0, 200, 200);
-  }
-  if (screen == SCREEN_WORDLE && wordle.update()) {
-    display.clear();
-    wordle.draw(display);
-    display.flushPartial(0, 0, 200, 200);
-  }
-  if (screen == SCREEN_QR && qrApp.update()) {
-    display.clear();
-    qrApp.draw(display);
-    display.flushPartial(0, 0, 200, 200);
-  }
-  if (screen == SCREEN_CHESS && chess.update()) {
-    display.clear();
-    chess.draw(display);
-    display.flushPartial(0, 0, 200, 200);
+  if (activeApp != nullptr && activeApp->update()) {
+    redrawActiveScreenPartial();
   }
 
   unsigned long currentSecond = millis() / 1000;

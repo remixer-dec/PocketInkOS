@@ -15,31 +15,54 @@ static const int KEY_W = 62;
 static const int KEY_H = 40;
 static const int KEY_GAP = 4;
 
-static const char *lettersForKey(int key) {
+static const char *sequenceForKey(int key) {
   switch (key) {
   case 1:
-    return ".,?!";
+    return ".,?!/-_1";
   case 2:
-    return "ABC";
+    return "abc2";
   case 3:
-    return "DEF";
+    return "def3";
   case 4:
-    return "GHI";
+    return "ghi4";
   case 5:
-    return "JKL";
+    return "jkl5";
   case 6:
-    return "MNO";
+    return "mno6";
   case 7:
-    return "PQRS";
+    return "pqrs7";
   case 8:
-    return "TUV";
+    return "tuv8";
   case 9:
-    return "WXYZ";
+    return "wxyz9";
   case 0:
-    return " ";
+    return " _+0";
   default:
     return "";
   }
+}
+
+static char applyCaps(char value, bool caps) {
+  if (value >= 'a' && value <= 'z' && caps) {
+    return value - 'a' + 'A';
+  }
+  if (value >= 'A' && value <= 'Z' && !caps) {
+    return value - 'A' + 'a';
+  }
+  return value;
+}
+
+static void buildLabel(char *out, size_t outSize, int key, bool caps) {
+  const char *sequence = sequenceForKey(key);
+  size_t write = 0;
+  for (size_t read = 0; sequence[read] != '\0' && write + 1 < outSize;
+       read++) {
+    if (sequence[read] >= '0' && sequence[read] <= '9') {
+      continue;
+    }
+    out[write++] = applyCaps(sequence[read], caps);
+  }
+  out[write] = '\0';
 }
 
 void T9KeyboardComponent::drawInput(Adafruit_GFX &gfx, const String &text,
@@ -82,13 +105,13 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
   gfx.setCursor(x + 8, y + 6);
   gfx.print(digit);
 
-  const char *label = "";
+  char label[12] = "";
   if (key >= 0 && key <= 9) {
-    label = lettersForKey(key);
+    buildLabel(label, sizeof(label), key, caps);
   } else if (key == 10) {
-    label = "BACK";
+    strncpy(label, "BACK", sizeof(label) - 1);
   } else if (key == 11) {
-    label = "OK";
+    strncpy(label, "OK", sizeof(label) - 1);
   }
   gfx.setTextSize(1);
   gfx.setCursor(x + 8, y + 28);
@@ -130,12 +153,12 @@ char T9KeyboardComponent::currentChar() const {
   if (pendingKey < 0) {
     return 0;
   }
-  const char *letters = lettersForKey(pendingKey);
-  const int len = strlen(letters);
+  const char *sequence = sequenceForKey(pendingKey);
+  const int len = strlen(sequence);
   if (len == 0) {
     return 0;
   }
-  return letters[pendingIndex % len];
+  return applyCaps(sequence[pendingIndex % len], caps);
 }
 
 void T9KeyboardComponent::clearPending() {
@@ -143,6 +166,8 @@ void T9KeyboardComponent::clearPending() {
   pendingIndex = 0;
   pendingAt = 0;
 }
+
+void T9KeyboardComponent::toggleCaps() { caps = !caps; }
 
 bool T9KeyboardComponent::isPendingActive() const {
   return pendingKey >= 0 && millis() - pendingAt < T9_WAIT_MS;
@@ -200,7 +225,7 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
   }
 
   if (sameKey) {
-    pendingIndex = (pendingIndex + 1) % strlen(lettersForKey(key));
+    pendingIndex = (pendingIndex + 1) % strlen(sequenceForKey(key));
     if (text.length() > 0) {
       text.remove(text.length() - 1);
     }

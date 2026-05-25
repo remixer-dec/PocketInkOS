@@ -67,6 +67,8 @@ void WordleApp::reset() {
   inputText = "";
   row = 0;
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  keyboardMode = KEYBOARD_T9;
   for (int i = 0; i < 6; i++) {
     memset(guesses[i], 0, sizeof(guesses[i]));
     for (int j = 0; j < 5; j++) {
@@ -80,7 +82,7 @@ void WordleApp::reset() {
 
 void WordleApp::draw(Adafruit_GFX &gfx) {
   if (keyboardOpen) {
-    inputKeyboard.draw(gfx, inputText, WORD_LENGTH);
+    drawKeyboard(gfx);
     return;
   }
   if (state == STATE_INTRO) {
@@ -95,7 +97,7 @@ void WordleApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool WordleApp::update() {
-  return keyboardOpen && inputKeyboard.update();
+  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
 }
 
 bool WordleApp::handleTouch(const TouchPoint &point) {
@@ -132,6 +134,7 @@ bool WordleApp::openKeyboardFromButton() {
   }
   if (keyboardOpen) {
     keyboardOpen = false;
+    clearActiveMenuButtonConsumer(this);
     return true;
   }
   openKeyboard();
@@ -139,6 +142,36 @@ bool WordleApp::openKeyboardFromButton() {
 }
 
 bool WordleApp::hasActiveSession() const { return state == STATE_GUESSING; }
+
+bool WordleApp::handleMenuButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.toggleCaps();
+  } else {
+    inputKeyboard.toggleCaps();
+  }
+  return true;
+}
+
+bool WordleApp::handleMenuDoubleButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardMode = keyboardMode == KEYBOARD_QWERTY_ZOOM ? KEYBOARD_T9
+                                                      : KEYBOARD_QWERTY_ZOOM;
+  return true;
+}
+
+bool WordleApp::handleMenuLongButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  return true;
+}
 
 void WordleApp::startCpuGame() {
   randomSeed((unsigned long)micros());
@@ -149,6 +182,7 @@ void WordleApp::startPlayerGame() {
   state = STATE_ENTER_WORD;
   inputText = "";
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
 }
 
 void WordleApp::beginGuessing(const char *word) {
@@ -166,6 +200,7 @@ void WordleApp::beginGuessing(const char *word) {
   inputText = "";
   row = 0;
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
   state = STATE_GUESSING;
 }
 
@@ -179,9 +214,7 @@ void WordleApp::drawIntro(Adafruit_GFX &gfx) {
 
 void WordleApp::drawEntry(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(1);
-  gfx.setCursor(58, 6);
-  gfx.print("SECRET WORD");
+  drawCenteredText(gfx, "SECRET WORD", 6, 1);
 
   for (int i = 0; i < 5; i++) {
     int x = BOARD_X + i * (TILE + TILE_GAP);
@@ -192,7 +225,7 @@ void WordleApp::drawEntry(Adafruit_GFX &gfx) {
 
   gfx.setCursor(24, 66);
   gfx.print("Player 1 enters 5 letters");
-  gfx.setCursor(28, 78);
+  gfx.setCursor(24, 78);
   gfx.print("Player 2 looks away");
   uiDrawButton(gfx, INPUT_BUTTON, "WORD");
 }
@@ -255,7 +288,17 @@ void WordleApp::drawTile(Adafruit_GFX &gfx, int x, int y, char letter,
 
 void WordleApp::openKeyboard() {
   inputText = "";
+  keyboardMode = KEYBOARD_T9;
   keyboardOpen = true;
+  setActiveMenuButtonConsumer(this);
+}
+
+void WordleApp::drawKeyboard(Adafruit_GFX &gfx) {
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.draw(gfx, inputText, WORD_LENGTH);
+    return;
+  }
+  inputKeyboard.draw(gfx, inputText, WORD_LENGTH);
 }
 
 void WordleApp::submit() {
@@ -283,6 +326,7 @@ void WordleApp::submit() {
     inputText = "";
   }
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
 }
 
 void WordleApp::copyCurrentWord(char *word) const {
@@ -336,9 +380,21 @@ void WordleApp::setKeyMark(char letter, uint8_t mark) {
 }
 
 bool WordleApp::handleKeyboardTouch(const TouchPoint &point) {
-  KeyboardEvent event = inputKeyboard.hitTest(point, inputText, WORD_LENGTH);
+  KeyboardEvent event =
+      keyboardMode == KEYBOARD_QWERTY_ZOOM
+          ? zoomKeyboard.hitTest(point, inputText.length(), WORD_LENGTH)
+          : inputKeyboard.hitTest(point, inputText, WORD_LENGTH);
   if (event.action == KEY_NONE) {
     return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    if (event.action == KEY_CHAR && inputText.length() < WORD_LENGTH) {
+      inputText += event.value;
+    } else if (event.action == KEY_SPACE && inputText.length() < WORD_LENGTH) {
+      inputText += ' ';
+    } else if (event.action == KEY_BACKSPACE && inputText.length() > 0) {
+      inputText.remove(inputText.length() - 1);
+    }
   }
   if (event.action == KEY_OK) {
     submit();

@@ -2,6 +2,7 @@
 #include "ui_helpers.h"
 
 #include <Arduino.h>
+#include <cstdio>
 #include <cstring>
 
 static const char *CPU_WORDS[] = {"CODE",  "PIXEL", "BOARD", "TOUCH",
@@ -14,6 +15,7 @@ static const UiRect PVP_BUTTON = {108, 64, 74, 34};
 static const UiRect INPUT_BUTTON = {50, 176, 100, 22};
 static const int SECRET_MAX = 12;
 static const int GUESS_MAX = 1;
+static const int SCREEN_WIDTH = 200;
 
 static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
                              uint8_t textSize) {
@@ -23,7 +25,19 @@ static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
   uint16_t h;
   gfx.setTextSize(textSize);
   gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
-  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.setCursor((SCREEN_WIDTH - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+}
+
+static void drawRightAlignedText(Adafruit_GFX &gfx, const char *text, int x,
+                                 int y, uint8_t textSize) {
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text, x, y, &x1, &y1, &w, &h);
+  gfx.setCursor(x - static_cast<int>(w) - x1, y);
   gfx.print(text);
 }
 
@@ -35,13 +49,14 @@ void HangmanApp::reset() {
     guessed[i] = false;
   }
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  keyboardMode = KEYBOARD_T9;
   misses = 0;
 }
 
 void HangmanApp::draw(Adafruit_GFX &gfx) {
   if (keyboardOpen) {
-    inputKeyboard.draw(gfx, inputText,
-                       state == STATE_ENTER_WORD ? SECRET_MAX : GUESS_MAX);
+    drawKeyboard(gfx);
     return;
   }
   if (state == STATE_INTRO) {
@@ -56,7 +71,7 @@ void HangmanApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool HangmanApp::update() {
-  return keyboardOpen && inputKeyboard.update();
+  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
 }
 
 bool HangmanApp::handleTouch(const TouchPoint &point) {
@@ -102,6 +117,7 @@ bool HangmanApp::openKeyboardFromButton() {
   }
   if (keyboardOpen) {
     keyboardOpen = false;
+    clearActiveMenuButtonConsumer(this);
     return true;
   }
   openKeyboard();
@@ -109,6 +125,36 @@ bool HangmanApp::openKeyboardFromButton() {
 }
 
 bool HangmanApp::hasActiveSession() const { return state == STATE_GUESSING; }
+
+bool HangmanApp::handleMenuButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.toggleCaps();
+  } else {
+    inputKeyboard.toggleCaps();
+  }
+  return true;
+}
+
+bool HangmanApp::handleMenuDoubleButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardMode = keyboardMode == KEYBOARD_QWERTY_ZOOM ? KEYBOARD_T9
+                                                      : KEYBOARD_QWERTY_ZOOM;
+  return true;
+}
+
+bool HangmanApp::handleMenuLongButton() {
+  if (!keyboardOpen) {
+    return false;
+  }
+  keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
+  return true;
+}
 
 void HangmanApp::startCpuGame() {
   randomSeed((unsigned long)micros());
@@ -128,6 +174,7 @@ void HangmanApp::beginGuessing(const char *secret) {
   }
   misses = 0;
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
   state = STATE_GUESSING;
 }
 
@@ -141,9 +188,7 @@ void HangmanApp::drawIntro(Adafruit_GFX &gfx) {
 
 void HangmanApp::drawEntry(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
-  gfx.setTextSize(1);
-  gfx.setCursor(56, 10);
-  gfx.print("SECRET WORD");
+  drawCenteredText(gfx, "SECRET WORD", 10, 1);
 
   gfx.drawRect(12, 32, 176, 28, 1);
   gfx.setTextSize(2);
@@ -156,8 +201,8 @@ void HangmanApp::drawEntry(Adafruit_GFX &gfx) {
   gfx.setTextSize(1);
   gfx.setCursor(17, 70);
   gfx.print("Player 1 enters word");
-  gfx.setCursor(12, 86);
-  gfx.print("P2 looks away");
+  gfx.setCursor(17, 82);
+  gfx.print("Player 2 looks away");
   uiDrawButton(gfx, INPUT_BUTTON, "WORD");
 }
 
@@ -165,15 +210,15 @@ void HangmanApp::drawGame(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
 
-  gfx.setCursor(68, 10);
   if (state == STATE_WON) {
-    gfx.print("YOU WIN");
+    drawCenteredText(gfx, "YOU WIN", 10, 1);
   } else if (state == STATE_LOST) {
-    gfx.print("WORD: ");
-    gfx.print(word);
+    drawCenteredText(gfx, "WORD:", 10, 1);
+    drawRightAlignedText(gfx, word, 188, 10, 1);
   } else {
-    gfx.print(MAX_MISSES - misses);
-    gfx.print(" <3");
+    char lives[8];
+    snprintf(lives, sizeof(lives), "%d <3", MAX_MISSES - misses);
+    drawRightAlignedText(gfx, lives, 190, 10, 1);
   }
 
   drawGallows(gfx);
@@ -212,30 +257,43 @@ void HangmanApp::drawGame(Adafruit_GFX &gfx) {
 }
 
 void HangmanApp::drawGallows(Adafruit_GFX &gfx) {
-  gfx.drawLine(52, 74, 90, 74, 1);
-  gfx.drawLine(58, 74, 58, 28, 1);
-  gfx.drawLine(58, 28, 82, 28, 1);
-  gfx.drawLine(82, 28, 82, 36, 1);
+  const int shiftX = 29;
+  gfx.drawLine(52 + shiftX, 74, 90 + shiftX, 74, 1);
+  gfx.drawLine(58 + shiftX, 74, 58 + shiftX, 28, 1);
+  gfx.drawLine(58 + shiftX, 28, 82 + shiftX, 28, 1);
+  gfx.drawLine(82 + shiftX, 28, 82 + shiftX, 36, 1);
 
   if (misses > 0)
-    gfx.drawCircle(82, 42, 6, 1);
+    gfx.drawCircle(82 + shiftX, 42, 6, 1);
   if (misses > 1)
-    gfx.drawLine(82, 48, 82, 60, 1);
+    gfx.drawLine(82 + shiftX, 48, 82 + shiftX, 60, 1);
   if (misses > 2)
-    gfx.drawLine(82, 52, 74, 58, 1);
+    gfx.drawLine(82 + shiftX, 52, 74 + shiftX, 58, 1);
   if (misses > 3)
-    gfx.drawLine(82, 52, 90, 58, 1);
+    gfx.drawLine(82 + shiftX, 52, 90 + shiftX, 58, 1);
   if (misses > 4)
-    gfx.drawLine(82, 60, 75, 69, 1);
+    gfx.drawLine(82 + shiftX, 60, 75 + shiftX, 69, 1);
   if (misses > 5)
-    gfx.drawLine(82, 60, 89, 69, 1);
+    gfx.drawLine(82 + shiftX, 60, 89 + shiftX, 69, 1);
 }
 
 bool HangmanApp::handleKeyboardTouch(const TouchPoint &point) {
-  KeyboardEvent event = inputKeyboard.hitTest(
-      point, inputText, state == STATE_ENTER_WORD ? SECRET_MAX : GUESS_MAX);
+  size_t maxLength = state == STATE_ENTER_WORD ? SECRET_MAX : GUESS_MAX;
+  KeyboardEvent event =
+      keyboardMode == KEYBOARD_QWERTY_ZOOM
+          ? zoomKeyboard.hitTest(point, inputText.length(), maxLength)
+          : inputKeyboard.hitTest(point, inputText, maxLength);
   if (event.action == KEY_NONE) {
     return false;
+  }
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    if (event.action == KEY_CHAR && inputText.length() < maxLength) {
+      inputText += event.value;
+    } else if (event.action == KEY_SPACE && inputText.length() < maxLength) {
+      inputText += ' ';
+    } else if (event.action == KEY_BACKSPACE && inputText.length() > 0) {
+      inputText.remove(inputText.length() - 1);
+    }
   }
   if (event.action == KEY_OK) {
     submitInput();
@@ -246,7 +304,18 @@ bool HangmanApp::handleKeyboardTouch(const TouchPoint &point) {
 
 void HangmanApp::openKeyboard() {
   inputText = "";
+  keyboardMode = KEYBOARD_T9;
   keyboardOpen = true;
+  setActiveMenuButtonConsumer(this);
+}
+
+void HangmanApp::drawKeyboard(Adafruit_GFX &gfx) {
+  int maxLength = state == STATE_ENTER_WORD ? SECRET_MAX : GUESS_MAX;
+  if (keyboardMode == KEYBOARD_QWERTY_ZOOM) {
+    zoomKeyboard.draw(gfx, inputText, maxLength);
+    return;
+  }
+  inputKeyboard.draw(gfx, inputText, maxLength);
 }
 
 void HangmanApp::submitInput() {
@@ -261,6 +330,7 @@ void HangmanApp::submitInput() {
 
   char letter = firstInputLetter();
   keyboardOpen = false;
+  clearActiveMenuButtonConsumer(this);
   if (letter) {
     guessLetter(letter);
   }

@@ -1,17 +1,22 @@
 #ifndef HANGMAN_APP_H
 #define HANGMAN_APP_H
 
+#include "menu_button_consumer.h"
+#include "qwerty_zoom_keyboard_component.h"
 #include "t9_keyboard_component.h"
 #include "touch_input.h"
 #include <Adafruit_GFX.h>
 
-class HangmanApp {
+class HangmanApp : public MenuButtonConsumer {
 public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);
   bool openKeyboardFromButton();
+  bool handleMenuButton();
+  bool handleMenuDoubleButton();
+  bool handleMenuLongButton();
   bool hasActiveSession() const;
 
 private:
@@ -22,11 +27,14 @@ private:
     STATE_WON,
     STATE_LOST
   };
+  enum KeyboardMode { KEYBOARD_T9, KEYBOARD_QWERTY_ZOOM };
 
   State state = STATE_INTRO;
   char word[13] = {0};
   String inputText;
   T9KeyboardComponent inputKeyboard;
+  QwertyZoomKeyboardComponent zoomKeyboard;
+  KeyboardMode keyboardMode = KEYBOARD_T9;
   bool guessed[26] = {false};
   bool keyboardOpen = false;
   int misses = 0;
@@ -40,6 +48,7 @@ private:
   void drawGallows(Adafruit_GFX &gfx);
   bool handleKeyboardTouch(const TouchPoint &point);
   void openKeyboard();
+  void drawKeyboard(Adafruit_GFX &gfx);
   void submitInput();
   void guessLetter(char letter);
   void copySanitizedWord(char *target, int targetSize) const;

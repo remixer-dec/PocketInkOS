@@ -16,6 +16,7 @@ for file in \
   "$ROOT/src/hangman_app.cpp" \
   "$ROOT/src/keyboard_component.cpp" \
   "$ROOT/src/minesweeper_app.cpp" \
+  "$ROOT/src/paint_app.cpp" \
   "$ROOT/src/qwerty_zoom_keyboard_component.cpp" \
   "$ROOT/src/qr_app.cpp" \
   "$ROOT/src/smart_button.cpp" \

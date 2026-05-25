@@ -56,3 +56,13 @@ void AppDisplay::flushPartial(int16_t, int16_t, int16_t, int16_t) {
 
   driver.EPD_DisplayPart();
 }
+
+void AppDisplay::lock() {
+  while (__sync_lock_test_and_set(&locked, true)) {
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+void AppDisplay::unlock() {
+  __sync_lock_release(&locked);
+}

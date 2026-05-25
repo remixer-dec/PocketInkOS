@@ -28,6 +28,7 @@ public:
   KeyboardEvent hitTest(const TouchPoint &point);
   KeyboardEvent hitTest(const TouchPoint &point, int currentLength,
                         int maxLength);
+  void toggleCaps();
 
 private:
   bool caps = false;
