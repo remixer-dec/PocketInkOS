@@ -56,6 +56,42 @@ Do not use `Wire` for FT6336 here unless there is a specific reason to revisit i
 
 The ESP-IDF burst read variant was not selected. The working reader is `idf-split`.
 
+## Shared I2C Bus Conflict
+
+The touch controller and the PCF85063 RTC share the same physical I2C pins:
+
+```cpp
+#define ESP32_I2C_SDA 47
+#define ESP32_I2C_SCL 48
+```
+
+The touch driver owns this bus through the ESP-IDF I2C master API:
+
+```cpp
+i2c_new_master_bus(...)
+i2c_master_bus_add_device(...)
+i2c_master_transmit_receive(...)
+```
+
+Do not initialize Arduino `Wire` on these pins after touch has started:
+
+```cpp
+Wire.begin(ESP32_I2C_SDA, ESP32_I2C_SCL); // breaks touch on this firmware
+```
+
+That creates a second I2C owner on the same peripheral/pins and can invalidate
+or disrupt the IDF bus/device handles used by the touch polling task. The result
+is severe: the UI still runs, but touch reads stop producing events.
+
+Any future RTC support must use the same ESP-IDF bus ownership model as touch.
+The clean design is a shared I2C bus module that creates one bus on GPIO 47/48
+and registers both devices:
+
+- FT6336 touch controller at `0x38`
+- PCF85063 RTC at `0x51`
+
+Until that shared bus exists, RTC code must not call `Wire.begin(...)`.
+
 ## Power and Reset Requirements
 
 Before initializing touch:

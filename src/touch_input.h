@@ -2,6 +2,7 @@
 #define TOUCH_INPUT_H
 
 #include <Arduino.h>
+#include <driver/i2c_master.h>
 
 struct TouchPoint {
   uint16_t x;
@@ -25,5 +26,7 @@ public:
   bool read(TouchPoint &point);
   bool readEvent(TouchEvent &event);
 };
+
+i2c_master_bus_handle_t touchI2cBusHandle();
 
 #endif

@@ -6,7 +6,12 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SCRIPT_DIR/config.sh"
 
-BUILD_DIR="$PROJECT_DIR/build"
+NETWORK_APPS="${ENABLE_NETWORK_APPS:-1}"
+if [[ "$NETWORK_APPS" != "0" ]]; then
+  BUILD_DIR="$PROJECT_DIR/build/network"
+else
+  BUILD_DIR="$PROJECT_DIR/build/no-network"
+fi
 SKETCH_DIR="$PROJECT_DIR/src"
 APP_BIN="$BUILD_DIR/src.ino.bin"
 
@@ -20,7 +25,14 @@ log "Build:   $BUILD_DIR"
 log "Port:    $PORT"
 log "FQBN:    $FQBN"
 
+"$PROJECT_DIR/tools/generate-secrets-header.sh"
+
 COMPILE_ARGS=(arduino-cli compile --fqbn "$FQBN" --build-path "$BUILD_DIR")
+if [[ "$NETWORK_APPS" != "0" ]]; then
+  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=1")
+else
+  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=0")
+fi
 if [[ "${VERBOSE:-0}" == "1" ]]; then
   COMPILE_ARGS+=(--verbose)
 fi

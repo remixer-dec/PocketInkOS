@@ -254,3 +254,5 @@ bool TouchInput::readEvent(TouchEvent &event) {
 
   return xQueueReceive(touchQueue, &event, 0) == pdPASS;
 }
+
+i2c_master_bus_handle_t touchI2cBusHandle() { return touchBus; }

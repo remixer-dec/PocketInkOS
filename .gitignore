@@ -1,5 +1,7 @@
 .DS_Store
 build
+.env
+src/secrets_config.h
 
 .opencode-container-id
 /build/

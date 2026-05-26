@@ -1,20 +1,36 @@
 #include "app_display.h"
 #include "calculator_app.h"
 #include "chess_app.h"
+#include "contact_links_app.h"
 #include "cube_app.h"
 #include "hangman_app.h"
+#ifndef ENABLE_NETWORK_APPS
+#define ENABLE_NETWORK_APPS 1
+#endif
+#if ENABLE_NETWORK_APPS
+#include "hn_app.h"
+#include "ai_app.h"
+#endif
 #include "keyboard_component.h"
 #include "menu_button_consumer.h"
 #include "minesweeper_app.h"
 #include "paint_app.h"
 #include "qwerty_zoom_keyboard_component.h"
 #include "qr_app.h"
+#if ENABLE_NETWORK_APPS
+#include "reddit_app.h"
+#endif
 #include "smart_button.h"
 #include "sudoku_app.h"
 #include "tictactoe_app.h"
 #include "t9_keyboard_component.h"
 #include "touch_input.h"
 #include "ui_helpers.h"
+#include "device_clock.h"
+#if ENABLE_NETWORK_APPS
+#include "wifi_app.h"
+#include "weather_app.h"
+#endif
 #include "wordle_app.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,10 +51,26 @@ enum Screen {
   SCREEN_CUBE,
   SCREEN_CALCULATOR,
   SCREEN_QR,
-  SCREEN_PAINT
+  SCREEN_PAINT,
+  SCREEN_CONTACT_LINKS
+#if ENABLE_NETWORK_APPS
+  ,
+  SCREEN_WIFI,
+  SCREEN_REDDIT,
+  SCREEN_HN,
+  SCREEN_AI,
+  SCREEN_WEATHER
+#endif
 };
 
-enum MenuCategory { MENU_GAMES, MENU_APPS };
+enum MenuCategory {
+  MENU_GAMES,
+  MENU_APPS
+#if ENABLE_NETWORK_APPS
+  ,
+  MENU_NETWORK
+#endif
+};
 
 AppDisplay display;
 TouchInput touch;
@@ -46,6 +78,14 @@ CubeApp cubeApp;
 CalculatorApp calculator;
 QrApp qrApp;
 PaintApp paintApp;
+ContactLinksApp contactLinks;
+#if ENABLE_NETWORK_APPS
+WifiApp wifiApp;
+RedditApp redditApp;
+HnApp hnApp;
+AiApp aiApp;
+WeatherApp weatherApp;
+#endif
 KeyboardComponent keyboard;
 QwertyZoomKeyboardComponent qwertyZoomKeyboard;
 T9KeyboardComponent t9Keyboard;
@@ -109,6 +149,14 @@ AppScreen<CubeApp> cubeScreen(cubeApp);
 AppScreen<CalculatorApp> calculatorScreen(calculator);
 AppScreen<QrApp, true> qrScreen(qrApp);
 PaintScreen paintScreen(paintApp);
+AppScreen<ContactLinksApp> contactLinksScreen(contactLinks);
+#if ENABLE_NETWORK_APPS
+AppScreen<WifiApp, true> wifiScreen(wifiApp);
+AppScreen<RedditApp, true> redditScreen(redditApp);
+AppScreen<HnApp, true> hnScreen(hnApp);
+AppScreen<AiApp, true> aiScreen(aiApp);
+AppScreen<WeatherApp, true> weatherScreen(weatherApp);
+#endif
 
 Screen screen = SCREEN_HOME;
 ActiveApp *activeApp = nullptr;
@@ -154,6 +202,56 @@ void switchTo(Screen next, ActiveApp *nextApp = nullptr) {
 
 void switchKeyboardMode();
 
+MenuCategory previousMenuCategory(MenuCategory category) {
+  switch (category) {
+  case MENU_GAMES:
+#if ENABLE_NETWORK_APPS
+    return MENU_NETWORK;
+#else
+    return MENU_APPS;
+#endif
+  case MENU_APPS:
+    return MENU_GAMES;
+#if ENABLE_NETWORK_APPS
+  case MENU_NETWORK:
+    return MENU_APPS;
+#endif
+  }
+  return MENU_GAMES;
+}
+
+MenuCategory nextMenuCategory(MenuCategory category) {
+  switch (category) {
+  case MENU_GAMES:
+    return MENU_APPS;
+  case MENU_APPS:
+#if ENABLE_NETWORK_APPS
+    return MENU_NETWORK;
+#else
+    return MENU_GAMES;
+#endif
+#if ENABLE_NETWORK_APPS
+  case MENU_NETWORK:
+    return MENU_GAMES;
+#endif
+  }
+  return MENU_GAMES;
+}
+
+const char *menuCategoryTitle(MenuCategory category) {
+  switch (category) {
+  case MENU_GAMES:
+    return "GAMES";
+  case MENU_APPS:
+    return "APPS";
+#if ENABLE_NETWORK_APPS
+  case MENU_NETWORK:
+    return "NETWORK";
+#endif
+  }
+  return "GAMES";
+}
+
 bool toggleActiveKeyboardCaps() {
   switch (screen) {
   case SCREEN_KEYBOARD:
@@ -192,6 +290,20 @@ void handleMenuButton() {
   if (confirmQuit) {
     return;
   }
+#if ENABLE_NETWORK_APPS
+  if (screen == SCREEN_REDDIT && redditApp.handleMenuButton()) {
+    dirty = true;
+    return;
+  }
+  if (screen == SCREEN_HN && hnApp.handleMenuButton()) {
+    dirty = true;
+    return;
+  }
+  if (screen == SCREEN_HN) {
+    switchTo(SCREEN_MENU);
+    return;
+  }
+#endif
   if (handleActiveMenuButton()) {
     dirty = true;
     return;
@@ -254,6 +366,15 @@ void switchKeyboardMode() {
 }
 
 void handleOtherButton() {
+  if (screen == SCREEN_HOME) {
+    contactLinks.reset();
+    switchTo(SCREEN_CONTACT_LINKS, &contactLinksScreen);
+    return;
+  }
+  if (screen == SCREEN_CONTACT_LINKS) {
+    switchTo(SCREEN_HOME);
+    return;
+  }
   if (screen == SCREEN_HANGMAN) {
     if (hangman.openKeyboardFromButton()) {
       dirty = true;
@@ -276,6 +397,19 @@ void handleOtherButton() {
     paintApp.clear();
     return;
   }
+#if ENABLE_NETWORK_APPS
+  if (screen == SCREEN_WIFI || screen == SCREEN_REDDIT || screen == SCREEN_HN ||
+      screen == SCREEN_AI || screen == SCREEN_WEATHER) {
+    if (screen == SCREEN_REDDIT && redditApp.handlePowerButton()) {
+      dirty = true;
+    } else if (screen == SCREEN_HN && hnApp.handlePowerButton()) {
+      dirty = true;
+    } else if (screen == SCREEN_AI && aiApp.handlePowerButton()) {
+      dirty = true;
+    }
+    return;
+  }
+#endif
   if (screen == SCREEN_TICTACTOE || screen == SCREEN_MINESWEEPER ||
       screen == SCREEN_SUDOKU || screen == SCREEN_CUBE ||
       screen == SCREEN_CALCULATOR || screen == SCREEN_QR) {
@@ -295,7 +429,7 @@ void handleOtherButton() {
     }
     return;
   }
-  if (screen == SCREEN_HOME || screen == SCREEN_MENU) {
+  if (screen == SCREEN_MENU) {
     return;
   }
   switchKeyboardMode();
@@ -355,23 +489,39 @@ void drawHome() {
                     94);
   display.print("os");
 
-  char text[16];
   unsigned long uptimeSeconds = millis() / 1000;
 
-  display.setCursor(4, 8);
-  display.print("TIME --:--");
+  char dateText[16];
+  char timeText[16];
+  if (deviceClock.isSet()) {
+    deviceClock.formatDate(dateText, sizeof(dateText));
+    deviceClock.formatTime(timeText, sizeof(timeText));
+    display.setCursor(4, 8);
+    display.print(dateText);
+  } else {
+    display.setCursor(4, 8);
+    display.print("TIME --:--");
+    formatSeconds(uptimeSeconds, timeText, sizeof(timeText));
+  }
 
-  formatSeconds(uptimeSeconds, text, sizeof(text));
+#if ENABLE_NETWORK_APPS
+  if (wifiApp.displayState() != WIFI_DISPLAY_OFF) {
+    wifiApp.drawStatusIcon(display, 150, 18);
+  }
+#endif
+
   int16_t timeX;
   int16_t timeY;
   uint16_t timeW;
   uint16_t timeH;
-  display.getTextBounds(text, 0, 0, &timeX, &timeY, &timeW, &timeH);
+  display.getTextBounds(timeText, 0, 0, &timeX, &timeY, &timeW, &timeH);
   display.setCursor(EPD_WIDTH - timeW - 4 - timeX, 8);
-  display.print(text);
+  display.print(timeText);
 
   display.setCursor(58, 182);
-  display.print("BOOT: apps");
+  display.print("SUN: apps");
+  display.setCursor(58, 192);
+  display.print("PWR: contact");
 }
 
 static const UiRect QUIT_YES_BUTTON = {44, 112, 48, 24};
@@ -421,7 +571,7 @@ void drawMenu() {
   int16_t titleY;
   uint16_t titleW;
   uint16_t titleH;
-  const char *title = menuCategory == MENU_GAMES ? "GAMES" : "APPS";
+  const char *title = menuCategoryTitle(menuCategory);
   display.getTextBounds(title, 0, 10, &titleX, &titleY, &titleW, &titleH);
   display.setCursor((EPD_WIDTH - titleW) / 2, 10);
   display.print(title);
@@ -432,8 +582,21 @@ void drawMenu() {
   const char *appIcons[9] = {"3", "=", "Q", "P", "", "", "", "", ""};
   const char *appLabels[9] = {"3dcube", "calc", "qr", "paint", "",
                               "",       "",     "",   ""};
-  const char **icons = menuCategory == MENU_GAMES ? gameIcons : appIcons;
-  const char **labels = menuCategory == MENU_GAMES ? gameLabels : appLabels;
+  const char **icons = gameIcons;
+  const char **labels = gameLabels;
+  if (menuCategory == MENU_APPS) {
+    icons = appIcons;
+    labels = appLabels;
+  }
+#if ENABLE_NETWORK_APPS
+  const char *networkIcons[9] = {"W", "R", "H", "A", "C", "", "", "", ""};
+  const char *networkLabels[9] = {"wifi", "reddit", "hn", "ai", "weather",
+                                  "",     "",       "",   ""};
+  if (menuCategory == MENU_NETWORK) {
+    icons = networkIcons;
+    labels = networkLabels;
+  }
+#endif
   int n = 0;
   for (int row = 0; row < 3; row++) {
     for (int col = 0; col < 3; col++) {
@@ -466,8 +629,11 @@ void drawMenu() {
 
 void handleMenuTouch(const TouchPoint &point) {
   if (point.y < 34) {
-    if (point.x < 48 || point.x > 152) {
-      menuCategory = menuCategory == MENU_GAMES ? MENU_APPS : MENU_GAMES;
+    if (point.x < 48) {
+      menuCategory = previousMenuCategory(menuCategory);
+      dirty = true;
+    } else if (point.x > 152) {
+      menuCategory = nextMenuCategory(menuCategory);
       dirty = true;
     }
     return;
@@ -479,6 +645,34 @@ void handleMenuTouch(const TouchPoint &point) {
   int row = (point.y - 38) / 52;
   if (col < 0 || col > 2 || row < 0 || row > 2) return;
   int app = row * 3 + col;
+#if ENABLE_NETWORK_APPS
+  if (menuCategory == MENU_NETWORK) {
+    switch (app) {
+    case 0:
+      switchTo(SCREEN_WIFI, &wifiScreen);
+      break;
+    case 1:
+      redditApp.reset();
+      switchTo(SCREEN_REDDIT, &redditScreen);
+      break;
+    case 2:
+      hnApp.reset();
+      switchTo(SCREEN_HN, &hnScreen);
+      break;
+    case 3:
+      aiApp.reset();
+      switchTo(SCREEN_AI, &aiScreen);
+      break;
+    case 4:
+      weatherApp.reset();
+      switchTo(SCREEN_WEATHER, &weatherScreen);
+      break;
+    default:
+      break;
+    }
+    return;
+  }
+#endif
   if (menuCategory == MENU_APPS) {
     switch (app) {
     case 0:
@@ -665,6 +859,14 @@ void setup() {
   calculator.reset();
   qrApp.reset();
   paintApp.reset();
+  contactLinks.reset();
+#if ENABLE_NETWORK_APPS
+  wifiApp.reset();
+  redditApp.reset();
+  hnApp.reset();
+  aiApp.reset();
+  weatherApp.reset();
+#endif
   dirty = true;
 }
 
@@ -690,8 +892,12 @@ void loop() {
     }
   }
 
+  if (dirty) {
+    render();
+  }
+
   if (activeApp != nullptr && activeApp->update()) {
-    redrawActiveScreenPartial();
+    dirty = true;
   }
 
   unsigned long currentSecond = millis() / 1000;
