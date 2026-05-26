@@ -495,7 +495,7 @@ void ChessApp::drawHistory(Adafruit_GFX &gfx) {
       char text[2] = {static_cast<char>(glyph->codepoint), 0};
       gfx.setFont(&CHESS_CASEFONT12pt7b);
       gfx.setTextColor(1);
-      gfx.setCursor(34, y + 12);
+      gfx.setCursor(34, y + 14);
       gfx.print(text);
       gfx.setFont();
     }
@@ -511,7 +511,7 @@ void ChessApp::drawHistory(Adafruit_GFX &gfx) {
         char capturedText[2] = {static_cast<char>(capturedGlyph->codepoint), 0};
         gfx.setFont(&CHESS_CASEFONT12pt7b);
         gfx.setTextColor(1);
-        gfx.setCursor(166, y + 12);
+        gfx.setCursor(166, y + 14);
         gfx.print(capturedText);
         gfx.setFont();
       }
@@ -558,7 +558,6 @@ void ChessApp::drawBoard(Adafruit_GFX &gfx) {
 }
 
 void ChessApp::drawExperimentalCoordinates(Adafruit_GFX &gfx) {
-  // experimental!
   gfx.setTextColor(1);
   gfx.setTextSize(1);
   for (int displayCol = 0; displayCol < 8; ++displayCol) {
@@ -570,7 +569,7 @@ void ChessApp::drawExperimentalCoordinates(Adafruit_GFX &gfx) {
   for (int displayRow = 0; displayRow < 8; ++displayRow) {
     int boardRow = displayRowToBoardRow(displayRow);
     char label[2] = {static_cast<char>('8' - boardRow), '\0'};
-    gfx.setCursor(195, BOARD_Y + displayRow * CELL + 4);
+    gfx.setCursor(195, BOARD_Y + displayRow * CELL + 2);
     gfx.print(label);
   }
 }
@@ -651,7 +650,7 @@ void ChessApp::drawAlert(Adafruit_GFX &gfx) {
   gfx.setCursor(22 + (156 - w) / 2, 88);
   gfx.print(alertText);
   gfx.setCursor(42, 110);
-  gfx.print("Touch/pwr to close");
+  gfx.print("Touch to close");
 }
 
 const CaseFontGlyph *ChessApp::findGlyph(PieceType type, PieceColor color,

@@ -78,7 +78,7 @@ bool QrApp::hasActiveSession() const { return keyboardOpen || hasQr; }
 
 void QrApp::setText(const char *text) {
   inputText = text ? text : "";
-  encodeQr(inputText.c_str());
+  hasQr = encodeQr(inputText.c_str());
 }
 
 bool QrApp::handleMenuButton() {

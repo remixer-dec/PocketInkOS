@@ -218,7 +218,7 @@ void HangmanApp::drawGame(Adafruit_GFX &gfx) {
   } else {
     char lives[8];
     snprintf(lives, sizeof(lives), "%d <3", MAX_MISSES - misses);
-    drawRightAlignedText(gfx, lives, 190, 10, 1);
+    drawRightAlignedText(gfx, lives, 180, 10, 1);
   }
 
   drawGallows(gfx);

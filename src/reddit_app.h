@@ -19,7 +19,7 @@ private:
   enum State { STATE_PICKER, STATE_LOADING, STATE_READY, STATE_FAILED };
   enum SortMode { SORT_HOT, SORT_NEW, SORT_TOP_1W, SORT_TOP_1M };
 
-  static const int SUBREDDIT_COUNT = 3;
+  static const int SUBREDDIT_COUNT = 4;
   static const int SORT_COUNT = 4;
   static const unsigned long FETCH_TIMEOUT_MS = 10000;
   static const int MAX_JSON_BYTES = 30000;
