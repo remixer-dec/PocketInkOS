@@ -23,8 +23,8 @@ public:
 private:
   enum Mode { MODE_TEXT, MODE_HTTP, MODE_HTTPS };
   enum KeyboardMode { KEYBOARD_T9, KEYBOARD_QWERTY_ZOOM };
-  static const int QR_SIZE = 29;
-  static const int MAX_PAYLOAD = 24;
+  static const int QR_SIZE = 33;
+  static const int MAX_PAYLOAD = 46;
 
   Mode mode = MODE_TEXT;
   String inputText;

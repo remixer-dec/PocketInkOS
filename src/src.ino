@@ -34,6 +34,7 @@
 #include "wordle_app.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdint.h>
 #include <stdio.h>
 
 enum Screen {
@@ -149,7 +150,7 @@ AppScreen<CubeApp> cubeScreen(cubeApp);
 AppScreen<CalculatorApp> calculatorScreen(calculator);
 AppScreen<QrApp, true> qrScreen(qrApp);
 PaintScreen paintScreen(paintApp);
-AppScreen<ContactLinksApp> contactLinksScreen(contactLinks);
+AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
 #if ENABLE_NETWORK_APPS
 AppScreen<WifiApp, true> wifiScreen(wifiApp);
 AppScreen<RedditApp, true> redditScreen(redditApp);
@@ -165,7 +166,7 @@ bool dirty = true;
 bool confirmQuit = false;
 MenuCategory menuCategory = MENU_GAMES;
 unsigned long quitDialogOpenedAt = 0;
-unsigned long lastHomeSecond = 0;
+int64_t lastHomeMinute = -1;
 TaskHandle_t buttonTaskHandle = NULL;
 volatile uint8_t pendingMenuClicks = 0;
 volatile uint8_t pendingMenuDoubleClicks = 0;
@@ -461,11 +462,14 @@ void consumeQueuedButtons() {
   }
 }
 
-void formatSeconds(unsigned long totalSeconds, char *buffer, size_t size) {
-  unsigned long hours = totalSeconds / 3600;
-  unsigned long minutes = (totalSeconds / 60) % 60;
-  unsigned long seconds = totalSeconds % 60;
-  snprintf(buffer, size, "%02lu:%02lu:%02lu", hours, minutes, seconds);
+void drawCenteredText(const char *text, int16_t y) {
+  int16_t textX;
+  int16_t textY;
+  uint16_t textW;
+  uint16_t textH;
+  display.getTextBounds(text, 0, y, &textX, &textY, &textW, &textH);
+  display.setCursor((EPD_WIDTH - textW) / 2 - textX, y);
+  display.print(text);
 }
 
 void drawHome() {
@@ -489,8 +493,6 @@ void drawHome() {
                     94);
   display.print("os");
 
-  unsigned long uptimeSeconds = millis() / 1000;
-
   char dateText[16];
   char timeText[16];
   if (deviceClock.isSet()) {
@@ -501,7 +503,7 @@ void drawHome() {
   } else {
     display.setCursor(4, 8);
     display.print("TIME --:--");
-    formatSeconds(uptimeSeconds, timeText, sizeof(timeText));
+    timeText[0] = '\0';
   }
 
 #if ENABLE_NETWORK_APPS
@@ -510,18 +512,18 @@ void drawHome() {
   }
 #endif
 
-  int16_t timeX;
-  int16_t timeY;
-  uint16_t timeW;
-  uint16_t timeH;
-  display.getTextBounds(timeText, 0, 0, &timeX, &timeY, &timeW, &timeH);
-  display.setCursor(EPD_WIDTH - timeW - 4 - timeX, 8);
-  display.print(timeText);
+  if (timeText[0] != '\0') {
+    int16_t timeX;
+    int16_t timeY;
+    uint16_t timeW;
+    uint16_t timeH;
+    display.getTextBounds(timeText, 0, 0, &timeX, &timeY, &timeW, &timeH);
+    display.setCursor(EPD_WIDTH - timeW - 4 - timeX, 8);
+    display.print(timeText);
+  }
 
-  display.setCursor(58, 182);
-  display.print("SUN: apps");
-  display.setCursor(58, 192);
-  display.print("PWR: contact");
+  drawCenteredText("SUN: apps", 182);
+  drawCenteredText("PWR: contact", 192);
 }
 
 static const UiRect QUIT_YES_BUTTON = {44, 112, 48, 24};
@@ -822,6 +824,9 @@ void render() {
   display.flush();
   display.unlock();
   dirty = false;
+  if (screen == SCREEN_HOME) {
+    lastHomeMinute = deviceClock.localMinuteIndex();
+  }
 }
 
 void setup() {
@@ -900,9 +905,10 @@ void loop() {
     dirty = true;
   }
 
-  unsigned long currentSecond = millis() / 1000;
-  if (screen == SCREEN_HOME && currentSecond != lastHomeSecond) {
-    lastHomeSecond = currentSecond;
+  int64_t currentHomeMinute = deviceClock.localMinuteIndex();
+  if (screen == SCREEN_HOME && currentHomeMinute >= 0 &&
+      currentHomeMinute != lastHomeMinute) {
+    lastHomeMinute = currentHomeMinute;
     dirty = true;
   }
 

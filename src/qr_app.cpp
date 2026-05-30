@@ -8,8 +8,8 @@ static const UiRect TEXT_BUTTON = {12, 52, 52, 26};
 static const UiRect HTTP_BUTTON = {74, 52, 52, 26};
 static const UiRect HTTPS_BUTTON = {136, 52, 52, 26};
 static const UiRect INPUT_BUTTON = {50, 96, 100, 24};
-static const int DATA_CODEWORDS = 26;
-static const int ECC_CODEWORDS = 22;
+static const int DATA_CODEWORDS = 48;
+static const int ECC_CODEWORDS = 26;
 static const int BLOCKS = 2;
 static const int BLOCK_DATA_CODEWORDS = DATA_CODEWORDS / BLOCKS;
 static const int TOTAL_CODEWORDS = DATA_CODEWORDS + ECC_CODEWORDS * BLOCKS;
@@ -226,7 +226,7 @@ void QrApp::drawMenu(Adafruit_GFX &gfx) {
   uiDrawButton(gfx, INPUT_BUTTON, "INPUT");
   gfx.setTextSize(1);
   gfx.setCursor(10, 134);
-  gfx.print("Version 3-H, max 24 bytes");
+  gfx.print("Version 4-Q, max 46 bytes");
 }
 
 void QrApp::drawQr(Adafruit_GFX &gfx) {
@@ -296,10 +296,10 @@ bool QrApp::encodeQr(const char *text) {
       int absX = abs(x);
       int absY = abs(y);
       int dist = absX > absY ? absX : absY;
-      setModule(22 + y, 22 + x, dist != 1, true);
+      setModule(QR_SIZE - 7 + y, QR_SIZE - 7 + x, dist != 1, true);
     }
   }
-  setModule(21, 8, true, true);
+  setModule(QR_SIZE - 8, 8, true, true);
 
   for (int i = 0; i < 9; i++) {
     if (i != 6) {
@@ -383,7 +383,7 @@ bool QrApp::encodeQr(const char *text) {
     dir = -dir;
   }
 
-  const uint16_t format = 0x1689;
+  const uint16_t format = 0x355f;
   for (int i = 0; i < 15; i++) {
     bool value = (format >> i) & 1;
     if (i < 6) {

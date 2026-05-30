@@ -50,6 +50,7 @@ write_define() {
   write_define SECRET_CONTACT_PHONE_URL "${CONTACT_PHONE_URL:-tel:+10000000000}"
   write_define SECRET_CONTACT_LINKEDIN_URL "${CONTACT_LINKEDIN_URL:-https://lnkd.in/user}"
   write_define SECRET_CONTACT_WHATSAPP_URL "${CONTACT_WHATSAPP_URL:-https://wa.me/1000000}"
+  write_define SECRET_CONTACT_GITHUB_URL "${CONTACT_GITHUB_URL:-https://github.com/user}"
   printf '\n'
   write_define SECRET_WEATHER_LATITUDE "${WEATHER_LATITUDE:-0.0}"
   write_define SECRET_WEATHER_LONGITUDE "${WEATHER_LONGITUDE:--0.0}"

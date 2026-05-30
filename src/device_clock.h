@@ -8,6 +8,7 @@ class DeviceClock {
 public:
   void set(int64_t unixTime, int32_t utcOffsetSeconds);
   bool isSet() const;
+  int64_t localMinuteIndex() const;
   void formatTime(char *out, size_t outSize) const;
   void formatDate(char *out, size_t outSize) const;
 

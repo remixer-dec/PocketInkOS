@@ -10,6 +10,7 @@ public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
+  bool update();
   bool handlePowerButton();
   bool hasActiveSession() const;
 
@@ -20,14 +21,20 @@ private:
     const char *url;
   };
 
-  static const int LINK_COUNT = 5;
+  static const int LINK_COUNT = 6;
   static const ContactLink LINKS[LINK_COUNT];
 
   bool showingQr = false;
+  bool showingLinkText = false;
+  int activeLinkIndex = -1;
+  int pressedLinkIndex = -1;
+  int pendingLinkIndex = -1;
+  unsigned long pressedAt = 0;
   QrApp qr;
 
   void openLink(int index);
   void drawMenu(Adafruit_GFX &gfx);
+  void drawLinkText(Adafruit_GFX &gfx);
 };
 
 #endif
