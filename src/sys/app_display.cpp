@@ -30,10 +30,25 @@ void AppDisplay::drawPixel(int16_t x, int16_t y, uint16_t color) {
                             color ? DRIVER_COLOR_BLACK : DRIVER_COLOR_WHITE);
 }
 
+// Fast path for hot renderers that have already clipped coordinates and only
+// need to set black pixels. Use normal drawPixel() for general UI rendering,
+// white pixels, or any caller that cannot prove the coordinates are in bounds.
+void AppDisplay::drawBlackPixelUnchecked(int16_t x, int16_t y) {
+  driver.EPD_DrawBlackPixelUnchecked(x, y);
+}
+
+// Same contract as drawBlackPixelUnchecked(), specialized for dense 2x2 shader
+// writes. The full block must be in bounds before calling.
+void AppDisplay::drawBlackBlock2x2Unchecked(int16_t x, int16_t y) {
+  driver.EPD_DrawBlackBlock2x2Unchecked(x, y);
+}
+
 void AppDisplay::clear() {
   driver.EPD_Clear();
   fillScreen(0);
 }
+
+void AppDisplay::requestFullRefresh() { partialReady = false; }
 
 void AppDisplay::flush() {
   if (partialReady) {

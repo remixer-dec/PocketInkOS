@@ -221,15 +221,20 @@ void epaper_driver_display::EPD_Init() {
 
   // 2. Allocate Memory (moved from constructor)
   if (buffer == NULL) {
-    // Try allocating in PSRAM first
-    buffer =
-        (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len, MALLOC_CAP_SPIRAM);
+    // This 5 KB framebuffer is touched per pixel while rendering. Keep it in
+    // internal RAM first; PSRAM is slower and not needed for a buffer this small.
+    buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
+                                         MALLOC_CAP_INTERNAL |
+                                             MALLOC_CAP_DMA |
+                                             MALLOC_CAP_8BIT);
 
-    // If PSRAM failed (or isn't present), fall back to Internal RAM
+    // Fall back to PSRAM only if internal RAM is too fragmented or unavailable.
     if (buffer == NULL) {
-      ESP_LOGW(TAG, "PSRAM allocation failed, falling back to Internal RAM");
-      buffer =
-          (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len, MALLOC_CAP_8BIT);
+      ESP_LOGW(TAG,
+               "Internal framebuffer allocation failed, falling back to PSRAM");
+      buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
+                                           MALLOC_CAP_SPIRAM |
+                                               MALLOC_CAP_8BIT);
     }
 
     // If both fail, we really have a problem
@@ -366,4 +371,23 @@ void epaper_driver_display::EPD_DrawColorPixel(uint16_t x, uint16_t y,
   } else {
     buffer[index] &= ~(0x01 << bit);
   }
+}
+
+// Unchecked black-only writes for renderer hot loops. Callers must guarantee
+// x/y are in bounds and the framebuffer exists; use EPD_DrawColorPixel() for
+// normal UI drawing, clipping, or white-pixel writes.
+void epaper_driver_display::EPD_DrawBlackPixelUnchecked(uint16_t x,
+                                                        uint16_t y) {
+  uint16_t index = y * 25 + (x >> 3);
+  buffer[index] &= ~(0x01 << (7 - (x & 0x07)));
+}
+
+// Same unchecked contract as EPD_DrawBlackPixelUnchecked(); x+1/y+1 must also
+// be inside the framebuffer.
+void epaper_driver_display::EPD_DrawBlackBlock2x2Unchecked(uint16_t x,
+                                                           uint16_t y) {
+  EPD_DrawBlackPixelUnchecked(x, y);
+  EPD_DrawBlackPixelUnchecked(x + 1, y);
+  EPD_DrawBlackPixelUnchecked(x, y + 1);
+  EPD_DrawBlackPixelUnchecked(x + 1, y + 1);
 }

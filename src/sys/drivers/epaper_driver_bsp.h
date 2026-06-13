@@ -67,5 +67,7 @@ public:
   void EPD_Init_Partial();
   void EPD_DisplayPart();
   void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
+  void EPD_DrawBlackPixelUnchecked(uint16_t x, uint16_t y);
+  void EPD_DrawBlackBlock2x2Unchecked(uint16_t x, uint16_t y);
 };
 #endif

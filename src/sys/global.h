@@ -6,6 +6,9 @@
 #define BOOT_BUTTON_PIN GPIO_NUM_0
 #define PWR_BUTTON_PIN GPIO_NUM_18
 
+#define BAT_ADC_PIN 4
+#define BAT_CTRL_PIN 17
+
 #define EPD_PWR_PIN 6
 #define EPD_CS_PIN 11
 #define EPD_DC_PIN 10

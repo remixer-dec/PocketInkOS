@@ -8,7 +8,7 @@ mkdir -p "$BUILD_DIR"
 
 "$ROOT/tools/generate-secrets-header.sh"
 
-COMMON=(-std=c++17 -Wall -Wextra -Werror -fsyntax-only -include "$ROOT/src/sys/arduino_esp32_compat.h" -I"$STUBS" -I"$ROOT/src")
+COMMON=(-std=c++17 -Wall -Wextra -Werror -fsyntax-only -include "$ROOT/src/sys/arduino_esp32_compat.h" -I"$STUBS" -I"$ROOT/src" -I"$ROOT")
 NETWORK_APPS="${ENABLE_NETWORK_APPS:-1}"
 if [[ "$NETWORK_APPS" != "0" ]]; then
   COMMON+=(-DENABLE_NETWORK_APPS=1)
@@ -19,21 +19,30 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/audio_capture.cpp" \
+  "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
   "$ROOT/src/apps/calculator_app.cpp" \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
+  "$ROOT/src/apps/deghost_app.cpp" \
+  "$ROOT/src/sys/battery_monitor.cpp" \
   "$ROOT/src/games/cube_app.cpp" \
   "$ROOT/src/sys/device_clock.cpp" \
+  "$ROOT/src/sys/environment_monitor.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
+  "$ROOT/src/sys/shell_buttons.cpp" \
   "$ROOT/src/ui/components/keyboard_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \
   "$ROOT/src/apps/paint_app.cpp" \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \
   "$ROOT/src/apps/qr_app.cpp" \
+  "$ROOT/src/apps/gfx_app.cpp" \
+  "$ROOT/src/ui/shell_layout.cpp" \
   "$ROOT/src/ui/components/smart_button.cpp" \
+  "$ROOT/src/ui/status_bar.cpp" \
   "$ROOT/src/games/sudoku_app.cpp" \
   "$ROOT/src/ui/t9_keyboard/t9_keyboard_component.cpp" \
+  "$ROOT/src/ui/text_input_controller.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
   "$ROOT/src/sys/touch_input.cpp" \
   "$ROOT/src/games/wordle_app.cpp")

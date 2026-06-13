@@ -47,3 +47,10 @@ inline esp_err_t i2c_master_transmit(i2c_master_dev_handle_t,
                                      const uint8_t *, size_t, int) {
   return ESP_OK;
 }
+inline esp_err_t i2c_master_receive(i2c_master_dev_handle_t, uint8_t *data,
+                                    size_t len, int) {
+  if (data) {
+    for (size_t i = 0; i < len; i++) data[i] = 0;
+  }
+  return ESP_OK;
+}
