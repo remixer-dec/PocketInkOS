@@ -1,6 +1,8 @@
 #include "games/tictactoe_app.h"
 #include "ui/ui_helpers.h"
 
+#include <Arduino.h>
+
 static const int BOARD_X = 25;
 static const int BOARD_Y = 50;
 static const int CELL_SIZE = 50;
@@ -14,6 +16,7 @@ void TicTacToeApp::reset() {
 }
 
 void TicTacToeApp::resetBoard() {
+  randomSeed((unsigned long)micros());
   for (int i = 0; i < 9; i++) {
     board[i] = 0;
   }
@@ -140,7 +143,14 @@ void TicTacToeApp::cpuMove() {
     turn = 'X';
 }
 
-int TicTacToeApp::chooseCpuMove() const {
+int TicTacToeApp::chooseCpuMove() {
+  if (isFirstCpuResponse()) {
+    return chooseRandomEmptyCell();
+  }
+  if (random(100) < 15) {
+    return chooseRandomEmptyCell();
+  }
+
   int move = findWinningMove('O');
   if (move >= 0)
     return move;
@@ -155,6 +165,33 @@ int TicTacToeApp::chooseCpuMove() const {
       return order[i];
   }
   return -1;
+}
+
+int TicTacToeApp::chooseRandomEmptyCell() const {
+  int open[9];
+  int count = 0;
+  for (int i = 0; i < 9; i++) {
+    if (!board[i]) {
+      open[count++] = i;
+    }
+  }
+  if (count == 0) {
+    return -1;
+  }
+  return open[random(count)];
+}
+
+bool TicTacToeApp::isFirstCpuResponse() const {
+  int xCount = 0;
+  int oCount = 0;
+  for (int i = 0; i < 9; i++) {
+    if (board[i] == 'X') {
+      xCount++;
+    } else if (board[i] == 'O') {
+      oCount++;
+    }
+  }
+  return xCount == 1 && oCount == 0;
 }
 
 int TicTacToeApp::findWinningMove(char mark) const {

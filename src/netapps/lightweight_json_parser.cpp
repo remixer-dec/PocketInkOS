@@ -153,7 +153,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
           }
           continue;
         }
-        if (value < 100000000) {
+        if (value <= (INT32_MAX - 9) / 10) {
           value = value * 10 + (digit - '0');
         }
       }

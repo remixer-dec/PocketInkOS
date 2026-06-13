@@ -5,7 +5,7 @@
 #include <Adafruit_GFX.h>
 #include <cstdint>
 
-enum class PieceType {
+enum class PieceType : uint8_t {
   King,
   Queen,
   Rook,
@@ -15,9 +15,9 @@ enum class PieceType {
   Checker
 };
 
-enum class PieceColor { White, Black };
+enum class PieceColor : uint8_t { White, Black };
 
-enum class BoardColor { Light, Dark };
+enum class BoardColor : uint8_t { Light, Dark };
 
 struct CaseFontGlyph {
   char32_t glyph;
@@ -81,11 +81,25 @@ private:
   enum class PendingSelection { Source, Target };
 
   struct Move {
-    int from;
-    int to;
+    int8_t from;
+    int8_t to;
     PieceType promotion;
     bool hasPromotion;
   };
+
+  struct SearchSnapshot {
+    Piece board[64];
+    PieceColor turn;
+    int enPassantSquare;
+    bool whiteKingMoved;
+    bool blackKingMoved;
+    bool whiteKingsideRookMoved;
+    bool whiteQueensideRookMoved;
+    bool blackKingsideRookMoved;
+    bool blackQueensideRookMoved;
+  };
+
+  static constexpr uint8_t SEARCH_MAX_PLY = 8;
 
   Piece board[64] = {};
   Mode mode = Mode::Setup;
@@ -96,6 +110,7 @@ private:
   uint8_t aiLevel = 1;
   bool sourceConfirmed = false;
   bool targetConfirmed = false;
+  unsigned long targetSelectedAtMs = 0;
   bool awaitingPromotion = false;
   int selectedFrom = -1;
   int selectedTo = -1;
@@ -118,6 +133,8 @@ private:
   PieceType historyCapturedPiece[96] = {};
   PieceColor historyCapturedColor[96] = {};
   bool historyHasCapture[96] = {};
+  int8_t historyFrom[96] = {};
+  int8_t historyTo[96] = {};
   uint8_t historyCount = 0;
   uint8_t historyOffset = 0;
   unsigned long lastAnimationMs = 0;
@@ -126,6 +143,13 @@ private:
   int lastMoveFrom = -1;
   int lastMoveTo = -1;
   PieceColor lastMoveColor = PieceColor::White;
+  bool aiThinking = false;
+  unsigned long aiThinkingSinceMs = 0;
+  bool aiBookEnabled = false;
+  unsigned long menuCancelBlockUntilMs = 0;
+  SearchSnapshot searchSnapshots[SEARCH_MAX_PLY] = {};
+  Move searchMoves[SEARCH_MAX_PLY][96] = {};
+  int16_t searchOrdering[SEARCH_MAX_PLY][96] = {};
 
   void placeInitialPieces();
   void resetGameState();
@@ -139,6 +163,7 @@ private:
   bool isBoardRowPoint(const TouchPoint &point) const;
   int pointToSquare(const TouchPoint &point) const;
   int resolveSourceSquare(int square) const;
+  int resolveTargetSquare(int square) const;
   int displayRowToBoardRow(int displayRow) const;
   int boardRowToDisplayRow(int boardRow) const;
   void drawBoard(Adafruit_GFX &gfx);
@@ -150,6 +175,7 @@ private:
   void drawSelection(Adafruit_GFX &gfx, int square);
   void drawPromotionChooser(Adafruit_GFX &gfx);
   void drawAlert(Adafruit_GFX &gfx);
+  void drawThinkingOverlay(Adafruit_GFX &gfx);
   void drawPiece(Adafruit_GFX &gfx, int row, int col, const Piece &piece);
   const CaseFontGlyph *findGlyph(PieceType type, PieceColor color,
                                  BoardColor boardColor) const;
@@ -172,7 +198,15 @@ private:
   int findKing(PieceColor color) const;
   bool collectLegalMoves(PieceColor color, Move *moves, int maxMoves,
                          int &count) const;
-  Move chooseAiMove() const;
+  Move chooseAiMove();
+  bool chooseAiBookMove(Move &outMove);
+  Move chooseAiMoveLevel3(unsigned long budgetMs);
+  int alphaBetaSearch(uint8_t depth, int alpha, int beta, PieceColor aiColor,
+                      uint8_t ply, unsigned long deadlineMs, bool &timedOut);
+  int scoreMoveForLevel3(const Move &move, PieceColor perspective) const;
+  void saveSearchSnapshot(uint8_t ply);
+  void restoreSearchSnapshot(uint8_t ply);
+  void applySearchMove(const Move &move);
   void buildPositionAfterMove(const Move &move, Piece *position) const;
   int destinationRiskAfter(const Move &move, PieceColor perspective) const;
   int evaluateBoard(PieceColor perspective) const;

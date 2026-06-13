@@ -1,6 +1,7 @@
 #include "games/sudoku_app.h"
 #include "ui/ui_helpers.h"
 
+#include <Arduino.h>
 #include <cstring>
 
 static const uint8_t SOLUTION[81] = {
@@ -9,49 +10,334 @@ static const uint8_t SOLUTION[81] = {
     7, 9, 1, 7, 1, 3, 9, 2, 4, 8, 5, 6, 9, 6, 1, 5, 3, 7, 2, 8, 4,
     2, 8, 7, 4, 1, 9, 6, 3, 5, 3, 4, 5, 2, 8, 6, 1, 7, 9};
 
-static const char *EASY_MASK =
-    "110110011"
-    "011011010"
-    "101001101"
-    "010110011"
-    "101010101"
-    "110011010"
-    "101100101"
-    "010110110"
-    "110011011";
+namespace {
+static const uint16_t ALL_DIGITS_MASK = 0x3FE; // bits 1..9
 
-static const char *MEDIUM_MASK =
-    "100100011"
-    "010010010"
-    "001001100"
-    "010100001"
-    "100010001"
-    "100001010"
-    "001100100"
-    "010010010"
-    "110001001";
+struct DifficultyConfig {
+  uint8_t minClues;
+  uint8_t maxClues;
+  uint8_t minScore;
+  uint8_t maxScore;
+};
 
-static const char *HARD_MASK =
-    "100000010"
-    "010010000"
-    "001000100"
-    "000100001"
-    "100010001"
-    "100001000"
-    "001000100"
-    "000010010"
-    "010000001";
+struct SolveStats {
+  bool solved;
+  int passes;
+  int nakedSingles;
+  int hiddenSingles;
+};
 
-static const char *EXTREME_MASK =
-    "100000000"
-    "000010000"
-    "001000000"
-    "000100000"
-    "000010001"
-    "000001000"
-    "000000100"
-    "010000000"
-    "000000001";
+static void shuffleCells(int cells[81]) {
+  for (int i = 0; i < 81; i++) {
+    cells[i] = i;
+  }
+  for (int i = 80; i > 0; i--) {
+    int j = random(i + 1);
+    int tmp = cells[i];
+    cells[i] = cells[j];
+    cells[j] = tmp;
+  }
+}
+
+static int countBits(uint16_t mask) {
+  int count = 0;
+  while (mask) {
+    mask &= (mask - 1);
+    count++;
+  }
+  return count;
+}
+
+static uint16_t candidatesForCell(const uint8_t board[81], int cell) {
+  if (board[cell] > 0) {
+    return 0;
+  }
+  int row = cell / 9;
+  int col = cell % 9;
+  uint16_t used = 0;
+
+  for (int i = 0; i < 9; i++) {
+    uint8_t rowValue = board[row * 9 + i];
+    if (rowValue > 0) {
+      used |= (1 << rowValue);
+    }
+    uint8_t colValue = board[i * 9 + col];
+    if (colValue > 0) {
+      used |= (1 << colValue);
+    }
+  }
+
+  int boxRow = (row / 3) * 3;
+  int boxCol = (col / 3) * 3;
+  for (int r = 0; r < 3; r++) {
+    for (int c = 0; c < 3; c++) {
+      uint8_t value = board[(boxRow + r) * 9 + boxCol + c];
+      if (value > 0) {
+        used |= (1 << value);
+      }
+    }
+  }
+
+  return ALL_DIGITS_MASK & ~used;
+}
+
+static bool allFilled(const uint8_t board[81]) {
+  for (int i = 0; i < 81; i++) {
+    if (board[i] == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static int selectBestCell(const uint8_t board[81], uint16_t &maskOut) {
+  int bestCell = -1;
+  int bestCount = 10;
+  maskOut = 0;
+  for (int cell = 0; cell < 81; cell++) {
+    if (board[cell] > 0) {
+      continue;
+    }
+    uint16_t mask = candidatesForCell(board, cell);
+    int options = countBits(mask);
+    if (options == 0) {
+      maskOut = 0;
+      return -2;
+    }
+    if (options < bestCount) {
+      bestCount = options;
+      bestCell = cell;
+      maskOut = mask;
+      if (bestCount == 1) {
+        break;
+      }
+    }
+  }
+  return bestCell;
+}
+
+static int countSolutions(uint8_t board[81], int limit) {
+  if (allFilled(board)) {
+    return 1;
+  }
+
+  uint16_t mask = 0;
+  int cell = selectBestCell(board, mask);
+  if (cell == -2) {
+    return 0;
+  }
+  if (cell < 0) {
+    return 1;
+  }
+
+  int solutions = 0;
+  for (uint8_t digit = 1; digit <= 9; digit++) {
+    if ((mask & (1 << digit)) == 0) {
+      continue;
+    }
+    board[cell] = digit;
+    solutions += countSolutions(board, limit - solutions);
+    board[cell] = 0;
+    if (solutions >= limit) {
+      return solutions;
+    }
+  }
+  return solutions;
+}
+
+static bool hasUniqueSolution(const uint8_t board[81]) {
+  uint8_t working[81];
+  memcpy(working, board, sizeof(working));
+  return countSolutions(working, 2) == 1;
+}
+
+static bool applyHiddenSingles(uint8_t board[81], const uint16_t candidates[81],
+                               int &placedCount) {
+  placedCount = 0;
+  uint8_t placements[81] = {0};
+
+  for (int row = 0; row < 9; row++) {
+    for (uint8_t digit = 1; digit <= 9; digit++) {
+      int onlyCell = -1;
+      for (int col = 0; col < 9; col++) {
+        int cell = row * 9 + col;
+        if ((candidates[cell] & (1 << digit)) == 0) {
+          continue;
+        }
+        if (onlyCell >= 0) {
+          onlyCell = -2;
+          break;
+        }
+        onlyCell = cell;
+      }
+      if (onlyCell >= 0) {
+        if (placements[onlyCell] == 0) {
+          placements[onlyCell] = digit;
+        }
+      }
+    }
+  }
+
+  for (int col = 0; col < 9; col++) {
+    for (uint8_t digit = 1; digit <= 9; digit++) {
+      int onlyCell = -1;
+      for (int row = 0; row < 9; row++) {
+        int cell = row * 9 + col;
+        if ((candidates[cell] & (1 << digit)) == 0) {
+          continue;
+        }
+        if (onlyCell >= 0) {
+          onlyCell = -2;
+          break;
+        }
+        onlyCell = cell;
+      }
+      if (onlyCell >= 0) {
+        if (placements[onlyCell] == 0) {
+          placements[onlyCell] = digit;
+        }
+      }
+    }
+  }
+
+  for (int box = 0; box < 9; box++) {
+    int boxRow = (box / 3) * 3;
+    int boxCol = (box % 3) * 3;
+    for (uint8_t digit = 1; digit <= 9; digit++) {
+      int onlyCell = -1;
+      for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+          int cell = (boxRow + r) * 9 + boxCol + c;
+          if ((candidates[cell] & (1 << digit)) == 0) {
+            continue;
+          }
+          if (onlyCell >= 0) {
+            onlyCell = -2;
+            r = 3;
+            break;
+          }
+          onlyCell = cell;
+        }
+      }
+      if (onlyCell >= 0) {
+        if (placements[onlyCell] == 0) {
+          placements[onlyCell] = digit;
+        }
+      }
+    }
+  }
+
+  for (int cell = 0; cell < 81; cell++) {
+    if (placements[cell] == 0 || board[cell] > 0) {
+      continue;
+    }
+    board[cell] = placements[cell];
+    placedCount++;
+  }
+
+  return placedCount > 0;
+}
+
+static SolveStats solveWithHumanLogic(const uint8_t puzzle[81]) {
+  uint8_t board[81];
+  memcpy(board, puzzle, sizeof(board));
+
+  SolveStats stats = {false, 0, 0, 0};
+  for (int pass = 0; pass < 128; pass++) {
+    uint16_t candidates[81] = {0};
+    bool progress = false;
+
+    for (int cell = 0; cell < 81; cell++) {
+      if (board[cell] > 0) {
+        continue;
+      }
+      candidates[cell] = candidatesForCell(board, cell);
+      int options = countBits(candidates[cell]);
+      if (options == 0) {
+        return stats;
+      }
+      if (options == 1) {
+        for (uint8_t digit = 1; digit <= 9; digit++) {
+          if (candidates[cell] & (1 << digit)) {
+            board[cell] = digit;
+            stats.nakedSingles++;
+            progress = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (progress) {
+      stats.passes++;
+      if (allFilled(board)) {
+        stats.solved = true;
+        return stats;
+      }
+      continue;
+    }
+
+    int hiddenPlaced = 0;
+    if (applyHiddenSingles(board, candidates, hiddenPlaced)) {
+      stats.hiddenSingles += hiddenPlaced;
+      stats.passes++;
+      if (allFilled(board)) {
+        stats.solved = true;
+        return stats;
+      }
+      continue;
+    }
+    break;
+  }
+
+  stats.solved = allFilled(board);
+  return stats;
+}
+
+static int difficultyScore(const SolveStats &stats, int clues) {
+  int openness = 81 - clues;
+  return stats.hiddenSingles * 3 + stats.passes + openness;
+}
+
+static bool hasQuadrantVariety(const uint8_t puzzle[81]) {
+  int counts[9] = {0};
+  for (int box = 0; box < 9; box++) {
+    int boxRow = (box / 3) * 3;
+    int boxCol = (box % 3) * 3;
+    for (int r = 0; r < 3; r++) {
+      for (int c = 0; c < 3; c++) {
+        if (puzzle[(boxRow + r) * 9 + boxCol + c] > 0) {
+          counts[box]++;
+        }
+      }
+    }
+  }
+
+  int minCount = counts[0];
+  int maxCount = counts[0];
+  bool seen[10] = {false};
+  for (int i = 0; i < 9; i++) {
+    if (counts[i] < minCount) {
+      minCount = counts[i];
+    }
+    if (counts[i] > maxCount) {
+      maxCount = counts[i];
+    }
+    if (counts[i] >= 0 && counts[i] <= 9) {
+      seen[counts[i]] = true;
+    }
+  }
+
+  int distinct = 0;
+  for (int i = 0; i <= 9; i++) {
+    if (seen[i]) {
+      distinct++;
+    }
+  }
+
+  return maxCount - minCount >= 2 && distinct >= 3 && minCount >= 2;
+}
+} // namespace
 
 static const UiRect EASY_BUTTON = {18, 52, 74, 28};
 static const UiRect MEDIUM_BUTTON = {108, 52, 74, 28};
@@ -62,7 +348,7 @@ static const UiRect INPUT_BUTTON = {53, 138, 46, 16};
 static const UiRect GUESS_BUTTON = {101, 138, 46, 16};
 
 static const int BOARD_X = 10;
-static const int BOARD_Y = 16;
+static const int BOARD_Y = 10;
 static const int CELL = 20;
 static const int PICKER_GRID_X = 56;
 static const int PICKER_GRID_Y = 48;
@@ -151,17 +437,20 @@ bool SudokuApp::handleTouch(const TouchPoint &point) {
 
 void SudokuApp::start(Difficulty nextDifficulty) {
   difficulty = nextDifficulty;
-  const char *mask = EASY_MASK;
-  if (difficulty == MEDIUM) {
-    mask = MEDIUM_MASK;
-  } else if (difficulty == HARD) {
-    mask = HARD_MASK;
-  } else if (difficulty == EXTREME) {
-    mask = EXTREME_MASK;
+  randomSeed((unsigned long)micros());
+  bool generated = false;
+  for (int attempt = 0; attempt < 8; attempt++) {
+    generateSolution();
+    if (generatePuzzle()) {
+      generated = true;
+      break;
+    }
+  }
+  if (!generated) {
+    memcpy(fixed, solution, sizeof(fixed));
   }
 
   for (int i = 0; i < 81; i++) {
-    fixed[i] = mask[i] == '1' ? SOLUTION[i] : 0;
     values[i] = fixed[i];
     notes[i] = 0;
   }
@@ -204,7 +493,7 @@ void SudokuApp::drawBoard(Adafruit_GFX &gfx) {
   if (selected >= 0) {
     int x = BOARD_X + (selected % 9) * CELL;
     int y = BOARD_Y + (selected / 9) * CELL;
-    gfx.drawRect(x + 2, y + 2, CELL - 4, CELL - 4, 1);
+    gfx.drawRect(x + 1, y + 1, CELL - 2, CELL - 2, 1);
   }
 
   for (int cell = 0; cell < 81; cell++) {
@@ -289,11 +578,153 @@ void SudokuApp::toggleNote(int cell, uint8_t number) {
 
 bool SudokuApp::isSolved() const {
   for (int i = 0; i < 81; i++) {
-    if (values[i] != SOLUTION[i]) {
+    if (values[i] != solution[i]) {
       return false;
     }
   }
   return true;
+}
+
+void SudokuApp::generateSolution() {
+  memcpy(solution, SOLUTION, sizeof(solution));
+  for (int i = 0; i < 12; i++) {
+    swapDigits((uint8_t)(random(9) + 1), (uint8_t)(random(9) + 1));
+    int band = random(3);
+    swapRows(band * 3 + random(3), band * 3 + random(3));
+    int stack = random(3);
+    swapCols(stack * 3 + random(3), stack * 3 + random(3));
+    swapRowBands(random(3), random(3));
+    swapColStacks(random(3), random(3));
+  }
+}
+
+void SudokuApp::swapDigits(uint8_t a, uint8_t b) {
+  if (a == b) {
+    return;
+  }
+  for (int i = 0; i < 81; i++) {
+    if (solution[i] == a) {
+      solution[i] = b;
+    } else if (solution[i] == b) {
+      solution[i] = a;
+    }
+  }
+}
+
+void SudokuApp::swapRows(int rowA, int rowB) {
+  if (rowA == rowB) {
+    return;
+  }
+  for (int col = 0; col < 9; col++) {
+    int idxA = rowA * 9 + col;
+    int idxB = rowB * 9 + col;
+    uint8_t tmp = solution[idxA];
+    solution[idxA] = solution[idxB];
+    solution[idxB] = tmp;
+  }
+}
+
+void SudokuApp::swapCols(int colA, int colB) {
+  if (colA == colB) {
+    return;
+  }
+  for (int row = 0; row < 9; row++) {
+    int idxA = row * 9 + colA;
+    int idxB = row * 9 + colB;
+    uint8_t tmp = solution[idxA];
+    solution[idxA] = solution[idxB];
+    solution[idxB] = tmp;
+  }
+}
+
+void SudokuApp::swapRowBands(int bandA, int bandB) {
+  if (bandA == bandB) {
+    return;
+  }
+  for (int i = 0; i < 3; i++) {
+    swapRows(bandA * 3 + i, bandB * 3 + i);
+  }
+}
+
+void SudokuApp::swapColStacks(int stackA, int stackB) {
+  if (stackA == stackB) {
+    return;
+  }
+  for (int i = 0; i < 3; i++) {
+    swapCols(stackA * 3 + i, stackB * 3 + i);
+  }
+}
+
+bool SudokuApp::generatePuzzle() {
+  DifficultyConfig config = {28, 33, 42, 92};
+  if (difficulty == EASY) {
+    config = {40, 46, 0, 30};
+  } else if (difficulty == MEDIUM) {
+    config = {35, 40, 16, 46};
+  } else if (difficulty == HARD) {
+    config = {31, 36, 30, 64};
+  }
+
+  uint8_t fallbackPuzzle[81] = {0};
+  bool hasFallback = false;
+  int bestScoreDelta = 1000000;
+
+  for (int attempt = 0; attempt < 140; attempt++) {
+    uint8_t puzzle[81];
+    memcpy(puzzle, solution, sizeof(puzzle));
+
+    int cluesTarget =
+        config.minClues + random(config.maxClues - config.minClues + 1);
+    int clues = 81;
+    int cellOrder[81];
+    shuffleCells(cellOrder);
+
+    for (int i = 0; i < 81 && clues > cluesTarget; i++) {
+      int cell = cellOrder[i];
+      uint8_t backup = puzzle[cell];
+      puzzle[cell] = 0;
+      if (!hasUniqueSolution(puzzle)) {
+        puzzle[cell] = backup;
+        continue;
+      }
+      clues--;
+    }
+
+    if (clues < config.minClues || clues > config.maxClues) {
+      continue;
+    }
+
+    SolveStats stats = solveWithHumanLogic(puzzle);
+    if (!stats.solved) {
+      continue;
+    }
+
+    int score = difficultyScore(stats, clues);
+    int scoreDelta = 0;
+    if (score < config.minScore) {
+      scoreDelta = config.minScore - score;
+    } else if (score > config.maxScore) {
+      scoreDelta = score - config.maxScore;
+    }
+
+    bool variedQuadrants = hasQuadrantVariety(puzzle);
+    if (scoreDelta == 0 && variedQuadrants) {
+      memcpy(fixed, puzzle, sizeof(fixed));
+      return true;
+    }
+
+    if (scoreDelta < bestScoreDelta) {
+      memcpy(fallbackPuzzle, puzzle, sizeof(fallbackPuzzle));
+      bestScoreDelta = scoreDelta;
+      hasFallback = true;
+    }
+  }
+
+  if (hasFallback) {
+    memcpy(fixed, fallbackPuzzle, sizeof(fixed));
+    return true;
+  }
+  return false;
 }
 
 bool SudokuApp::hasActiveSession() const {

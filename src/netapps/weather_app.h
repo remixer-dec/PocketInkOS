@@ -48,16 +48,18 @@ private:
 
   static const unsigned long FETCH_TIMEOUT_MS = 10000;
   static const int MAX_JSON_BYTES = 38000;
-  static const int MAX_HOURS = 48;
+  static const int MAX_HOURS = 168;
   static const int MAX_DAYS = 7;
 
   struct HourPoint {
     int32_t time = 0;
     int16_t tempX10 = 0;
     int16_t apparentX10 = 0;
+    bool hasApparent = false;
     int16_t precipX10 = 0;
     int16_t precipProbability = 0;
     int16_t uvX10 = 0;
+    int16_t windX10 = 0;
   };
 
   struct DayPoint {
@@ -65,6 +67,18 @@ private:
     int32_t sunset = 0;
     int16_t uvX10 = 0;
     int16_t precipHoursX10 = 0;
+  };
+
+  struct DaySummary {
+    int32_t dayStart = 0;
+    int32_t sunset = 0;
+    int16_t dayTempX10 = 0;
+    int16_t nightTempX10 = 0;
+    int16_t uvPeakX10 = 0;
+    int16_t precipSumX10 = 0;
+    int16_t precipProbabilityMax = 0;
+    bool hasDayTemp = false;
+    bool hasNightTemp = false;
   };
 
   struct UnsafeUvWindow {
@@ -81,14 +95,18 @@ private:
   int32_t currentTime = 0;
   int32_t utcOffsetSeconds = 0;
   int16_t currentTempX10 = 0;
+  int16_t currentFeelsX10 = 0;
   int16_t currentPrecipX10 = 0;
   int16_t currentWindX10 = 0;
   bool hasCurrent = false;
+  bool hasCurrentFeels = false;
 
   HourPoint hours[MAX_HOURS];
   int hourCount = 0;
   DayPoint days[MAX_DAYS];
   int dayCount = 0;
+  DaySummary daySummaries[MAX_DAYS];
+  int daySummaryCount = 0;
 
   int16_t nextTempMinX10 = 0;
   int16_t nextTempMaxX10 = 0;
@@ -96,6 +114,7 @@ private:
   int16_t nextFeelsMaxX10 = 0;
   int16_t nextPrecipSumX10 = 0;
   int16_t nextPrecipProbabilityMax = 0;
+  int16_t todayUvPeakX10 = 0;
   int16_t nextUvPeakX10 = 0;
   UnsafeUvWindow todayUnsafeUv;
   UnsafeUvWindow nextUnsafeUv;
@@ -103,6 +122,9 @@ private:
 
   bool fetch();
   void summarize();
+  int32_t effectiveNowUnix() const;
+  int32_t localDayStart(int32_t unixTime) const;
+  void summarizeDailyFromHours();
   void summarizeUnsafeUv(int32_t windowStart, int32_t windowEnd,
                          UnsafeUvWindow &window);
   void formatUnsafeUvLabel(int16_t peakX10, char *out, int outSize) const;
@@ -119,9 +141,11 @@ private:
   void drawIcon(Adafruit_GFX &gfx, char icon, int16_t x, int16_t y,
                 uint8_t size = 1);
   char currentIcon() const;
-  char dayIcon(const DayPoint &day) const;
+  char dayIcon(const DaySummary &day) const;
   void printTemp(Adafruit_GFX &gfx, int16_t valueX10);
   void printDecimal(Adafruit_GFX &gfx, int16_t valueX10, const char *unit);
+  void printCompactDecimal(Adafruit_GFX &gfx, int16_t valueX10);
+  void printCompactTemp(Adafruit_GFX &gfx, int16_t valueX10);
   void formatHour(int32_t unixTime, char *out, int outSize) const;
   void formatDay(int32_t unixTime, char *out, int outSize) const;
   void setStatus(const char *text);

@@ -7,6 +7,7 @@
 #include "netapps/weather_app.h"
 #include "netapps/lightweight_json_parser.h"
 #include "secrets_config.h"
+#include "sys/device_clock.h"
 
 #include "../fonts/generated/WeatherSymbols_16pt7b.h"
 #include <Arduino.h>
@@ -23,6 +24,17 @@ constexpr int16_t kInfoRowStepY = 16;
 constexpr int32_t kSecondsPerHour = 3600L;
 constexpr int32_t kSecondsPerDay = 86400L;
 constexpr int16_t kUnsafeUvThresholdX10 = 60;
+constexpr int kHourlyPageRows = 8;
+
+int16_t clampToInt16(int32_t value) {
+  if (value > 32767) {
+    return 32767;
+  }
+  if (value < -32768) {
+    return -32768;
+  }
+  return static_cast<int16_t>(value);
+}
 } // namespace
 
 static const char *WEATHER_URL =
@@ -31,8 +43,8 @@ static const char *WEATHER_URL =
     "&"
     "daily=sunset,uv_index_max,precipitation_hours&"
     "hourly=temperature_2m,precipitation_probability,apparent_temperature,"
-    "precipitation,uv_index&"
-    "current=temperature_2m,precipitation,wind_speed_10m&"
+    "precipitation,uv_index,wind_speed_10m&"
+    "current=temperature_2m,apparent_temperature,precipitation,wind_speed_10m&"
     "timezone=Europe%2FBerlin&timeformat=unixtime";
 
 class WeatherJsonListener : public JsonStreamListener {
@@ -79,6 +91,8 @@ public:
         array = ARRAY_HOURLY_PROBABILITY;
       } else if (strcmp(key, "uv_index") == 0) {
         array = ARRAY_HOURLY_UV;
+      } else if (strcmp(key, "wind_speed_10m") == 0) {
+        array = ARRAY_HOURLY_WIND;
       }
     } else if (section == SECTION_DAILY) {
       if (strcmp(key, "time") == 0) {
@@ -124,9 +138,11 @@ public:
   int32_t currentTime = 0;
   int32_t utcOffsetSeconds = 0;
   int16_t currentTempX10 = 0;
+  int16_t currentFeelsX10 = 0;
   int16_t currentPrecipX10 = 0;
   int16_t currentWindX10 = 0;
   bool hasCurrent = false;
+  bool hasCurrentFeels = false;
   int hourCount = 0;
   int dayCount = 0;
 
@@ -140,6 +156,7 @@ private:
     ARRAY_HOURLY_PRECIP,
     ARRAY_HOURLY_PROBABILITY,
     ARRAY_HOURLY_UV,
+    ARRAY_HOURLY_WIND,
     ARRAY_DAILY_TIME,
     ARRAY_DAILY_SUNSET,
     ARRAY_DAILY_UV,
@@ -161,6 +178,9 @@ private:
     } else if (strcmp(key, "temperature_2m") == 0) {
       currentTempX10 = clamp16(valueX10);
       hasCurrent = true;
+    } else if (strcmp(key, "apparent_temperature") == 0) {
+      currentFeelsX10 = clamp16(valueX10);
+      hasCurrentFeels = true;
     } else if (strcmp(key, "precipitation") == 0) {
       currentPrecipX10 = clamp16(valueX10);
     } else if (strcmp(key, "wind_speed_10m") == 0) {
@@ -173,7 +193,7 @@ private:
       return;
     }
 
-    if (array >= ARRAY_HOURLY_TIME && array <= ARRAY_HOURLY_UV) {
+    if (array >= ARRAY_HOURLY_TIME && array <= ARRAY_HOURLY_WIND) {
       if (arrayIndex >= WeatherApp::MAX_HOURS) {
         return;
       }
@@ -187,6 +207,7 @@ private:
         break;
       case ARRAY_HOURLY_FEELS:
         hour.apparentX10 = clamp16(scaled ? value : value * 10);
+        hour.hasApparent = true;
         break;
       case ARRAY_HOURLY_PRECIP:
         hour.precipX10 = clamp16(scaled ? value : value * 10);
@@ -196,6 +217,9 @@ private:
         break;
       case ARRAY_HOURLY_UV:
         hour.uvX10 = clamp16(scaled ? value : value * 10);
+        break;
+      case ARRAY_HOURLY_WIND:
+        hour.windX10 = clamp16(scaled ? value : value * 10);
         break;
       default:
         break;
@@ -252,17 +276,22 @@ void WeatherApp::reset() {
   currentTime = 0;
   utcOffsetSeconds = 0;
   currentTempX10 = 0;
+  currentFeelsX10 = 0;
   currentPrecipX10 = 0;
   currentWindX10 = 0;
   hasCurrent = false;
+  hasCurrentFeels = false;
   for (int i = 0; i < MAX_HOURS; i++) {
     hours[i] = HourPoint();
   }
   hourCount = 0;
   for (int i = 0; i < MAX_DAYS; i++) {
     days[i] = DayPoint();
+    daySummaries[i] = DaySummary();
   }
   dayCount = 0;
+  daySummaryCount = 0;
+  todayUvPeakX10 = 0;
   nextUvPeakX10 = 0;
   todayUnsafeUv = UnsafeUvWindow();
   nextUnsafeUv = UnsafeUvWindow();
@@ -351,16 +380,18 @@ bool WeatherApp::fetch() {
   currentTime = listener.currentTime;
   utcOffsetSeconds = listener.utcOffsetSeconds;
   currentTempX10 = listener.currentTempX10;
+  currentFeelsX10 = listener.currentFeelsX10;
   currentPrecipX10 = listener.currentPrecipX10;
   currentWindX10 = listener.currentWindX10;
   hasCurrent = listener.hasCurrent;
+  hasCurrentFeels = listener.hasCurrentFeels;
   hourCount = listener.hourCount;
   dayCount = listener.dayCount;
 
   if (!ok && !hasCurrent && hourCount == 0 && dayCount == 0) {
     return false;
   }
-  if (!hasCurrent || hourCount == 0 || dayCount == 0) {
+  if (!hasCurrent || hourCount == 0) {
     setStatus("Weather incomplete");
     return false;
   }
@@ -371,11 +402,13 @@ void WeatherApp::summarize() {
   nextHourSamples = 0;
   nextPrecipSumX10 = 0;
   nextPrecipProbabilityMax = 0;
+  todayUvPeakX10 = 0;
   nextUvPeakX10 = 0;
   todayUnsafeUv = UnsafeUvWindow();
   nextUnsafeUv = UnsafeUvWindow();
 
-  int32_t localTime = currentTime + utcOffsetSeconds;
+  int32_t nowTime = effectiveNowUnix();
+  int32_t localTime = nowTime + utcOffsetSeconds;
   int32_t dayRemainder = localTime % kSecondsPerDay;
   if (dayRemainder < 0) {
     dayRemainder += kSecondsPerDay;
@@ -387,8 +420,23 @@ void WeatherApp::summarize() {
 
   summarizeUnsafeUv(todayStart, todayEnd, todayUnsafeUv);
   summarizeUnsafeUv(tomorrowStart, tomorrowEnd, nextUnsafeUv);
+  summarizeDailyFromHours();
+
+  if (!hasCurrentFeels) {
+    for (int i = 0; i < hourCount; i++) {
+      if (hours[i].time >= nowTime && hours[i].hasApparent) {
+        currentFeelsX10 = hours[i].apparentX10;
+        hasCurrentFeels = true;
+        break;
+      }
+    }
+  }
 
   for (int i = 0; i < hourCount; i++) {
+    if (hours[i].time >= todayStart && hours[i].time < todayEnd) {
+      todayUvPeakX10 =
+          todayUvPeakX10 > hours[i].uvX10 ? todayUvPeakX10 : hours[i].uvX10;
+    }
     if (hours[i].time < tomorrowStart || hours[i].time >= tomorrowEnd) {
       continue;
     }
@@ -417,6 +465,92 @@ void WeatherApp::summarize() {
     nextUvPeakX10 =
         nextUvPeakX10 > hours[i].uvX10 ? nextUvPeakX10 : hours[i].uvX10;
     nextHourSamples++;
+  }
+}
+
+int32_t WeatherApp::effectiveNowUnix() const {
+  if (!deviceClock.isSet()) {
+    return currentTime;
+  }
+  int64_t localMinute = deviceClock.localMinuteIndex();
+  if (localMinute < 0) {
+    return currentTime;
+  }
+  return static_cast<int32_t>(localMinute * 60 - utcOffsetSeconds);
+}
+
+int32_t WeatherApp::localDayStart(int32_t unixTime) const {
+  int32_t localTime = unixTime + utcOffsetSeconds;
+  int32_t dayRemainder = localTime % kSecondsPerDay;
+  if (dayRemainder < 0) {
+    dayRemainder += kSecondsPerDay;
+  }
+  return localTime - dayRemainder - utcOffsetSeconds;
+}
+
+void WeatherApp::summarizeDailyFromHours() {
+  daySummaryCount = 0;
+  for (int i = 0; i < MAX_DAYS; i++) {
+    daySummaries[i] = DaySummary();
+  }
+
+  for (int i = 0; i < hourCount; i++) {
+    if (hours[i].time <= 0) {
+      continue;
+    }
+
+    int32_t dayStart = localDayStart(hours[i].time);
+    int summaryIndex = -1;
+    for (int j = 0; j < daySummaryCount; j++) {
+      if (daySummaries[j].dayStart == dayStart) {
+        summaryIndex = j;
+        break;
+      }
+    }
+    if (summaryIndex < 0) {
+      if (daySummaryCount >= MAX_DAYS) {
+        continue;
+      }
+      summaryIndex = daySummaryCount++;
+      daySummaries[summaryIndex].dayStart = dayStart;
+    }
+
+    DaySummary &summary = daySummaries[summaryIndex];
+    int32_t localSeconds = (hours[i].time + utcOffsetSeconds) % kSecondsPerDay;
+    if (localSeconds < 0) {
+      localSeconds += kSecondsPerDay;
+    }
+    int localHour = localSeconds / kSecondsPerHour;
+    bool isDaytime = localHour >= 6 && localHour < 18;
+    if (isDaytime) {
+      if (!summary.hasDayTemp || hours[i].tempX10 > summary.dayTempX10) {
+        summary.dayTempX10 = hours[i].tempX10;
+      }
+      summary.hasDayTemp = true;
+    } else {
+      if (!summary.hasNightTemp || hours[i].tempX10 < summary.nightTempX10) {
+        summary.nightTempX10 = hours[i].tempX10;
+      }
+      summary.hasNightTemp = true;
+    }
+
+    int32_t precipTotal = summary.precipSumX10 + hours[i].precipX10;
+    summary.precipSumX10 = clampToInt16(precipTotal);
+    summary.precipProbabilityMax =
+        summary.precipProbabilityMax > hours[i].precipProbability
+            ? summary.precipProbabilityMax
+            : hours[i].precipProbability;
+    summary.uvPeakX10 =
+        summary.uvPeakX10 > hours[i].uvX10 ? summary.uvPeakX10 : hours[i].uvX10;
+  }
+
+  for (int i = 0; i < daySummaryCount; i++) {
+    for (int j = 0; j < dayCount; j++) {
+      if (localDayStart(days[j].time) == daySummaries[i].dayStart) {
+        daySummaries[i].sunset = days[j].sunset;
+        break;
+      }
+    }
   }
 }
 
@@ -467,10 +601,20 @@ void WeatherApp::drawCurrent(Adafruit_GFX &gfx) {
 
   gfx.setTextSize(1);
   char timeText[8];
-  formatHour(currentTime, timeText, sizeof(timeText));
+  if (deviceClock.isSet()) {
+    deviceClock.formatTime(timeText, sizeof(timeText));
+  } else {
+    formatHour(effectiveNowUnix(), timeText, sizeof(timeText));
+  }
   gfx.setCursor(80, 82);
-  gfx.print("at ");
+  gfx.print("Now ");
   gfx.print(timeText);
+
+  if (hasCurrentFeels) {
+    gfx.setCursor(80, 96);
+    gfx.print("Feels ");
+    printTemp(gfx, currentFeelsX10);
+  }
 
   gfx.setCursor(kInfoLabelX, kInfoRowStartY);
   gfx.print("Rain now");
@@ -491,10 +635,8 @@ void WeatherApp::drawCurrent(Adafruit_GFX &gfx) {
     gfx.print(sunset);
   }
   char unsafeUvText[20];
-  formatUnsafeUvLabel(dayCount > 0 ? days[0].uvX10 : 0, unsafeUvText,
-                      sizeof(unsafeUvText));
   gfx.setCursor(kInfoLabelX, kInfoRowStartY + kInfoRowStepY * 3);
-  gfx.print(unsafeUvText);
+  gfx.print("Unsafe UV");
   gfx.setCursor(kInfoValueX, kInfoRowStartY + kInfoRowStepY * 3);
   formatUnsafeUvWindow(todayUnsafeUv, unsafeUvText, sizeof(unsafeUvText));
   gfx.print(unsafeUvText);
@@ -502,74 +644,114 @@ void WeatherApp::drawCurrent(Adafruit_GFX &gfx) {
 }
 
 void WeatherApp::drawNext24h(Adafruit_GFX &gfx) {
-  drawHeader(gfx, "NEXT DAY");
-  drawIcon(gfx, nextPrecipSumX10 > 0 ? 'M' : 'C', 16, 75, 2);
+  drawHeader(gfx, "HOURLY");
 
   gfx.setFont();
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  gfx.setCursor(76, 54);
-  gfx.print("Temp ");
-  printTemp(gfx, nextTempMinX10);
-  gfx.print("..");
-  printTemp(gfx, nextTempMaxX10);
+  gfx.setCursor(4, 31);
+  gfx.print("Time");
+  gfx.setCursor(42, 31);
+  gfx.print("Temp");
+  gfx.setCursor(74, 31);
+  gfx.print("Wind");
+  gfx.setCursor(116, 31);
+  gfx.print("UV");
+  gfx.setCursor(143, 31);
+  gfx.print("Rain");
 
-  gfx.setCursor(76, 76);
-  gfx.print("Feel ");
-  printTemp(gfx, nextFeelsMinX10);
-  gfx.print("..");
-  printTemp(gfx, nextFeelsMaxX10);
+  int firstHour = -1;
+  int64_t currentLocalHour =
+      static_cast<int64_t>(effectiveNowUnix() + utcOffsetSeconds) /
+      kSecondsPerHour;
+  for (int i = 0; i < hourCount; i++) {
+    int64_t hourLocalHour =
+        static_cast<int64_t>(hours[i].time + utcOffsetSeconds) /
+        kSecondsPerHour;
+    if (hourLocalHour >= currentLocalHour) {
+      firstHour = i;
+      break;
+    }
+  }
 
-  gfx.setCursor(kInfoLabelX, kInfoRowStartY);
-  gfx.print("Rain chance");
-  gfx.setCursor(kInfoValueX, kInfoRowStartY);
-  gfx.print(nextPrecipProbabilityMax);
-  gfx.print("%");
+  if (firstHour < 0) {
+    drawCentered(gfx, "No hourly data", 98);
+    drawFooter(gfx);
+    return;
+  }
 
-  gfx.setCursor(kInfoLabelX, kInfoRowStartY + kInfoRowStepY);
-  gfx.print("Rain total");
-  gfx.setCursor(kInfoValueX, kInfoRowStartY + kInfoRowStepY);
-  printDecimal(gfx, nextPrecipSumX10, "mm");
-
-  char unsafeUvText[20];
-  formatUnsafeUvLabel(nextUvPeakX10, unsafeUvText, sizeof(unsafeUvText));
-  gfx.setCursor(kInfoLabelX, kInfoRowStartY + kInfoRowStepY * 2);
-  gfx.print(unsafeUvText);
-  gfx.setCursor(kInfoValueX, kInfoRowStartY + kInfoRowStepY * 2);
-  formatUnsafeUvWindow(nextUnsafeUv, unsafeUvText, sizeof(unsafeUvText));
-  gfx.print(unsafeUvText);
+  for (int row = 0; row < kHourlyPageRows; row++) {
+    int hourIndex = firstHour + row * 3;
+    if (hourIndex >= hourCount) {
+      break;
+    }
+    int y = 47 + row * 16;
+    char hour[8];
+    formatHour(hours[hourIndex].time, hour, sizeof(hour));
+    gfx.setCursor(4, y);
+    gfx.print(hour);
+    gfx.setCursor(42, y);
+    printCompactTemp(gfx, hours[hourIndex].tempX10);
+    gfx.setCursor(74, y);
+    printCompactDecimal(gfx, hours[hourIndex].windX10);
+    gfx.setCursor(116, y);
+    printCompactDecimal(gfx, hours[hourIndex].uvX10);
+    gfx.setCursor(143, y);
+    gfx.print(hours[hourIndex].precipProbability);
+    gfx.print("%");
+    if (hours[hourIndex].precipX10 > 0) {
+      gfx.print("/");
+      printCompactDecimal(gfx, hours[hourIndex].precipX10);
+    }
+  }
   drawFooter(gfx);
 }
 
 void WeatherApp::drawWeek(Adafruit_GFX &gfx) {
-  drawHeader(gfx, "7 DAY");
+  drawHeader(gfx, "DAYS");
   gfx.setTextColor(1);
   gfx.setTextSize(1);
   gfx.setFont();
-  gfx.setCursor(31, 31);
+  gfx.setCursor(34, 31);
   gfx.print("Day");
-  gfx.setCursor(82, 31);
+  gfx.setCursor(64, 31);
+  gfx.print("D/N");
+  gfx.setCursor(100, 31);
   gfx.print("UV");
-  gfx.setCursor(115, 31);
-  gfx.print("RainH");
+  gfx.setCursor(124, 31);
+  gfx.print("Rain");
   gfx.setCursor(160, 31);
   gfx.print("Set");
 
-  for (int i = 0; i < dayCount && i < MAX_DAYS; i++) {
-    int y = 48 + i * 19;
+  int rows = daySummaryCount < MAX_DAYS ? daySummaryCount : MAX_DAYS;
+  for (int i = 0; i < rows; i++) {
+    int y = 47 + i * 18;
     char day[8];
     char sunset[8];
-    formatDay(days[i].time, day, sizeof(day));
-    formatHour(days[i].sunset, sunset, sizeof(sunset));
-    drawIcon(gfx, dayIcon(days[i]), 7, y + 14);
+    formatDay(daySummaries[i].dayStart, day, sizeof(day));
+    formatHour(daySummaries[i].sunset, sunset, sizeof(sunset));
+    drawIcon(gfx, dayIcon(daySummaries[i]), 4, y + 13);
     gfx.setFont();
     gfx.setTextSize(1);
-    gfx.setCursor(31, y);
+    gfx.setCursor(34, y);
     gfx.print(day);
-    gfx.setCursor(82, y);
-    printDecimal(gfx, days[i].uvX10, "");
-    gfx.setCursor(118, y);
-    printDecimal(gfx, days[i].precipHoursX10, "h");
+    gfx.setCursor(64, y);
+    if (daySummaries[i].hasDayTemp) {
+      gfx.print(daySummaries[i].dayTempX10 / 10);
+    } else {
+      gfx.print("--");
+    }
+    gfx.print("/");
+    if (daySummaries[i].hasNightTemp) {
+      gfx.print(daySummaries[i].nightTempX10 / 10);
+    } else {
+      gfx.print("--");
+    }
+    gfx.setCursor(100, y);
+    printCompactDecimal(gfx, daySummaries[i].uvPeakX10);
+    gfx.setCursor(124, y);
+    gfx.print(daySummaries[i].precipProbabilityMax);
+    gfx.print("%");
     gfx.setCursor(160, y);
     gfx.print(sunset);
   }
@@ -629,20 +811,21 @@ char WeatherApp::currentIcon() const {
   if (currentTempX10 <= 0) {
     return 'E';
   }
-  if (dayCount > 0 && days[0].sunset > 0 && currentTime > days[0].sunset) {
+  if (dayCount > 0 && days[0].sunset > 0 &&
+      effectiveNowUnix() > days[0].sunset) {
     return 'I';
   }
-  if (dayCount > 0 && days[0].uvX10 >= 60) {
+  if (todayUnsafeUv.count > 0) {
     return 'N';
   }
   return 'C';
 }
 
-char WeatherApp::dayIcon(const DayPoint &day) const {
-  if (day.precipHoursX10 >= 20) {
+char WeatherApp::dayIcon(const DaySummary &day) const {
+  if (day.precipProbabilityMax >= 40 || day.precipSumX10 > 0) {
     return 'M';
   }
-  if (day.uvX10 >= 60) {
+  if (day.uvPeakX10 >= 60) {
     return 'N';
   }
   return 'C';
@@ -664,6 +847,20 @@ void WeatherApp::printDecimal(Adafruit_GFX &gfx, int16_t valueX10,
   if (unit != nullptr && unit[0] != '\0') {
     gfx.print(unit);
   }
+}
+
+void WeatherApp::printCompactDecimal(Adafruit_GFX &gfx, int16_t valueX10) {
+  gfx.print(valueX10 / 10);
+  int decimal = abs(valueX10 % 10);
+  if (decimal != 0) {
+    gfx.print(".");
+    gfx.print(decimal);
+  }
+}
+
+void WeatherApp::printCompactTemp(Adafruit_GFX &gfx, int16_t valueX10) {
+  gfx.print(valueX10 / 10);
+  gfx.print("C");
 }
 
 void WeatherApp::formatUnsafeUvLabel(int16_t peakX10, char *out,
@@ -695,7 +892,7 @@ void WeatherApp::formatUnsafeUvWindow(const UnsafeUvWindow &window, char *out,
   }
 
   int32_t startLocal = (window.startTime + utcOffsetSeconds) % kSecondsPerDay;
-  int32_t endLocal = (window.endTime - 1 + utcOffsetSeconds) % kSecondsPerDay;
+  int32_t endLocal = (window.endTime + utcOffsetSeconds) % kSecondsPerDay;
   if (startLocal < 0) {
     startLocal += kSecondsPerDay;
   }

@@ -19,6 +19,10 @@ static const char *BUTTONS[5][4] = {{"DEL", "%", "^", "/"},
 static const UiRect DISPLAY_RECT = {6, 16, 146, 28};
 static const UiRect EQUALS_BUTTON = {158, 16, 36, 28};
 
+static bool isOperatorChar(char c) {
+  return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^';
+}
+
 class ExpressionParser {
 public:
   explicit ExpressionParser(const char *source) : text(source) {}
@@ -193,6 +197,9 @@ void CalculatorApp::append(char c) {
     showingResult = false;
   }
   size_t len = strlen(expression);
+  if (isOperatorChar(c) && len > 0 && isOperatorChar(expression[len - 1])) {
+    return;
+  }
   if (len + 1 >= sizeof(expression)) {
     return;
   }

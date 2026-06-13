@@ -18,6 +18,7 @@ private:
 
   State state = STATE_DIFFICULTY;
   Difficulty difficulty = EASY;
+  uint8_t solution[81] = {0};
   uint8_t fixed[81] = {0};
   uint8_t values[81] = {0};
   uint16_t notes[81] = {0};
@@ -33,6 +34,13 @@ private:
   void drawPicker(Adafruit_GFX &gfx);
   void applyNumber(uint8_t number);
   void toggleNote(int cell, uint8_t number);
+  void generateSolution();
+  void swapDigits(uint8_t a, uint8_t b);
+  void swapRows(int rowA, int rowB);
+  void swapCols(int colA, int colB);
+  void swapRowBands(int bandA, int bandB);
+  void swapColStacks(int stackA, int stackB);
+  bool generatePuzzle();
   bool isSolved() const;
   int boardCellAt(const TouchPoint &point) const;
   int pickerNumberAt(const TouchPoint &point) const;

@@ -22,8 +22,10 @@ private:
   void drawMark(Adafruit_GFX &gfx, int cell, char mark);
   void makeMove(int cell);
   void cpuMove();
-  int chooseCpuMove() const;
+  int chooseCpuMove();
   int findWinningMove(char mark) const;
+  int chooseRandomEmptyCell() const;
+  bool isFirstCpuResponse() const;
   char calculateWinner() const;
   bool isFull() const;
 };
