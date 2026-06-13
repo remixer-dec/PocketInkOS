@@ -9,6 +9,11 @@ static const int BOARD_Y = 8;
 static const int BOARD_SIZE = 184;
 static const int CELL = BOARD_SIZE / 8;
 static const int AI_MOVE_LIMIT = 96;
+static const unsigned long AI3_TIME_BUDGET_MS = 2200;
+static const uint8_t AI3_MAX_DEPTH = 5;
+static const uint8_t AI3_BOOK_PLY_LIMIT = 8;
+static const int AI_MATE_SCORE = 30000;
+static const int AI_INF_SCORE = 32000;
 
 static const UiRect PVP_BUTTON = {8, 54, 42, 28};
 static const UiRect AI1_BUTTON = {56, 54, 42, 28};
@@ -22,6 +27,99 @@ static const UiRect PROMOTION_BUTTONS[4] = {{28, 94, 30, 24},
                                             {148, 94, 30, 24}};
 static const PieceType PROMOTION_TYPES[4] = {
     PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight};
+
+static constexpr int bookSquare(char file, char rank) {
+  return ('8' - rank) * 8 + (file - 'A');
+}
+
+struct BookPly {
+  int8_t from;
+  int8_t to;
+  PieceType promotion;
+  bool hasPromotion;
+};
+
+static const char *AI3_OPENINGS[] = {
+    // Ruy Lopez
+    "E2E4 E7E5 G1F3 B8C6 F1B5 A7A6 B5A4 G8F6",
+    // Italian Game
+    "E2E4 E7E5 G1F3 B8C6 F1C4 F8C5 C2C3 G8F6",
+    // Sicilian Defense
+    "E2E4 C7C5 G1F3 D7D6 D2D4 C5D4 F3D4 G8F6",
+    // French Defense
+    "E2E4 E7E6 D2D4 D7D5 B1C3 G8F6 C1G5 F8E7",
+    // Caro-Kann Defense
+    "E2E4 C7C6 D2D4 D7D5 B1C3 D5E4 C3E4 B8D7",
+    // Queen's Gambit Declined
+    "D2D4 D7D5 C2C4 E7E6 B1C3 G8F6 C1G5 F8E7",
+    // King's Indian Defense
+    "D2D4 G8F6 C2C4 G7G6 B1C3 F8G7 E2E4 D7D6",
+    // English Opening
+    "C2C4 E7E5 B1C3 G8F6 G2G3 D7D5 C4D5 F6D5"};
+
+static char asciiUpper(char c) {
+  return (c >= 'a' && c <= 'z') ? static_cast<char>(c - ('a' - 'A')) : c;
+}
+
+static bool parseBookMoveToken(const char *line, uint8_t ply, BookPly &out) {
+  if (!line) {
+    return false;
+  }
+  uint8_t index = 0;
+  const char *p = line;
+  while (*p) {
+    while (*p == ' ') {
+      p++;
+    }
+    if (!*p) {
+      break;
+    }
+    const char *token = p;
+    int len = 0;
+    while (*p && *p != ' ') {
+      p++;
+      len++;
+    }
+    if (index != ply) {
+      index++;
+      continue;
+    }
+    if (len < 4 || len > 5) {
+      return false;
+    }
+
+    char fromFile = asciiUpper(token[0]);
+    char fromRank = token[1];
+    char toFile = asciiUpper(token[2]);
+    char toRank = token[3];
+    if (fromFile < 'A' || fromFile > 'H' || toFile < 'A' || toFile > 'H' ||
+        fromRank < '1' || fromRank > '8' || toRank < '1' || toRank > '8') {
+      return false;
+    }
+
+    out.from = static_cast<int8_t>(bookSquare(fromFile, fromRank));
+    out.to = static_cast<int8_t>(bookSquare(toFile, toRank));
+    out.promotion = PieceType::Queen;
+    out.hasPromotion = false;
+    if (len == 5) {
+      char promo = asciiUpper(token[4]);
+      if (promo == 'Q') {
+        out.promotion = PieceType::Queen;
+      } else if (promo == 'R') {
+        out.promotion = PieceType::Rook;
+      } else if (promo == 'B') {
+        out.promotion = PieceType::Bishop;
+      } else if (promo == 'N') {
+        out.promotion = PieceType::Knight;
+      } else {
+        return false;
+      }
+      out.hasPromotion = true;
+    }
+    return true;
+  }
+  return false;
+}
 
 static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
                              uint8_t textSize) {
@@ -46,6 +144,10 @@ void ChessApp::resetGameState() {
   humanColor = PieceColor::White;
   vsAi = false;
   aiLevel = 1;
+  aiThinking = false;
+  aiThinkingSinceMs = 0;
+  aiBookEnabled = false;
+  menuCancelBlockUntilMs = 0;
   enPassantSquare = -1;
   whiteKingMoved = false;
   blackKingMoved = false;
@@ -162,18 +264,36 @@ bool ChessApp::isGameOver() const { return started && gameOver; }
 bool ChessApp::isHistoryOpen() const { return mode == Mode::History; }
 
 bool ChessApp::update() {
+  bool changed = false;
+  if (mode == Mode::Playing && aiThinking && !alertVisible && !gameOver &&
+      !isHumanTurn()) {
+    aiThinking = false;
+    setHint("");
+    Move move = chooseAiMove();
+    if (move.from >= 0) {
+      makeLegalMove(move, true);
+    }
+    if (!alertVisible) {
+      setHint("");
+    }
+    changed = true;
+  }
+
   if (mode != Mode::Playing || (selectedFrom < 0 && selectedTo < 0)) {
-    return false;
+    return changed;
   }
   unsigned long now = millis();
   if (now - lastAnimationMs < 450) {
-    return false;
+    return changed;
   }
   lastAnimationMs = now;
   return true;
 }
 
 bool ChessApp::handlePowerButton() {
+  if (aiThinking) {
+    return true;
+  }
   if (alertVisible) {
     alertVisible = false;
     maybeRunAi();
@@ -188,6 +308,11 @@ bool ChessApp::handlePowerButton() {
     pendingSelection = PendingSelection::Target;
     return true;
   }
+  if (selectedFrom >= 0 && sourceConfirmed && selectedTo < 0) {
+    clearSelection();
+    setHint(turn == PieceColor::White ? "White to move" : "Black to move");
+    return true;
+  }
   if (selectedFrom >= 0 && selectedTo >= 0) {
     return tryMoveSelection();
   }
@@ -195,7 +320,20 @@ bool ChessApp::handlePowerButton() {
 }
 
 bool ChessApp::handleMenuButton() {
+  if (aiThinking) {
+    return true;
+  }
+  unsigned long now = millis();
+  if (mode == Mode::Playing && now < menuCancelBlockUntilMs) {
+    return true;
+  }
   if (mode == Mode::Playing) {
+    if (selectedFrom >= 0 && sourceConfirmed && selectedTo < 0) {
+      clearSelection();
+      setHint(turn == PieceColor::White ? "White to move" : "Black to move");
+      menuCancelBlockUntilMs = now + 350;
+      return true;
+    }
     mode = Mode::History;
     return true;
   }
@@ -207,10 +345,16 @@ bool ChessApp::handleMenuButton() {
 }
 
 bool ChessApp::handleMenuLongPress() {
+  if (aiThinking) {
+    return true;
+  }
   return started && (mode == Mode::Playing || mode == Mode::History);
 }
 
 bool ChessApp::handleTouch(const TouchPoint &point) {
+  if (aiThinking) {
+    return true;
+  }
   if (alertVisible) {
     alertVisible = false;
     maybeRunAi();
@@ -293,8 +437,12 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
   }
 
   if (selectedTo == square) {
+    if (targetConfirmed && millis() - targetSelectedAtMs < 3000) {
+      return true;
+    }
     selectedTo = -1;
     targetConfirmed = false;
+    targetSelectedAtMs = 0;
     setHint("Pick target");
     return true;
   }
@@ -303,8 +451,10 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
     setHint(turn == PieceColor::White ? "White to move" : "Black to move");
     return true;
   }
+  square = resolveTargetSquare(square);
   selectedTo = square;
   targetConfirmed = true;
+  targetSelectedAtMs = millis();
   char name[3];
   squareName(square, name);
   snprintf(hintText, sizeof(hintText), "To %s", name);
@@ -313,6 +463,7 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
 
 void ChessApp::startGame() {
   placeInitialPieces();
+  randomSeed((unsigned long)micros());
   turn = PieceColor::White;
   enPassantSquare = -1;
   historyCount = 0;
@@ -320,6 +471,9 @@ void ChessApp::startGame() {
   hasLastMove = false;
   lastMoveFrom = -1;
   lastMoveTo = -1;
+  aiThinking = false;
+  aiThinkingSinceMs = 0;
+  aiBookEnabled = true;
   gameOver = false;
   started = true;
   alertVisible = false;
@@ -333,6 +487,7 @@ void ChessApp::clearSelection() {
   selectedTo = -1;
   sourceConfirmed = false;
   targetConfirmed = false;
+  targetSelectedAtMs = 0;
   awaitingPromotion = false;
   promotionMove = {-1, -1, PieceType::Queen, true};
   pendingSelection = PendingSelection::Source;
@@ -417,6 +572,71 @@ int ChessApp::resolveSourceSquare(int square) const {
   return candidate >= 0 ? candidate : square;
 }
 
+int ChessApp::resolveTargetSquare(int square) const {
+  if (square < 0 || square >= 64 || selectedFrom < 0 || selectedFrom >= 64) {
+    return square;
+  }
+
+  Move direct = {static_cast<int8_t>(selectedFrom), static_cast<int8_t>(square),
+                 PieceType::Queen, true};
+  if (isLegalMove(direct)) {
+    return square;
+  }
+
+  const int tapRow = square / 8;
+  const int tapCol = square % 8;
+  const int fromRow = selectedFrom / 8;
+  const int fromCol = selectedFrom % 8;
+  const int tapVecRow = tapRow - fromRow;
+  const int tapVecCol = tapCol - fromCol;
+
+  int bestSquare = -1;
+  int bestChebyshev = 9;
+  int bestManhattan = 99;
+  int bestDirection = -1;
+  int bestCross = 32767;
+
+  for (int to = 0; to < 64; ++to) {
+    Move assisted = {static_cast<int8_t>(selectedFrom), static_cast<int8_t>(to),
+                     PieceType::Queen, true};
+    if (!isLegalMove(assisted)) {
+      continue;
+    }
+
+    const int row = to / 8;
+    const int col = to % 8;
+    const int dRow = abs(row - tapRow);
+    const int dCol = abs(col - tapCol);
+    const int chebyshev = dRow > dCol ? dRow : dCol;
+    if (chebyshev > 1) {
+      continue;
+    }
+
+    const int manhattan = dRow + dCol;
+    const int moveVecRow = row - fromRow;
+    const int moveVecCol = col - fromCol;
+    const int dot = tapVecRow * moveVecRow + tapVecCol * moveVecCol;
+    const int direction = dot >= 0 ? 1 : 0;
+    const int cross = abs(tapVecRow * moveVecCol - tapVecCol * moveVecRow);
+
+    const bool better =
+        chebyshev < bestChebyshev ||
+        (chebyshev == bestChebyshev &&
+         (manhattan < bestManhattan ||
+          (manhattan == bestManhattan &&
+           (direction > bestDirection ||
+            (direction == bestDirection && cross < bestCross)))));
+    if (better) {
+      bestSquare = to;
+      bestChebyshev = chebyshev;
+      bestManhattan = manhattan;
+      bestDirection = direction;
+      bestCross = cross;
+    }
+  }
+  return bestSquare >= 0 ? bestSquare : square;
+}
+
 void ChessApp::draw(Adafruit_GFX &gfx) {
   if (mode == Mode::Setup) {
     drawSetup(gfx);
@@ -431,6 +651,8 @@ void ChessApp::draw(Adafruit_GFX &gfx) {
   }
   if (alertVisible) {
     drawAlert(gfx);
+  } else if (aiThinking) {
+    drawThinkingOverlay(gfx);
   }
 }
 
@@ -638,8 +860,12 @@ void ChessApp::drawPromotionChooser(Adafruit_GFX &gfx) {
 }
 
 void ChessApp::drawAlert(Adafruit_GFX &gfx) {
-  gfx.fillRect(22, 72, 156, 56, 0);
-  gfx.drawRect(22, 72, 156, 56, 1);
+  static const int POPUP_X = 22;
+  static const int POPUP_Y = 72;
+  static const int POPUP_W = 156;
+  static const int POPUP_H = 56;
+  gfx.fillRect(POPUP_X, POPUP_Y, POPUP_W, POPUP_H, 0);
+  gfx.drawRect(POPUP_X, POPUP_Y, POPUP_W, POPUP_H, 1);
   gfx.setTextColor(1);
   gfx.setTextSize(1);
   int16_t x;
@@ -647,10 +873,33 @@ void ChessApp::drawAlert(Adafruit_GFX &gfx) {
   uint16_t w;
   uint16_t h;
   gfx.getTextBounds(alertText, 0, 0, &x, &y, &w, &h);
-  gfx.setCursor(22 + (156 - w) / 2, 88);
+  gfx.setCursor(POPUP_X + (POPUP_W - static_cast<int>(w)) / 2, 88);
   gfx.print(alertText);
-  gfx.setCursor(42, 110);
-  gfx.print("Touch to close");
+  const char *okText = "OK";
+  gfx.getTextBounds(okText, 0, 0, &x, &y, &w, &h);
+  gfx.setCursor(POPUP_X + (POPUP_W - static_cast<int>(w)) / 2, 110);
+  gfx.print(okText);
+}
+
+void ChessApp::drawThinkingOverlay(Adafruit_GFX &gfx) {
+  static const int POPUP_X = 22;
+  static const int POPUP_Y = 72;
+  static const int POPUP_W = 156;
+  static const int POPUP_H = 56;
+  gfx.fillRect(POPUP_X, POPUP_Y, POPUP_W, POPUP_H, 0);
+  gfx.drawRect(POPUP_X, POPUP_Y, POPUP_W, POPUP_H, 1);
+  gfx.setTextColor(1);
+  gfx.setTextSize(1);
+  const char *thinkingText = "Thinking";
+  int16_t x;
+  int16_t y;
+  uint16_t w;
+  uint16_t h;
+  gfx.getTextBounds(thinkingText, 0, 0, &x, &y, &w, &h);
+  int textX = POPUP_X + (POPUP_W - static_cast<int>(w)) / 2 - x;
+  int textY = POPUP_Y + (POPUP_H - static_cast<int>(h)) / 2 - y;
+  gfx.setCursor(textX, textY);
+  gfx.print(thinkingText);
 }
 
 const CaseFontGlyph *ChessApp::findGlyph(PieceType type, PieceColor color,
@@ -699,7 +948,8 @@ void ChessApp::drawPiece(Adafruit_GFX &gfx, int row, int col,
 }
 
 bool ChessApp::tryMoveSelection() {
-  Move move = {selectedFrom, selectedTo, PieceType::Queen, true};
+  Move move = {static_cast<int8_t>(selectedFrom), static_cast<int8_t>(selectedTo),
+               PieceType::Queen, true};
   if (isPromotionMove(move) && isLegalMove(move) && isHumanTurn()) {
     promotionMove = move;
     awaitingPromotion = true;
@@ -1132,7 +1382,8 @@ bool ChessApp::collectLegalMoves(PieceColor color, Move *moves, int maxMoves,
       continue;
     }
     for (int to = 0; to < 64; ++to) {
-      Move move = {from, to, PieceType::Queen, true};
+      Move move = {static_cast<int8_t>(from), static_cast<int8_t>(to),
+                   PieceType::Queen, true};
       if (isLegalMove(move)) {
         if (count < maxMoves) {
           moves[count] = move;
@@ -1151,14 +1402,28 @@ void ChessApp::maybeRunAi() {
   if (!vsAi || gameOver || isHumanTurn()) {
     return;
   }
+  if (aiLevel >= 3) {
+    aiThinking = true;
+    aiThinkingSinceMs = millis();
+    setHint("AI thinking...");
+    return;
+  }
   Move move = chooseAiMove();
   if (move.from >= 0) {
     makeLegalMove(move, true);
   }
 }
 
-ChessApp::Move ChessApp::chooseAiMove() const {
-  Move moves[AI_MOVE_LIMIT];
+ChessApp::Move ChessApp::chooseAiMove() {
+  if (aiLevel >= 3) {
+    Move bookMove = {-1, -1, PieceType::Queen, true};
+    if (chooseAiBookMove(bookMove)) {
+      return bookMove;
+    }
+    return chooseAiMoveLevel3(AI3_TIME_BUDGET_MS);
+  }
+
+  Move *moves = searchMoves[0];
   int count = 0;
   collectLegalMoves(turn, moves, AI_MOVE_LIMIT, count);
   if (count <= 0) {
@@ -1166,36 +1431,294 @@ ChessApp::Move ChessApp::chooseAiMove() const {
   }
   int storedCount = count < AI_MOVE_LIMIT ? count : AI_MOVE_LIMIT;
 
-  if (aiLevel == 1) {
-    return moves[random(storedCount)];
-  }
-
   int bestIndex = 0;
   int bestScore = -30000;
   for (int i = 0; i < storedCount; ++i) {
-    int score = 0;
-    if (aiLevel >= 3) {
-      const Piece &target = board[moves[i].to];
-      if (target.present) {
-        score += pieceValue(target.type);
-      }
-      int centerDistance =
-          abs((moves[i].to / 8) - 3) + abs((moves[i].to % 8) - 3);
-      score += 8 - centerDistance;
-      score -= destinationRiskAfter(moves[i], turn);
-      if (hasLastMove && moves[i].from == lastMoveTo &&
-          moves[i].to == lastMoveFrom) {
-        score -= 250;
-      }
-    } else {
-      score = moveScore(moves[i], turn);
-    }
+    int score = aiLevel >= 2 ? scoreMoveForLevel3(moves[i], turn)
+                             : moveScore(moves[i], turn);
     if (score > bestScore) {
       bestScore = score;
       bestIndex = i;
     }
   }
   return moves[bestIndex];
+}
+
+bool ChessApp::chooseAiBookMove(Move &outMove) {
+  if (!aiBookEnabled || historyCount >= AI3_BOOK_PLY_LIMIT) {
+    aiBookEnabled = false;
+    return false;
+  }
+
+  Move candidates[16];
+  int candidateCount = 0;
+
+  const int openingCount =
+      static_cast<int>(sizeof(AI3_OPENINGS) / sizeof(AI3_OPENINGS[0]));
+  for (int line = 0; line < openingCount; ++line) {
+    const char *opening = AI3_OPENINGS[line];
+    bool prefixMatches = true;
+    BookPly expected = {};
+    for (int ply = 0; ply < historyCount; ++ply) {
+      if (!parseBookMoveToken(opening, ply, expected) ||
+          historyFrom[ply] != expected.from || historyTo[ply] != expected.to) {
+        prefixMatches = false;
+        break;
+      }
+    }
+    if (!prefixMatches) {
+      continue;
+    }
+
+    BookPly next = {};
+    if (!parseBookMoveToken(opening, historyCount, next)) {
+      continue;
+    }
+    const Piece &fromPiece = board[next.from];
+    if (!fromPiece.present || fromPiece.color != turn) {
+      continue;
+    }
+
+    Move candidate = {static_cast<int8_t>(next.from), static_cast<int8_t>(next.to),
+                      next.promotion, next.hasPromotion};
+    if (!isLegalMove(candidate)) {
+      continue;
+    }
+
+    if (candidateCount < static_cast<int>(sizeof(candidates) / sizeof(candidates[0]))) {
+      candidates[candidateCount++] = candidate;
+    }
+  }
+
+  if (candidateCount <= 0) {
+    aiBookEnabled = false;
+    return false;
+  }
+
+  outMove = candidates[random(candidateCount)];
+  return true;
+}
+
+ChessApp::Move ChessApp::chooseAiMoveLevel3(unsigned long budgetMs) {
+  Move *rootMoves = searchMoves[0];
+  int16_t *ordering = searchOrdering[0];
+  int count = 0;
+  collectLegalMoves(turn, rootMoves, AI_MOVE_LIMIT, count);
+  if (count <= 0) {
+    return {-1, -1, PieceType::Queen, true};
+  }
+  int storedCount = count < AI_MOVE_LIMIT ? count : AI_MOVE_LIMIT;
+  if (storedCount == 1) {
+    return rootMoves[0];
+  }
+
+  PieceColor aiColor = turn;
+  Move bestMove = rootMoves[0];
+  unsigned long deadlineMs = millis() + budgetMs;
+
+  for (uint8_t depth = 1; depth <= AI3_MAX_DEPTH; ++depth) {
+    if (millis() >= deadlineMs) {
+      break;
+    }
+
+    Move depthBestMove = bestMove;
+    int depthBestScore = -AI_INF_SCORE;
+    bool timedOut = false;
+    for (int i = 0; i < storedCount; ++i) {
+      ordering[i] = static_cast<int16_t>(scoreMoveForLevel3(rootMoves[i], aiColor));
+    }
+    for (int i = 0; i < storedCount; ++i) {
+      int bestOrderIndex = i;
+      for (int j = i + 1; j < storedCount; ++j) {
+        if (ordering[j] > ordering[bestOrderIndex]) {
+          bestOrderIndex = j;
+        }
+      }
+      if (bestOrderIndex != i) {
+        Move swapMove = rootMoves[i];
+        rootMoves[i] = rootMoves[bestOrderIndex];
+        rootMoves[bestOrderIndex] = swapMove;
+        int swapOrder = ordering[i];
+        ordering[i] = ordering[bestOrderIndex];
+        ordering[bestOrderIndex] = swapOrder;
+      }
+    }
+
+    for (int i = 0; i < storedCount; ++i) {
+      if (millis() >= deadlineMs) {
+        timedOut = true;
+        break;
+      }
+      saveSearchSnapshot(0);
+      applySearchMove(rootMoves[i]);
+      int score = alphaBetaSearch(depth - 1, -AI_INF_SCORE, AI_INF_SCORE,
+                                  aiColor, 1, deadlineMs, timedOut);
+      restoreSearchSnapshot(0);
+      if (timedOut) {
+        break;
+      }
+      if (score > depthBestScore) {
+        depthBestScore = score;
+        depthBestMove = rootMoves[i];
+      }
+    }
+
+    if (timedOut) {
+      break;
+    }
+    bestMove = depthBestMove;
+  }
+
+  return bestMove;
+}
+
+int ChessApp::alphaBetaSearch(uint8_t depth, int alpha, int beta,
+                              PieceColor aiColor, uint8_t ply,
+                              unsigned long deadlineMs, bool &timedOut) {
+  if (timedOut || millis() >= deadlineMs) {
+    timedOut = true;
+    return evaluateBoard(aiColor);
+  }
+
+  if (ply >= SEARCH_MAX_PLY) {
+    return evaluateBoard(aiColor);
+  }
+
+  Move *moves = searchMoves[ply];
+  int16_t *ordering = searchOrdering[ply];
+  int count = 0;
+  collectLegalMoves(turn, moves, AI_MOVE_LIMIT, count);
+  int storedCount = count < AI_MOVE_LIMIT ? count : AI_MOVE_LIMIT;
+  if (depth == 0 || storedCount == 0) {
+    if (storedCount == 0) {
+      if (isInCheck(turn)) {
+        return turn == aiColor ? -AI_MATE_SCORE + ply : AI_MATE_SCORE - ply;
+      }
+      return 0;
+    }
+    return evaluateBoard(aiColor);
+  }
+
+  for (int i = 0; i < storedCount; ++i) {
+    ordering[i] = static_cast<int16_t>(scoreMoveForLevel3(moves[i], turn));
+  }
+  for (int i = 0; i < storedCount; ++i) {
+    int bestOrderIndex = i;
+    for (int j = i + 1; j < storedCount; ++j) {
+      if (ordering[j] > ordering[bestOrderIndex]) {
+        bestOrderIndex = j;
+      }
+    }
+    if (bestOrderIndex != i) {
+      Move swapMove = moves[i];
+      moves[i] = moves[bestOrderIndex];
+      moves[bestOrderIndex] = swapMove;
+      int swapOrder = ordering[i];
+      ordering[i] = ordering[bestOrderIndex];
+      ordering[bestOrderIndex] = swapOrder;
+    }
+  }
+
+  bool maximizing = turn == aiColor;
+  int best = maximizing ? -AI_INF_SCORE : AI_INF_SCORE;
+  int explored = 0;
+
+  for (int i = 0; i < storedCount; ++i) {
+    if (millis() >= deadlineMs) {
+      timedOut = true;
+      break;
+    }
+    saveSearchSnapshot(ply);
+    applySearchMove(moves[i]);
+    int score =
+        alphaBetaSearch(depth - 1, alpha, beta, aiColor, ply + 1, deadlineMs,
+                        timedOut);
+    restoreSearchSnapshot(ply);
+    if (timedOut) {
+      break;
+    }
+    explored++;
+    if (maximizing) {
+      if (score > best) {
+        best = score;
+      }
+      if (best > alpha) {
+        alpha = best;
+      }
+    } else {
+      if (score < best) {
+        best = score;
+      }
+      if (best < beta) {
+        beta = best;
+      }
+    }
+    if (beta <= alpha) {
+      break;
+    }
+  }
+
+  if (explored == 0) {
+    return evaluateBoard(aiColor);
+  }
+  return best;
+}
+
+int ChessApp::scoreMoveForLevel3(const Move &move, PieceColor perspective) const {
+  int score = 0;
+  const Piece &target = board[move.to];
+  if (target.present) {
+    score += pieceValue(target.type);
+  }
+  int centerDistance = abs((move.to / 8) - 3) + abs((move.to % 8) - 3);
+  score += 8 - centerDistance;
+  score -= destinationRiskAfter(move, perspective);
+  if (hasLastMove && move.from == lastMoveTo && move.to == lastMoveFrom) {
+    score -= 250;
+  }
+  return score;
+}
+
+void ChessApp::saveSearchSnapshot(uint8_t ply) {
+  SearchSnapshot &snapshot = searchSnapshots[ply];
+  for (int i = 0; i < 64; ++i) {
+    snapshot.board[i] = board[i];
+  }
+  snapshot.turn = turn;
+  snapshot.enPassantSquare = enPassantSquare;
+  snapshot.whiteKingMoved = whiteKingMoved;
+  snapshot.blackKingMoved = blackKingMoved;
+  snapshot.whiteKingsideRookMoved = whiteKingsideRookMoved;
+  snapshot.whiteQueensideRookMoved = whiteQueensideRookMoved;
+  snapshot.blackKingsideRookMoved = blackKingsideRookMoved;
+  snapshot.blackQueensideRookMoved = blackQueensideRookMoved;
+}
+
+void ChessApp::restoreSearchSnapshot(uint8_t ply) {
+  const SearchSnapshot &snapshot = searchSnapshots[ply];
+  for (int i = 0; i < 64; ++i) {
+    board[i] = snapshot.board[i];
+  }
+  turn = snapshot.turn;
+  enPassantSquare = snapshot.enPassantSquare;
+  whiteKingMoved = snapshot.whiteKingMoved;
+  blackKingMoved = snapshot.blackKingMoved;
+  whiteKingsideRookMoved = snapshot.whiteKingsideRookMoved;
+  whiteQueensideRookMoved = snapshot.whiteQueensideRookMoved;
+  blackKingsideRookMoved = snapshot.blackKingsideRookMoved;
+  blackQueensideRookMoved = snapshot.blackQueensideRookMoved;
+}
+
+void ChessApp::applySearchMove(const Move &move) {
+  Piece moving = board[move.from];
+  Piece captured = board[move.to];
+  if (moving.type == PieceType::Pawn && move.to == enPassantSquare &&
+      !captured.present) {
+    int capturedSquare = move.to + (moving.color == PieceColor::White ? 8 : -8);
+    captured = board[capturedSquare];
+  }
+  applyMoveUnchecked(move, moving, captured, false);
+  turn = opposite(turn);
 }
 
 void ChessApp::buildPositionAfterMove(const Move &move, Piece *position) const {
@@ -1301,6 +1824,8 @@ void ChessApp::appendHistory(const Move &move, Piece moving, Piece captured) {
       historyCapturedPiece[i - 1] = historyCapturedPiece[i];
       historyCapturedColor[i - 1] = historyCapturedColor[i];
       historyHasCapture[i - 1] = historyHasCapture[i];
+      historyFrom[i - 1] = historyFrom[i];
+      historyTo[i - 1] = historyTo[i];
     }
     historyCount = 95;
   }
@@ -1331,6 +1856,8 @@ void ChessApp::appendHistory(const Move &move, Piece moving, Piece captured) {
   historyHasCapture[historyCount] = captured.present;
   historyCapturedPiece[historyCount] = captured.type;
   historyCapturedColor[historyCount] = captured.color;
+  historyFrom[historyCount] = move.from;
+  historyTo[historyCount] = move.to;
   historyCount++;
   historyOffset = historyCount > 7 ? historyCount - 7 : 0;
 }
