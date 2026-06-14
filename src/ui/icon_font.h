@@ -58,7 +58,7 @@ enum class GlyphId : uint8_t {
     WeatherPartlySunny,
 
     WeatherSnow,
-    WeatherNight,
+    Minus,
     World,
     ZoomIn,
     ZoomOut,
@@ -156,7 +156,7 @@ static constexpr GlyphId ASCII_TO_GLYPH[94] = {
     /* ` */ GlyphId::WeatherPartlySunny,
 
     /* a */ GlyphId::WeatherSnow,
-    /* b */ GlyphId::WeatherNight,
+    /* b */ GlyphId::Minus,
     /* c */ GlyphId::World,
     /* d */ GlyphId::ZoomIn,
     /* e */ GlyphId::ZoomOut,
