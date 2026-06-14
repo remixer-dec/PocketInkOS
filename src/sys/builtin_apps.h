@@ -18,6 +18,7 @@ bool wifiIsConnected();
 void wifiTurnOn();
 void wifiTurnOff();
 void wifiToggle();
+bool wifiUpdate();
 void restoreWifiOn(bool enabled);
 
 #endif

@@ -19,6 +19,7 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/audio_capture.cpp" \
+  "$ROOT/src/sys/audio_power.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
   "$ROOT/src/apps/calculator_app.cpp" \
@@ -27,8 +28,12 @@ FILES=( \
   "$ROOT/src/apps/deghost_app.cpp" \
   "$ROOT/src/sys/battery_monitor.cpp" \
   "$ROOT/src/games/cube_app.cpp" \
+  "$ROOT/src/sys/device_controls.cpp" \
   "$ROOT/src/sys/device_clock.cpp" \
   "$ROOT/src/sys/environment_monitor.cpp" \
+  "$ROOT/src/sys/pcf85063_clock.cpp" \
+  "$ROOT/src/sys/power_control.cpp" \
+  "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/sys/shell_buttons.cpp" \
   "$ROOT/src/ui/components/keyboard_component.cpp" \

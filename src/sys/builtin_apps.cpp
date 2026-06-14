@@ -54,7 +54,7 @@ AppScreen<HangmanApp, true> hangmanScreen(hangman);
 AppScreen<SudokuApp> sudokuScreen(sudoku);
 AppScreen<WordleApp, true> wordleScreen(wordle);
 AppScreen<ChessApp, true> chessScreen(chess);
-AppScreen<CalculatorApp> calculatorScreen(calculator);
+AppScreen<CalculatorApp, true> calculatorScreen(calculator);
 AppScreen<QrApp, true> qrScreen(qrApp);
 TouchlessAppScreen<PaintApp> paintScreen(paintApp);
 AppScreen<DeghostApp, true> deghostScreen(deghostApp);
@@ -441,6 +441,14 @@ void wifiToggle() {
   } else {
     wifiApp.disconnect();
   }
+#endif
+}
+
+bool wifiUpdate() {
+#if ENABLE_NETWORK_APPS
+  return wifiApp.update();
+#else
+  return false;
 #endif
 }
 

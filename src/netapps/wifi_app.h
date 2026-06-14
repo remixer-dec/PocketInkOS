@@ -36,12 +36,14 @@ private:
   static const char *DISPLAY_NAME;
   static const unsigned long CONNECT_TIMEOUT_MS = 15000;
   static const unsigned long TIME_TIMEOUT_MS = 6000;
+  static const unsigned long TIME_RETRY_MS = 60000;
   static const int DATETIME_SIZE = 32;
   static const int TIME_STATUS_SIZE = 24;
 
   State state = STATE_IDLE;
   TimeState timeState = TIME_IDLE;
   unsigned long startedAt = 0;
+  unsigned long lastTimeAttemptAt = 0;
   char datetime[DATETIME_SIZE] = "";
   char timeStatus[TIME_STATUS_SIZE] = "";
   int64_t unixTime = 0;

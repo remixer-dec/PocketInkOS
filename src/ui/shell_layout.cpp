@@ -19,8 +19,8 @@ static const int16_t MENU_HEADER_H = 34;
 
 static const UiRect QUIT_YES_BUTTON = {44, 112, 48, 24};
 static const UiRect QUIT_NO_BUTTON = {108, 112, 48, 24};
-static const UiRect POWER_PREV_PAGE_BUTTON = {24, 66, 24, 24};
-static const UiRect POWER_NEXT_PAGE_BUTTON = {152, 66, 24, 24};
+static const UiRect POWER_PREV_PAGE_BUTTON = {14, 56, 54, 44};
+static const UiRect POWER_NEXT_PAGE_BUTTON = {132, 56, 54, 44};
 static const UiRect POWER_LEFT_BUTTON = {20, 100, 46, 44};
 static const UiRect POWER_MIDDLE_BUTTON = {77, 100, 46, 44};
 static const UiRect POWER_RIGHT_BUTTON = {134, 100, 46, 44};
@@ -45,13 +45,9 @@ void drawRightAlignedText(AppDisplay &display, const char *text, int16_t y) {
   display.print(text);
 }
 
-void drawIconButton(AppDisplay &display, const UiRect &rect, char icon,
-                    bool selected = false) {
+void drawIconGlyph(AppDisplay &display, const UiRect &rect, char icon,
+                   bool selected = false, int16_t yOffset = 0) {
   char text[2] = {icon, '\0'};
-  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
-  if (selected && rect.w > 2 && rect.h > 2) {
-    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
-  }
   display.setFont(&iconASCII12pt7b);
   display.setTextSize(1);
   display.setTextColor(selected ? 0 : 1);
@@ -64,11 +60,20 @@ void drawIconButton(AppDisplay &display, const UiRect &rect, char icon,
   display.setCursor(rect.x + (rect.w - static_cast<int16_t>(iconW)) / 2 -
                         iconX,
                     rect.y + (rect.h - static_cast<int16_t>(iconH)) / 2 -
-                        iconY + 1);
+                        iconY + 1 + yOffset);
   display.print(text);
   display.setFont();
   display.setTextSize(1);
   display.setTextColor(1);
+}
+
+void drawIconButton(AppDisplay &display, const UiRect &rect, char icon,
+                    bool selected = false) {
+  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
+  if (selected && rect.w > 2 && rect.h > 2) {
+    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
+  }
+  drawIconGlyph(display, rect, icon, selected);
 }
 
 void drawCenteredButtonText(AppDisplay &display, const UiRect &rect,
@@ -89,9 +94,14 @@ void drawCenteredButtonText(AppDisplay &display, const UiRect &rect,
 
 void drawIconStateButton(AppDisplay &display, const UiRect &rect, char icon,
                          const char *state, bool selected = false) {
-  drawIconButton(display, rect, icon, selected);
+  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
+  if (selected && rect.w > 2 && rect.h > 2) {
+    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
+  }
+  UiRect iconRect = {rect.x, static_cast<int16_t>(rect.y + 1), rect.w, 26};
+  drawIconGlyph(display, iconRect, icon, selected, -1);
   display.setTextColor(selected ? 0 : 1);
-  drawCenteredButtonText(display, rect, state, 31);
+  drawCenteredButtonText(display, rect, state, 33);
   display.setTextColor(1);
 }
 
@@ -104,7 +114,7 @@ void drawTextStateButton(AppDisplay &display, const UiRect &rect,
   }
   display.setTextColor(selected ? 0 : 1);
   drawCenteredButtonText(display, rect, text, 9, 2);
-  drawCenteredButtonText(display, rect, state, 31);
+  drawCenteredButtonText(display, rect, state, 33);
   display.setTextColor(1);
   display.setTextSize(1);
 }
@@ -118,8 +128,8 @@ void drawPowerDialogFrame(AppDisplay &display, const char *title) {
   display.setTextColor(1);
   display.setTextSize(1);
   drawCenteredText(display, title, 76);
-  drawIconButton(display, POWER_PREV_PAGE_BUTTON, '<');
-  drawIconButton(display, POWER_NEXT_PAGE_BUTTON, '>');
+  drawIconGlyph(display, POWER_PREV_PAGE_BUTTON, '<');
+  drawIconGlyph(display, POWER_NEXT_PAGE_BUTTON, '>');
 }
 
 const char *powerPageTitle(PowerDialogPage page) {
@@ -210,17 +220,23 @@ void drawMenuTitle(AppDisplay &display, const MenuState &state,
   display.print(title);
 }
 
-void drawMenuItem(AppDisplay &display, const AppDefinition &app, uint8_t slot) {
+void drawMenuItem(AppDisplay &display, const AppDefinition &app, uint8_t slot,
+                  bool selected) {
   const uint8_t row = slot / MENU_COLUMNS;
   const uint8_t col = slot % MENU_COLUMNS;
   const int16_t x = MENU_X + col * MENU_CELL_W;
   const int16_t y = MENU_Y + row * MENU_CELL_H;
 
+  if (selected) {
+    display.fillRect(x + 1, y + 1, MENU_ICON_W - 2, MENU_ICON_H - 2, 1);
+  }
   display.drawRect(x, y, MENU_ICON_W, MENU_ICON_H, 1);
+  display.setTextColor(selected ? 0 : 1);
   display.setTextSize(2);
   display.setCursor(x + 14, y + 8);
   display.print(app.icon);
 
+  display.setTextColor(1);
   display.setTextSize(1);
   int16_t labelX;
   int16_t labelY;
@@ -379,7 +395,8 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
 }
 
 void drawAppMenu(AppDisplay &display, const MenuState &state,
-                 const AppDefinition *apps, size_t appCount) {
+                 const AppDefinition *apps, size_t appCount,
+                 int8_t pressedSlot) {
   display.setTextColor(1);
   display.setTextSize(2);
   display.setCursor(8, 10);
@@ -391,7 +408,7 @@ void drawAppMenu(AppDisplay &display, const MenuState &state,
   for (uint8_t slot = 0; slot < MENU_PAGE_SIZE; slot++) {
     const AppDefinition *app = appAtVisibleSlot(apps, appCount, state, slot);
     if (app != nullptr) {
-      drawMenuItem(display, *app, slot);
+      drawMenuItem(display, *app, slot, pressedSlot == slot);
     }
   }
 
@@ -400,8 +417,12 @@ void drawAppMenu(AppDisplay &display, const MenuState &state,
 
 const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
                                     const AppDefinition *apps,
-                                    size_t appCount, bool &stateChanged) {
+                                    size_t appCount, bool &stateChanged,
+                                    int8_t *hitSlot) {
   stateChanged = false;
+  if (hitSlot != nullptr) {
+    *hitSlot = -1;
+  }
   if (point.y < MENU_HEADER_H) {
     if (point.x < 48) {
       moveMenuPrevious(state, apps, appCount);
@@ -423,7 +444,12 @@ const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
   if (col >= MENU_COLUMNS || row >= MENU_ROWS) {
     return nullptr;
   }
-  return appAtVisibleSlot(apps, appCount, state, row * MENU_COLUMNS + col);
+  const uint8_t slot = row * MENU_COLUMNS + col;
+  const AppDefinition *app = appAtVisibleSlot(apps, appCount, state, slot);
+  if (app != nullptr && hitSlot != nullptr) {
+    *hitSlot = static_cast<int8_t>(slot);
+  }
+  return app;
 }
 
 void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status) {
@@ -486,7 +512,7 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
   char volumeText[12];
   snprintf(volumeText, sizeof(volumeText), "%u%%",
            static_cast<unsigned>(snapshot.volume));
-  drawCenteredText(display, snapshot.muted ? "MUTED" : volumeText, 92);
+  drawCenteredText(display, snapshot.muted ? "MUTED" : volumeText, 90);
   drawIconButton(display, POWER_LEFT_BUTTON, 'b',
                  pressed == PowerDialogAction::VolumeDown);
   drawIconButton(display, POWER_MIDDLE_BUTTON, snapshot.muted ? '"' : '!',

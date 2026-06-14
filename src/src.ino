@@ -34,11 +34,14 @@ bool confirmQuit = false;
 bool confirmPower = false;
 bool activePausedForDialog = false;
 MenuState menuState = {MENU_GAMES, 0};
+int8_t menuPressedSlot = -1;
 PowerDialogPage powerDialogPage = PowerDialogPage::Power;
 unsigned long quitDialogOpenedAt = 0;
 unsigned long powerDialogOpenedAt = 0;
 int64_t lastHomeMinute = -1;
 RtcContextSnapshot retainedSleepContext;
+
+static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
 
 void switchTo(Screen next, ActiveApp *nextApp = nullptr,
               const AppDefinition *nextDefinition = nullptr) {
@@ -71,6 +74,7 @@ PowerDialogPage nextPowerDialogPage(PowerDialogPage page);
 void renderPowerDialogPressed(PowerDialogAction action);
 void renderPowerOffScreen();
 void renderDeepSleepScreen();
+void redrawActiveScreenPartial();
 void saveRetainedContextForSleep();
 void restoreRetainedContextAfterSleep();
 
@@ -410,32 +414,36 @@ bool handlePowerDialogTouch(const TouchPoint &point) {
     enterDeepSleep();
     return true;
   case PowerDialogAction::WifiToggle:
+    renderPowerDialogPressed(PowerDialogAction::WifiToggle);
     wifiToggle();
     dirty = true;
     return true;
   case PowerDialogAction::BluetoothToggle:
-    toggleBluetooth();
+    renderPowerDialogPressed(PowerDialogAction::BluetoothToggle);
+    // Bluetooth is not wired to an app yet; keep the displayed OFF state inert.
     dirty = true;
     return true;
   case PowerDialogAction::CpuCycle:
+    renderPowerDialogPressed(PowerDialogAction::CpuCycle);
     cycleCpuFrequency();
     dirty = true;
     return true;
   case PowerDialogAction::VolumeDown:
+    renderPowerDialogPressed(PowerDialogAction::VolumeDown);
     volumeDown();
     dirty = true;
     return true;
   case PowerDialogAction::VolumeMute:
+    renderPowerDialogPressed(PowerDialogAction::VolumeMute);
     toggleMute();
     dirty = true;
     return true;
   case PowerDialogAction::VolumeUp:
+    renderPowerDialogPressed(PowerDialogAction::VolumeUp);
     volumeUp();
     dirty = true;
     return true;
   case PowerDialogAction::None:
-    confirmPower = false;
-    dirty = true;
     return true;
   }
   return true;
@@ -443,7 +451,7 @@ bool handlePowerDialogTouch(const TouchPoint &point) {
 
 void drawMenu() {
   clampMenuState(menuState, apps, appCount);
-  drawAppMenu(display, menuState, apps, appCount);
+  drawAppMenu(display, menuState, apps, appCount, menuPressedSlot);
 }
 
 void launchApp(const AppDefinition &app) {
@@ -458,12 +466,17 @@ void launchApp(const AppDefinition &app) {
 
 void handleMenuTouch(const TouchPoint &point) {
   bool stateChanged = false;
+  int8_t hitSlot = -1;
   const AppDefinition *selected =
-      hitTestAppMenu(point, menuState, apps, appCount, stateChanged);
+      hitTestAppMenu(point, menuState, apps, appCount, stateChanged, &hitSlot);
   if (stateChanged) {
     dirty = true;
   }
   if (selected != nullptr) {
+    menuPressedSlot = hitSlot;
+    redrawActiveScreenPartial();
+    delay(MENU_PRESS_HIGHLIGHT_MS);
+    menuPressedSlot = -1;
     launchApp(*selected);
   }
 }
@@ -695,6 +708,10 @@ void loop() {
 
   if (dirty) {
     render();
+  }
+
+  if (wifiUpdate()) {
+    dirty = true;
   }
 
   if (activeApp != nullptr && activeApp->update()) {

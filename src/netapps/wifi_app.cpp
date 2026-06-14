@@ -44,6 +44,7 @@ void WifiApp::connect() {
   datetime[0] = '\0';
   timeStatus[0] = '\0';
   startedAt = millis();
+  lastTimeAttemptAt = 0;
   WiFi.mode(WIFI_STA);
   WiFi.begin(SSID, PASSWORD);
 }
@@ -53,6 +54,7 @@ void WifiApp::disconnect() {
   WiFi.mode(WIFI_OFF);
   state = STATE_IDLE;
   timeState = TIME_IDLE;
+  lastTimeAttemptAt = 0;
   datetime[0] = '\0';
   setTimeStatus("WiFi off");
 }
@@ -134,10 +136,6 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
 bool WifiApp::update() {
   if (state == STATE_CONNECTING && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
-    timeState = TIME_FETCHING;
-    bool ok = fetchCurrentTime();
-    timeState = ok ? TIME_READY : TIME_FAILED;
-    return true;
   }
 
   if (state == STATE_CONNECTING && millis() - startedAt > CONNECT_TIMEOUT_MS) {
@@ -148,13 +146,25 @@ bool WifiApp::update() {
 
   if (state != STATE_CONNECTED && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
-    return true;
   }
 
   if (state == STATE_CONNECTED && WiFi.status() != WL_CONNECTED) {
     state = STATE_FAILED;
     setTimeStatus("Disconnected");
     return true;
+  }
+
+  if (state == STATE_CONNECTED && timeState != TIME_READY &&
+      timeState != TIME_FETCHING) {
+    unsigned long now = millis();
+    if (lastTimeAttemptAt == 0 || timeState == TIME_IDLE ||
+        now - lastTimeAttemptAt >= TIME_RETRY_MS) {
+      lastTimeAttemptAt = now;
+      timeState = TIME_FETCHING;
+      bool ok = fetchCurrentTime();
+      timeState = ok ? TIME_READY : TIME_FAILED;
+      return true;
+    }
   }
 
   return false;

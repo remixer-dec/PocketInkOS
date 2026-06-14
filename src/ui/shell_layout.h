@@ -29,10 +29,12 @@ void moveMenuNext(MenuState &state, const AppDefinition *apps,
 
 void drawHomeScreen(AppDisplay &display, const ShellData &data);
 void drawAppMenu(AppDisplay &display, const MenuState &state,
-                 const AppDefinition *apps, size_t appCount);
+                 const AppDefinition *apps, size_t appCount,
+                 int8_t pressedSlot = -1);
 const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
                                     const AppDefinition *apps,
-                                    size_t appCount, bool &stateChanged);
+                                    size_t appCount, bool &stateChanged,
+                                    int8_t *hitSlot = nullptr);
 
 void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status);
 bool quitDialogHitYes(const TouchPoint &point);

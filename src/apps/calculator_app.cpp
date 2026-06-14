@@ -11,13 +11,19 @@ static const int BUTTON_H = 27;
 static const int BUTTON_X = 4;
 static const int BUTTON_Y = 48;
 static const int BUTTON_GAP = 4;
+static const uint8_t CALC_TEXT_SIZE = 2;
+static const unsigned long PRESS_HIGHLIGHT_MS = 180;
+static const int8_t NO_BUTTON = -1;
+static const int8_t EQUALS_BUTTON_ID = 20;
 static const char *BUTTONS[5][4] = {{"DEL", "%", "^", "/"},
                                     {"7", "8", "9", "*"},
                                     {"4", "5", "6", "-"},
                                     {"1", "2", "3", "+"},
                                     {"0", ".", "(", ")"}};
-static const UiRect DISPLAY_RECT = {6, 16, 146, 28};
-static const UiRect EQUALS_BUTTON = {158, 16, 36, 28};
+static const UiRect DISPLAY_RECT = {
+    BUTTON_X, 16, BUTTON_W * 3 + BUTTON_GAP * 2, 28};
+static const UiRect EQUALS_BUTTON = {
+    BUTTON_X + 3 * (BUTTON_W + BUTTON_GAP), 16, BUTTON_W, 28};
 
 static bool isOperatorChar(char c) {
   return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^';
@@ -129,7 +135,11 @@ private:
   }
 };
 
-void CalculatorApp::reset() { clear(); }
+void CalculatorApp::reset() {
+  clear();
+  pressedButton = NO_BUTTON;
+  pressedUntil = 0;
+}
 
 bool CalculatorApp::hasActiveSession() const { return expression[0] != '\0'; }
 
@@ -146,23 +156,35 @@ void CalculatorApp::draw(Adafruit_GFX &gfx) {
 
   gfx.drawRect(DISPLAY_RECT.x, DISPLAY_RECT.y, DISPLAY_RECT.w, DISPLAY_RECT.h,
                1);
-  gfx.setTextSize(1);
-  gfx.setCursor(DISPLAY_RECT.x + 6, DISPLAY_RECT.y + 10);
-  gfx.print(showingResult ? result : expression);
-  uiDrawButton(gfx, EQUALS_BUTTON, "=");
+  gfx.setTextSize(CALC_TEXT_SIZE);
+  const char *displayText = showingResult ? result : expression;
+  size_t displayLen = strlen(displayText);
+  const int maxDisplayChars =
+      (DISPLAY_RECT.w - 12) / (6 * CALC_TEXT_SIZE);
+  if (displayLen > static_cast<size_t>(maxDisplayChars)) {
+    displayText += displayLen - maxDisplayChars;
+  }
+  gfx.setCursor(DISPLAY_RECT.x + 6,
+                DISPLAY_RECT.y + (DISPLAY_RECT.h - 8 * CALC_TEXT_SIZE) / 2);
+  gfx.print(displayText);
+  uiDrawButton(gfx, EQUALS_BUTTON, "=", isButtonPressed(EQUALS_BUTTON_ID),
+               CALC_TEXT_SIZE);
 
   for (int row = 0; row < 5; row++) {
     for (int col = 0; col < 4; col++) {
       UiRect rect = {static_cast<int16_t>(BUTTON_X + col * (BUTTON_W + BUTTON_GAP)),
                      static_cast<int16_t>(BUTTON_Y + row * (BUTTON_H + BUTTON_GAP)),
                      BUTTON_W, BUTTON_H};
-      uiDrawButton(gfx, rect, BUTTONS[row][col]);
+      int8_t id = row * 4 + col;
+      uiDrawButton(gfx, rect, BUTTONS[row][col], isButtonPressed(id),
+                   CALC_TEXT_SIZE);
     }
   }
 }
 
 bool CalculatorApp::handleTouch(const TouchPoint &point) {
   if (uiContains(EQUALS_BUTTON, point)) {
+    pressButton(EQUALS_BUTTON_ID);
     calculate();
     return true;
   }
@@ -174,6 +196,7 @@ bool CalculatorApp::handleTouch(const TouchPoint &point) {
       if (!uiContains(rect, point)) {
         continue;
       }
+      pressButton(row * 4 + col);
       const char *label = BUTTONS[row][col];
       if (strcmp(label, "DEL") == 0) {
         backspace();
@@ -184,6 +207,15 @@ bool CalculatorApp::handleTouch(const TouchPoint &point) {
     }
   }
   return false;
+}
+
+bool CalculatorApp::update() {
+  if (pressedButton == NO_BUTTON || millis() < pressedUntil) {
+    return false;
+  }
+  pressedButton = NO_BUTTON;
+  pressedUntil = 0;
+  return true;
 }
 
 void CalculatorApp::append(char c) {
@@ -255,6 +287,15 @@ bool CalculatorApp::parseExpression(const char *text, double &value) const {
   }
   ExpressionParser parser(text);
   return parser.parse(value);
+}
+
+void CalculatorApp::pressButton(int8_t id) {
+  pressedButton = id;
+  pressedUntil = millis() + PRESS_HIGHLIGHT_MS;
+}
+
+bool CalculatorApp::isButtonPressed(int8_t id) const {
+  return pressedButton == id && millis() < pressedUntil;
 }
 
 bool CalculatorApp::canAppendDot() const {
