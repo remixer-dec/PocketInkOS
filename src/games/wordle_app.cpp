@@ -1,4 +1,5 @@
 #include "games/wordle_app.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -25,6 +26,30 @@ static const int BOARD_X = 25;
 static const int BOARD_Y = 20;
 static const int TILE = 28;
 static const int TILE_GAP = 2;
+static const uint8_t WORDLE_CONTEXT_VERSION = 1;
+
+static bool writeWordleLetters(RtcBitWriter &writer, const char *letters,
+                               int count) {
+  for (int i = 0; i < count; i++) {
+    if (letters[i] < 'A' || letters[i] > 'Z') {
+      return false;
+    }
+    writer.writeBits(static_cast<uint8_t>(letters[i] - 'A'), 5);
+  }
+  return writer.ok();
+}
+
+static bool readWordleLetters(RtcBitReader &reader, char *letters, int count) {
+  uint32_t value = 0;
+  for (int i = 0; i < count; i++) {
+    if (!reader.readBits(5, value) || value >= 26) {
+      return false;
+    }
+    letters[i] = static_cast<char>('A' + value);
+  }
+  letters[count] = '\0';
+  return true;
+}
 
 static void drawDiagonalHatch(Adafruit_GFX &gfx, int x, int y, int w, int h,
                               bool falling) {
@@ -142,6 +167,93 @@ bool WordleApp::openKeyboardFromButton() {
 }
 
 bool WordleApp::hasActiveSession() const { return state == STATE_GUESSING; }
+
+size_t WordleApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  if (target[0] == '\0' ||
+      (state != STATE_GUESSING && state != STATE_WON &&
+       state != STATE_LOST) ||
+      row < 0 || row > 5) {
+    return 0;
+  }
+
+  uint8_t guessRows = state == STATE_GUESSING ? row : row + 1;
+  if (guessRows > 6) {
+    return 0;
+  }
+
+  RtcBitWriter writer(buffer, capacity);
+  writer.writeBits(WORDLE_CONTEXT_VERSION, 4);
+  writer.writeBits(static_cast<uint8_t>(state), 3);
+  writer.writeBits(static_cast<uint8_t>(row), 3);
+  writer.writeBits(guessRows, 3);
+  if (!writeWordleLetters(writer, target, WORD_LENGTH)) {
+    return 0;
+  }
+  for (uint8_t r = 0; r < guessRows; r++) {
+    if (!writeWordleLetters(writer, guesses[r], WORD_LENGTH)) {
+      return 0;
+    }
+  }
+  return writer.ok() ? writer.bytesWritten() : 0;
+}
+
+void WordleApp::restoreContext(const uint8_t *buffer, size_t length) {
+  RtcBitReader reader(buffer, length);
+  uint32_t value = 0;
+  if (!reader.readBits(4, value) || value != WORDLE_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint32_t savedState = 0;
+  uint32_t savedRow = 0;
+  uint32_t guessRows = 0;
+  if (!reader.readBits(3, savedState) || !reader.readBits(3, savedRow) ||
+      !reader.readBits(3, guessRows) || savedRow > 5 || guessRows > 6 ||
+      (savedState != STATE_GUESSING && savedState != STATE_WON &&
+       savedState != STATE_LOST)) {
+    return;
+  }
+  if ((savedState == STATE_GUESSING && guessRows != savedRow) ||
+      (savedState != STATE_GUESSING && guessRows != savedRow + 1)) {
+    return;
+  }
+
+  char nextTarget[WORD_LENGTH + 1] = {};
+  char nextGuesses[6][WORD_LENGTH + 1] = {{0}};
+  if (!readWordleLetters(reader, nextTarget, WORD_LENGTH)) {
+    return;
+  }
+  for (uint32_t r = 0; r < guessRows; r++) {
+    if (!readWordleLetters(reader, nextGuesses[r], WORD_LENGTH)) {
+      return;
+    }
+  }
+  if (!reader.ok()) {
+    return;
+  }
+
+  strcpy(target, nextTarget);
+  for (int r = 0; r < 6; r++) {
+    memset(guesses[r], 0, sizeof(guesses[r]));
+    for (int c = 0; c < WORD_LENGTH; c++) {
+      marks[r][c] = MARK_NONE;
+    }
+  }
+  for (int i = 0; i < 26; i++) {
+    keyMarks[i] = MARK_NONE;
+  }
+  for (uint32_t r = 0; r < guessRows; r++) {
+    strcpy(guesses[r], nextGuesses[r]);
+    row = static_cast<int>(r);
+    evaluateGuess();
+  }
+  row = static_cast<int>(savedRow);
+  state = static_cast<State>(savedState);
+  inputText = "";
+  keyboardOpen = false;
+  keyboardMode = KEYBOARD_T9;
+  clearActiveMenuButtonConsumer(this);
+}
 
 bool WordleApp::handleMenuButton() {
   if (!keyboardOpen) {

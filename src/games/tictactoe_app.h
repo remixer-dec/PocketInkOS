@@ -3,6 +3,7 @@
 
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
+#include <stddef.h>
 
 class TicTacToeApp {
 public:
@@ -10,6 +11,8 @@ public:
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
   bool hasActiveSession() const;
+  size_t saveContext(uint8_t *buffer, size_t capacity) const;
+  void restoreContext(const uint8_t *buffer, size_t length);
 
 private:
   char board[9] = {0};

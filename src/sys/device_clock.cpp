@@ -14,6 +14,16 @@ void DeviceClock::set(int64_t unixTime, int32_t utcOffsetSeconds) {
 
 bool DeviceClock::isSet() const { return setFlag; }
 
+bool DeviceClock::snapshotLocalUnix(int64_t &localUnix) const {
+  if (!setFlag) {
+    return false;
+  }
+  localUnix = nowLocalUnix();
+  return true;
+}
+
+void DeviceClock::restoreLocalUnix(int64_t localUnix) { set(localUnix, 0); }
+
 int64_t DeviceClock::localMinuteIndex() const {
   if (!setFlag) {
     return -1;

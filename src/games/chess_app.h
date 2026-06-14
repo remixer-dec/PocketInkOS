@@ -3,6 +3,7 @@
 
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
+#include <stddef.h>
 #include <cstdint>
 
 enum class PieceType : uint8_t {
@@ -69,6 +70,8 @@ public:
   bool isGameOver() const;
   bool isHistoryOpen() const;
   bool loadPosition(const char *fen, PieceColor sideToMove);
+  size_t saveContext(uint8_t *buffer, size_t capacity) const;
+  void restoreContext(const uint8_t *buffer, size_t length);
 
 private:
   struct Piece {
@@ -137,6 +140,7 @@ private:
   int8_t historyTo[96] = {};
   uint8_t historyCount = 0;
   uint8_t historyOffset = 0;
+  bool historyReplayable = true;
   unsigned long lastAnimationMs = 0;
   bool selectionBorderPhase = false;
   bool hasLastMove = false;

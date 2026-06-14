@@ -1,4 +1,5 @@
 #include "games/hangman_app.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -16,6 +17,7 @@ static const UiRect INPUT_BUTTON = {50, 176, 100, 22};
 static const int SECRET_MAX = 12;
 static const int GUESS_MAX = 1;
 static const int SCREEN_WIDTH = 200;
+static const uint8_t HANGMAN_CONTEXT_VERSION = 1;
 
 static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
                              uint8_t textSize) {
@@ -125,6 +127,80 @@ bool HangmanApp::openKeyboardFromButton() {
 }
 
 bool HangmanApp::hasActiveSession() const { return state == STATE_GUESSING; }
+
+size_t HangmanApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  int wordLen = strlen(word);
+  if (wordLen <= 0 || wordLen > SECRET_MAX ||
+      (state != STATE_GUESSING && state != STATE_WON &&
+       state != STATE_LOST)) {
+    return 0;
+  }
+
+  RtcBitWriter writer(buffer, capacity);
+  writer.writeBits(HANGMAN_CONTEXT_VERSION, 4);
+  writer.writeBits(static_cast<uint8_t>(state), 3);
+  writer.writeBits(static_cast<uint8_t>(misses), 3);
+  writer.writeBits(static_cast<uint8_t>(wordLen), 4);
+  for (int i = 0; i < 26; i++) {
+    writer.writeBits(guessed[i] ? 1 : 0, 1);
+  }
+  for (int i = 0; i < wordLen; i++) {
+    if (word[i] < 'A' || word[i] > 'Z') {
+      return 0;
+    }
+    writer.writeBits(static_cast<uint8_t>(word[i] - 'A'), 5);
+  }
+  return writer.ok() ? writer.bytesWritten() : 0;
+}
+
+void HangmanApp::restoreContext(const uint8_t *buffer, size_t length) {
+  RtcBitReader reader(buffer, length);
+  uint32_t value = 0;
+  if (!reader.readBits(4, value) || value != HANGMAN_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint32_t savedState = 0;
+  uint32_t savedMisses = 0;
+  uint32_t wordLen = 0;
+  if (!reader.readBits(3, savedState) || !reader.readBits(3, savedMisses) ||
+      !reader.readBits(4, wordLen) || wordLen == 0 || wordLen > SECRET_MAX ||
+      savedMisses > MAX_MISSES ||
+      (savedState != STATE_GUESSING && savedState != STATE_WON &&
+       savedState != STATE_LOST)) {
+    return;
+  }
+
+  bool nextGuessed[26] = {};
+  for (int i = 0; i < 26; i++) {
+    if (!reader.readBits(1, value)) {
+      return;
+    }
+    nextGuessed[i] = value != 0;
+  }
+
+  char nextWord[SECRET_MAX + 1] = {};
+  for (uint32_t i = 0; i < wordLen; i++) {
+    if (!reader.readBits(5, value) || value >= 26) {
+      return;
+    }
+    nextWord[i] = static_cast<char>('A' + value);
+  }
+  if (!reader.ok()) {
+    return;
+  }
+
+  strcpy(word, nextWord);
+  for (int i = 0; i < 26; i++) {
+    guessed[i] = nextGuessed[i];
+  }
+  misses = static_cast<int>(savedMisses);
+  state = static_cast<State>(savedState);
+  inputText = "";
+  keyboardOpen = false;
+  keyboardMode = KEYBOARD_T9;
+  clearActiveMenuButtonConsumer(this);
+}
 
 bool HangmanApp::handleMenuButton() {
   if (!keyboardOpen) {

@@ -19,6 +19,7 @@
 #include "netapps/weather_app.h"
 #include "netapps/wifi_app.h"
 #endif
+#include <cstring>
 
 extern AppDisplay display;
 
@@ -81,6 +82,49 @@ void startDeghost() { deghostApp.start(display); }
 void startGfx() { gfxApp.start(display); }
 
 AppEventResult requestQuit() { return AppEventResult::QuitRequested; }
+size_t saveTicTacToeContext(uint8_t *buffer, size_t capacity) {
+  return ticTacToe.saveContext(buffer, capacity);
+}
+void restoreTicTacToeContext(const uint8_t *buffer, size_t length) {
+  ticTacToe.restoreContext(buffer, length);
+}
+size_t saveMinesweeperContext(uint8_t *buffer, size_t capacity) {
+  return minesweeper.saveContext(buffer, capacity);
+}
+void restoreMinesweeperContext(const uint8_t *buffer, size_t length) {
+  minesweeper.restoreContext(buffer, length);
+}
+size_t saveHangmanContext(uint8_t *buffer, size_t capacity) {
+  return hangman.saveContext(buffer, capacity);
+}
+void restoreHangmanContext(const uint8_t *buffer, size_t length) {
+  hangman.restoreContext(buffer, length);
+}
+size_t saveSudokuContext(uint8_t *buffer, size_t capacity) {
+  return sudoku.saveContext(buffer, capacity);
+}
+void restoreSudokuContext(const uint8_t *buffer, size_t length) {
+  sudoku.restoreContext(buffer, length);
+}
+size_t saveWordleContext(uint8_t *buffer, size_t capacity) {
+  return wordle.saveContext(buffer, capacity);
+}
+void restoreWordleContext(const uint8_t *buffer, size_t length) {
+  wordle.restoreContext(buffer, length);
+}
+size_t saveChessContext(uint8_t *buffer, size_t capacity) {
+  return chess.saveContext(buffer, capacity);
+}
+void restoreChessContext(const uint8_t *buffer, size_t length) {
+  chess.restoreContext(buffer, length);
+}
+size_t saveQrContext(uint8_t *buffer, size_t capacity) {
+  return qrApp.saveContext(buffer, capacity);
+}
+void restoreQrContext(const uint8_t *buffer, size_t length) {
+  qrApp.restoreContext(buffer, length);
+}
+
 AppEventResult handleHangmanPower() {
   return dirtyIfHandled(hangman.openKeyboardFromButton());
 }
@@ -183,11 +227,30 @@ AppBehavior powerBehavior(AppEventHandler handler) {
   return behavior;
 }
 
+AppBehavior contextBehavior(AppSaveContextHandler save,
+                            AppRestoreContextHandler restore) {
+  AppBehavior behavior;
+  behavior.onSaveContext = save;
+  behavior.onRestoreContext = restore;
+  return behavior;
+}
+
+AppBehavior powerContextBehavior(AppEventHandler handler,
+                                 AppSaveContextHandler save,
+                                 AppRestoreContextHandler restore) {
+  AppBehavior behavior = powerBehavior(handler);
+  behavior.onSaveContext = save;
+  behavior.onRestoreContext = restore;
+  return behavior;
+}
+
 AppBehavior chessBehavior() {
   AppBehavior behavior;
   behavior.onMenu = handleChessMenu;
   behavior.onMenuLong = handleChessMenuLong;
   behavior.onPower = handleChessPower;
+  behavior.onSaveContext = saveChessContext;
+  behavior.onRestoreContext = restoreChessContext;
   return behavior;
 }
 
@@ -238,22 +301,33 @@ AppBehavior aiBehavior() {
 }
 #endif
 
+const AppDefinition contactLinksApp =
+    builtInApp("contact_links", "contact", "C", MENU_APPS,
+               SCREEN_CONTACT_LINKS, &contactLinksScreen,
+               []() { contactLinks.reset(); });
+
 } // namespace
 
 extern const AppDefinition apps[] = {
     builtInApp("tictactoe", "tictac", "T", MENU_GAMES, SCREEN_TICTACTOE,
-               &ticTacToeScreen, []() { ticTacToe.reset(); }),
+               &ticTacToeScreen, []() { ticTacToe.reset(); },
+               contextBehavior(saveTicTacToeContext, restoreTicTacToeContext)),
     builtInApp("minesweeper", "mines", "M", MENU_GAMES, SCREEN_MINESWEEPER,
                &minesweeperScreen, []() { minesweeper.reset(); },
-               powerBehavior(handleMinesweeperPower)),
+               powerContextBehavior(handleMinesweeperPower,
+                                    saveMinesweeperContext,
+                                    restoreMinesweeperContext)),
     builtInApp("hangman", "hangman", "H", MENU_GAMES, SCREEN_HANGMAN,
                &hangmanScreen, []() { hangman.reset(); },
-               powerBehavior(handleHangmanPower)),
+               powerContextBehavior(handleHangmanPower, saveHangmanContext,
+                                    restoreHangmanContext)),
     builtInApp("sudoku", "sudoku", "S", MENU_GAMES, SCREEN_SUDOKU,
-               &sudokuScreen, []() { sudoku.reset(); }),
+               &sudokuScreen, []() { sudoku.reset(); },
+               contextBehavior(saveSudokuContext, restoreSudokuContext)),
     builtInApp("wordle", "wordle", "W", MENU_GAMES, SCREEN_WORDLE,
                &wordleScreen, []() { wordle.reset(); },
-               powerBehavior(handleWordlePower)),
+               powerContextBehavior(handleWordlePower, saveWordleContext,
+                                    restoreWordleContext)),
     builtInApp("chess", "chess", "C", MENU_GAMES, SCREEN_CHESS, &chessScreen,
                []() { chess.reset(); }, chessBehavior()),
     builtInApp("gfx", "gfx", "G", MENU_APPS, SCREEN_GFX, &gfxScreen,
@@ -261,7 +335,8 @@ extern const AppDefinition apps[] = {
     builtInApp("calculator", "calc", "=", MENU_APPS, SCREEN_CALCULATOR,
                &calculatorScreen, []() { calculator.reset(); }),
     builtInApp("qr", "qr", "Q", MENU_APPS, SCREEN_QR, &qrScreen,
-               []() { qrApp.reset(); }),
+               []() { qrApp.reset(); },
+               contextBehavior(saveQrContext, restoreQrContext)),
     builtInApp("paint", "paint", "P", MENU_APPS, SCREEN_PAINT, &paintScreen,
                []() { paintApp.reset(); }, paintBehavior()),
     builtInApp("deghost", "deghost", "D", MENU_APPS, SCREEN_DEGHOST,
@@ -285,6 +360,23 @@ extern const size_t appCount = sizeof(apps) / sizeof(apps[0]);
 
 ActiveApp *contactLinksRuntime() { return &contactLinksScreen; }
 
+const AppDefinition *contactLinksDefinition() { return &contactLinksApp; }
+
+const AppDefinition *findAppById(const char *id) {
+  if (id == nullptr || id[0] == '\0') {
+    return nullptr;
+  }
+  for (size_t i = 0; i < appCount; i++) {
+    if (strcmp(apps[i].id, id) == 0) {
+      return &apps[i];
+    }
+  }
+  if (strcmp(contactLinksApp.id, id) == 0) {
+    return &contactLinksApp;
+  }
+  return nullptr;
+}
+
 void resetContactLinks() { contactLinks.reset(); }
 
 void resetApps() {
@@ -304,5 +396,23 @@ char wifiStatusIcon() {
   return wifiIconCharForState(wifiApp.displayState());
 #else
   return '\0';
+#endif
+}
+
+bool wifiIsOn() {
+#if ENABLE_NETWORK_APPS
+  return wifiApp.displayState() != WIFI_DISPLAY_OFF;
+#else
+  return false;
+#endif
+}
+
+void restoreWifiOn(bool enabled) {
+#if ENABLE_NETWORK_APPS
+  if (enabled && wifiApp.displayState() == WIFI_DISPLAY_OFF) {
+    wifiApp.connect();
+  }
+#else
+  (void)enabled;
 #endif
 }

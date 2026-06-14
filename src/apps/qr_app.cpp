@@ -1,4 +1,5 @@
 #include "apps/qr_app.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -14,6 +15,7 @@ static const int BLOCKS = 2;
 static const int BLOCK_DATA_CODEWORDS = DATA_CODEWORDS / BLOCKS;
 static const int TOTAL_CODEWORDS = DATA_CODEWORDS + ECC_CODEWORDS * BLOCKS;
 static const int QUIET_MODULES = 4;
+static const uint8_t QR_CONTEXT_VERSION = 1;
 
 static uint8_t gfMul(uint8_t x, uint8_t y) {
   uint8_t result = 0;
@@ -75,6 +77,80 @@ void QrApp::reset() {
 }
 
 bool QrApp::hasActiveSession() const { return keyboardOpen || hasQr; }
+
+size_t QrApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  size_t textLength = inputText.length();
+  if (textLength > MAX_PAYLOAD) {
+    return 0;
+  }
+
+  RtcBitWriter writer(buffer, capacity);
+  writer.writeBits(QR_CONTEXT_VERSION, 4);
+  writer.writeBits(static_cast<uint8_t>(mode), 2);
+  writer.writeBits(hasQr ? 1 : 0, 1);
+  writer.writeBits(keyboardOpen ? 1 : 0, 1);
+  writer.writeBits(keyboardMode == KEYBOARD_QWERTY_ZOOM ? 1 : 0, 1);
+  writer.writeBits(static_cast<uint8_t>(textLength), 6);
+  const char *text = inputText.c_str();
+  for (size_t i = 0; i < textLength; i++) {
+    char c = text[i];
+    if (static_cast<uint8_t>(c) > 0x7f) {
+      return 0;
+    }
+    writer.writeBits(static_cast<uint8_t>(c), 7);
+  }
+  return writer.ok() ? writer.bytesWritten() : 0;
+}
+
+void QrApp::restoreContext(const uint8_t *buffer, size_t length) {
+  RtcBitReader reader(buffer, length);
+  uint32_t value = 0;
+  if (!reader.readBits(4, value) || value != QR_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint32_t savedMode = 0;
+  uint32_t savedHasQr = 0;
+  uint32_t savedKeyboardOpen = 0;
+  uint32_t savedKeyboardMode = 0;
+  uint32_t textLength = 0;
+  if (!reader.readBits(2, savedMode) || savedMode > MODE_HTTPS ||
+      !reader.readBits(1, savedHasQr) ||
+      !reader.readBits(1, savedKeyboardOpen) ||
+      !reader.readBits(1, savedKeyboardMode) ||
+      !reader.readBits(6, textLength) || textLength > MAX_PAYLOAD) {
+    return;
+  }
+
+  char text[MAX_PAYLOAD + 1] = {};
+  for (uint32_t i = 0; i < textLength; i++) {
+    if (!reader.readBits(7, value) || value > 0x7f) {
+      return;
+    }
+    text[i] = static_cast<char>(value);
+  }
+  if (!reader.ok()) {
+    return;
+  }
+
+  mode = static_cast<Mode>(savedMode);
+  inputText = text;
+  keyboardOpen = savedKeyboardOpen != 0;
+  keyboardMode =
+      savedKeyboardMode ? KEYBOARD_QWERTY_ZOOM : KEYBOARD_T9;
+  if (keyboardOpen) {
+    setActiveMenuButtonConsumer(this);
+  } else {
+    clearActiveMenuButtonConsumer(this);
+  }
+  hasQr = false;
+  memset(modules, 0, sizeof(modules));
+  if (savedHasQr) {
+    char payload[MAX_PAYLOAD + 1];
+    buildPayload(payload, sizeof(payload));
+    hasQr = encodeQr(payload);
+  }
+}
 
 void QrApp::setText(const char *text) {
   inputText = text ? text : "";

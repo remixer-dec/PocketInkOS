@@ -1,5 +1,6 @@
 #include "games/chess_app.h"
 #include "games/chess_fonts.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 #include <Arduino.h>
 #include <cstring>
@@ -14,6 +15,8 @@ static const uint8_t AI3_MAX_DEPTH = 5;
 static const uint8_t AI3_BOOK_PLY_LIMIT = 8;
 static const int AI_MATE_SCORE = 30000;
 static const int AI_INF_SCORE = 32000;
+static const uint8_t CHESS_CONTEXT_VERSION = 1;
+static const uint8_t CHESS_MAX_HISTORY_TOKENS = 192;
 
 static const UiRect PVP_BUTTON = {8, 54, 42, 28};
 static const UiRect AI1_BUTTON = {56, 54, 42, 28};
@@ -27,6 +30,61 @@ static const UiRect PROMOTION_BUTTONS[4] = {{28, 94, 30, 24},
                                             {148, 94, 30, 24}};
 static const PieceType PROMOTION_TYPES[4] = {
     PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight};
+
+static uint8_t chessPromotionCode(PieceType type) {
+  switch (type) {
+  case PieceType::Rook:
+    return 1;
+  case PieceType::Bishop:
+    return 2;
+  case PieceType::Knight:
+    return 3;
+  case PieceType::Queen:
+  default:
+    return 0;
+  }
+}
+
+static PieceType chessPromotionFromCode(uint8_t code) {
+  switch (code) {
+  case 1:
+    return PieceType::Rook;
+  case 2:
+    return PieceType::Bishop;
+  case 3:
+    return PieceType::Knight;
+  case 0:
+  default:
+    return PieceType::Queen;
+  }
+}
+
+static PieceType chessPromotionFromChar(char c) {
+  switch (c) {
+  case 'R':
+    return PieceType::Rook;
+  case 'B':
+    return PieceType::Bishop;
+  case 'N':
+    return PieceType::Knight;
+  case 'Q':
+  default:
+    return PieceType::Queen;
+  }
+}
+
+static char chessPromotionChar(const char *historyEntry) {
+  if (historyEntry == nullptr || historyEntry[0] != 'P') {
+    return '\0';
+  }
+  for (int i = 6; historyEntry[i]; i++) {
+    if (historyEntry[i] == 'Q' || historyEntry[i] == 'R' ||
+        historyEntry[i] == 'B' || historyEntry[i] == 'N') {
+      return historyEntry[i];
+    }
+  }
+  return '\0';
+}
 
 static constexpr int bookSquare(char file, char rank) {
   return ('8' - rank) * 8 + (file - 'A');
@@ -161,6 +219,7 @@ void ChessApp::resetGameState() {
   hintText[0] = '\0';
   historyCount = 0;
   historyOffset = 0;
+  historyReplayable = true;
   hasLastMove = false;
   lastMoveFrom = -1;
   lastMoveTo = -1;
@@ -251,10 +310,346 @@ bool ChessApp::loadPosition(const char *fen, PieceColor sideToMove) {
     board[i] = nextBoard[i];
   }
   resetGameState();
+  historyReplayable = false;
   turn = sideToMove;
   started = true;
   mode = Mode::Playing;
   return true;
+}
+
+size_t ChessApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  uint16_t historyTokens[CHESS_MAX_HISTORY_TOKENS] = {};
+  uint8_t tokenCount = 0;
+  uint8_t savedHistoryCount = historyReplayable ? historyCount : 0;
+  for (uint8_t i = 0; i < savedHistoryCount; i++) {
+    if (historyFrom[i] < 0 || historyFrom[i] >= 64 || historyTo[i] < 0 ||
+        historyTo[i] >= 64 || tokenCount >= CHESS_MAX_HISTORY_TOKENS) {
+      return 0;
+    }
+    historyTokens[tokenCount++] =
+        static_cast<uint16_t>(historyFrom[i]) |
+        (static_cast<uint16_t>(historyTo[i]) << 6);
+
+    char promotion = chessPromotionChar(history[i]);
+    if (promotion != '\0' && promotion != 'Q') {
+      if (tokenCount >= CHESS_MAX_HISTORY_TOKENS) {
+        return 0;
+      }
+      uint8_t code = chessPromotionCode(chessPromotionFromChar(promotion));
+      historyTokens[tokenCount++] =
+          static_cast<uint16_t>(code) | (static_cast<uint16_t>(code) << 6);
+    }
+  }
+
+  uint8_t pieceCodes[32] = {};
+  uint8_t pieceCount = 0;
+  for (int square = 0; square < 64; square++) {
+    if (!board[square].present) {
+      continue;
+    }
+    if (pieceCount >= 32 || board[square].type == PieceType::Checker) {
+      return 0;
+    }
+    uint8_t typeCode = 0;
+    switch (board[square].type) {
+    case PieceType::King:
+      typeCode = 0;
+      break;
+    case PieceType::Queen:
+      typeCode = 1;
+      break;
+    case PieceType::Rook:
+      typeCode = 2;
+      break;
+    case PieceType::Bishop:
+      typeCode = 3;
+      break;
+    case PieceType::Knight:
+      typeCode = 4;
+      break;
+    case PieceType::Pawn:
+      typeCode = 5;
+      break;
+    case PieceType::Checker:
+      return 0;
+    }
+    pieceCodes[pieceCount++] =
+        typeCode + (board[square].color == PieceColor::Black ? 6 : 0);
+  }
+
+  RtcBitWriter writer(buffer, capacity);
+  writer.writeBits(CHESS_CONTEXT_VERSION, 4);
+  writer.writeBits(static_cast<uint8_t>(mode), 2);
+  writer.writeBits(turn == PieceColor::Black ? 1 : 0, 1);
+  writer.writeBits(humanColor == PieceColor::Black ? 1 : 0, 1);
+  writer.writeBits(vsAi ? 1 : 0, 1);
+  writer.writeBits(aiLevel > 3 ? 3 : aiLevel, 2);
+  writer.writeBits(started ? 1 : 0, 1);
+  writer.writeBits(gameOver ? 1 : 0, 1);
+  writer.writeBits(aiBookEnabled ? 1 : 0, 1);
+  writer.writeBits(whiteKingMoved ? 1 : 0, 1);
+  writer.writeBits(blackKingMoved ? 1 : 0, 1);
+  writer.writeBits(whiteKingsideRookMoved ? 1 : 0, 1);
+  writer.writeBits(whiteQueensideRookMoved ? 1 : 0, 1);
+  writer.writeBits(blackKingsideRookMoved ? 1 : 0, 1);
+  writer.writeBits(blackQueensideRookMoved ? 1 : 0, 1);
+  writer.writeBits(enPassantSquare >= 0 ? enPassantSquare : 64, 7);
+  writer.writeBits(savedHistoryCount, 7);
+  writer.writeBits(historyOffset, 7);
+  writer.writeBits(hasLastMove ? 1 : 0, 1);
+  writer.writeBits(lastMoveFrom >= 0 ? lastMoveFrom : 0, 6);
+  writer.writeBits(lastMoveTo >= 0 ? lastMoveTo : 0, 6);
+  writer.writeBits(lastMoveColor == PieceColor::Black ? 1 : 0, 1);
+  writer.writeBits(historyReplayable ? 1 : 0, 1);
+
+  for (int square = 0; square < 64; square++) {
+    writer.writeBits(board[square].present ? 1 : 0, 1);
+  }
+  for (int i = 0; i < 32; i++) {
+    writer.writeBits(pieceCodes[i], 4);
+  }
+
+  writer.writeBits(tokenCount, 8);
+  for (uint8_t i = 0; i < tokenCount; i++) {
+    writer.writeBits(historyTokens[i] & 0x3f, 6);
+    writer.writeBits((historyTokens[i] >> 6) & 0x3f, 6);
+  }
+  return writer.ok() ? writer.bytesWritten() : 0;
+}
+
+void ChessApp::restoreContext(const uint8_t *buffer, size_t length) {
+  RtcBitReader reader(buffer, length);
+  uint32_t value = 0;
+  if (!reader.readBits(4, value) || value != CHESS_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint32_t savedMode = 0;
+  uint32_t savedTurn = 0;
+  uint32_t savedHumanColor = 0;
+  uint32_t savedVsAi = 0;
+  uint32_t savedAiLevel = 0;
+  uint32_t savedStarted = 0;
+  uint32_t savedGameOver = 0;
+  uint32_t savedAiBook = 0;
+  uint32_t savedWhiteKingMoved = 0;
+  uint32_t savedBlackKingMoved = 0;
+  uint32_t savedWhiteKingsideRookMoved = 0;
+  uint32_t savedWhiteQueensideRookMoved = 0;
+  uint32_t savedBlackKingsideRookMoved = 0;
+  uint32_t savedBlackQueensideRookMoved = 0;
+  uint32_t savedEnPassant = 0;
+  uint32_t savedHistoryCount = 0;
+  uint32_t savedHistoryOffset = 0;
+  uint32_t savedHasLastMove = 0;
+  uint32_t savedLastMoveFrom = 0;
+  uint32_t savedLastMoveTo = 0;
+  uint32_t savedLastMoveColor = 0;
+  uint32_t savedHistoryReplayable = 0;
+
+  if (!reader.readBits(2, savedMode) || savedMode > 2 ||
+      !reader.readBits(1, savedTurn) ||
+      !reader.readBits(1, savedHumanColor) ||
+      !reader.readBits(1, savedVsAi) ||
+      !reader.readBits(2, savedAiLevel) || savedAiLevel == 0 ||
+      !reader.readBits(1, savedStarted) ||
+      !reader.readBits(1, savedGameOver) ||
+      !reader.readBits(1, savedAiBook) ||
+      !reader.readBits(1, savedWhiteKingMoved) ||
+      !reader.readBits(1, savedBlackKingMoved) ||
+      !reader.readBits(1, savedWhiteKingsideRookMoved) ||
+      !reader.readBits(1, savedWhiteQueensideRookMoved) ||
+      !reader.readBits(1, savedBlackKingsideRookMoved) ||
+      !reader.readBits(1, savedBlackQueensideRookMoved) ||
+      !reader.readBits(7, savedEnPassant) || savedEnPassant > 64 ||
+      !reader.readBits(7, savedHistoryCount) || savedHistoryCount > 96 ||
+      !reader.readBits(7, savedHistoryOffset) ||
+      !reader.readBits(1, savedHasLastMove) ||
+      !reader.readBits(6, savedLastMoveFrom) ||
+      !reader.readBits(6, savedLastMoveTo) ||
+      !reader.readBits(1, savedLastMoveColor) ||
+      !reader.readBits(1, savedHistoryReplayable)) {
+    return;
+  }
+
+  bool occupied[64] = {};
+  uint8_t pieceCount = 0;
+  for (int square = 0; square < 64; square++) {
+    if (!reader.readBits(1, value)) {
+      return;
+    }
+    occupied[square] = value != 0;
+    if (occupied[square]) {
+      pieceCount++;
+      if (pieceCount > 32) {
+        return;
+      }
+    }
+  }
+
+  uint8_t pieceCodes[32] = {};
+  for (int i = 0; i < 32; i++) {
+    if (!reader.readBits(4, value) || value > 11) {
+      return;
+    }
+    pieceCodes[i] = static_cast<uint8_t>(value);
+  }
+
+  Piece nextBoard[64] = {};
+  uint8_t pieceIndex = 0;
+  for (int square = 0; square < 64; square++) {
+    if (!occupied[square]) {
+      continue;
+    }
+    uint8_t code = pieceCodes[pieceIndex++];
+    Piece piece = {};
+    piece.present = true;
+    piece.color = code >= 6 ? PieceColor::Black : PieceColor::White;
+    switch (code % 6) {
+    case 0:
+      piece.type = PieceType::King;
+      break;
+    case 1:
+      piece.type = PieceType::Queen;
+      break;
+    case 2:
+      piece.type = PieceType::Rook;
+      break;
+    case 3:
+      piece.type = PieceType::Bishop;
+      break;
+    case 4:
+      piece.type = PieceType::Knight;
+      break;
+    case 5:
+      piece.type = PieceType::Pawn;
+      break;
+    }
+    nextBoard[square] = piece;
+  }
+
+  uint32_t tokenCount = 0;
+  if (!reader.readBits(8, tokenCount) ||
+      tokenCount > CHESS_MAX_HISTORY_TOKENS) {
+    return;
+  }
+
+  Move replayMoves[96] = {};
+  PieceType replayPromotions[96] = {};
+  uint8_t replayCount = 0;
+  for (uint32_t i = 0; i < tokenCount; i++) {
+    uint32_t from = 0;
+    uint32_t to = 0;
+    if (!reader.readBits(6, from) || !reader.readBits(6, to)) {
+      return;
+    }
+    if (from == to && from < 4) {
+      if (replayCount == 0) {
+        return;
+      }
+      replayPromotions[replayCount - 1] =
+          chessPromotionFromCode(static_cast<uint8_t>(from));
+      replayMoves[replayCount - 1].promotion = replayPromotions[replayCount - 1];
+      continue;
+    }
+    if (from == to || replayCount >= 96) {
+      return;
+    }
+    replayMoves[replayCount] = {static_cast<int8_t>(from),
+                                static_cast<int8_t>(to), PieceType::Queen,
+                                true};
+    replayPromotions[replayCount] = PieceType::Queen;
+    replayCount++;
+  }
+  if (!reader.ok() || replayCount != savedHistoryCount) {
+    return;
+  }
+
+  placeInitialPieces();
+  resetGameState();
+  mode = Mode::Playing;
+  started = true;
+  bool replayOk = true;
+  for (uint8_t i = 0; i < replayCount; i++) {
+    Move move = replayMoves[i];
+    move.promotion = replayPromotions[i];
+    move.hasPromotion = true;
+    if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64 ||
+        !board[move.from].present) {
+      replayOk = false;
+      break;
+    }
+    Piece moving = board[move.from];
+    Piece captured = board[move.to];
+    if (moving.type == PieceType::Pawn && move.to == enPassantSquare &&
+        !captured.present) {
+      int capturedSquare =
+          move.to + (moving.color == PieceColor::White ? 8 : -8);
+      if (capturedSquare >= 0 && capturedSquare < 64) {
+        captured = board[capturedSquare];
+      }
+    }
+    appendHistory(move, moving, captured);
+    applyMoveUnchecked(move, moving, captured, false);
+    hasLastMove = true;
+    lastMoveFrom = move.from;
+    lastMoveTo = move.to;
+    lastMoveColor = moving.color;
+    turn = opposite(turn);
+    if (isInCheck(turn)) {
+      appendHistorySuffix(hasAnyLegalMove(turn) ? '+' : '#');
+    }
+  }
+  if (!replayOk) {
+    historyCount = 0;
+    historyOffset = 0;
+  }
+
+  for (int i = 0; i < 64; i++) {
+    board[i] = nextBoard[i];
+  }
+  mode = static_cast<Mode>(savedMode);
+  turn = savedTurn ? PieceColor::Black : PieceColor::White;
+  humanColor = savedHumanColor ? PieceColor::Black : PieceColor::White;
+  vsAi = savedVsAi != 0;
+  aiLevel = static_cast<uint8_t>(savedAiLevel);
+  started = savedStarted != 0;
+  gameOver = savedGameOver != 0;
+  aiBookEnabled = savedAiBook != 0;
+  whiteKingMoved = savedWhiteKingMoved != 0;
+  blackKingMoved = savedBlackKingMoved != 0;
+  whiteKingsideRookMoved = savedWhiteKingsideRookMoved != 0;
+  whiteQueensideRookMoved = savedWhiteQueensideRookMoved != 0;
+  blackKingsideRookMoved = savedBlackKingsideRookMoved != 0;
+  blackQueensideRookMoved = savedBlackQueensideRookMoved != 0;
+  enPassantSquare =
+      savedEnPassant == 64 ? -1 : static_cast<int>(savedEnPassant);
+  historyOffset = static_cast<uint8_t>(savedHistoryOffset);
+  if (historyCount <= 7) {
+    historyOffset = 0;
+  } else if (historyOffset + 7 > historyCount) {
+    historyOffset = historyCount - 7;
+  }
+  historyReplayable = savedHistoryReplayable != 0 && replayOk;
+  hasLastMove = savedHasLastMove != 0;
+  lastMoveFrom = hasLastMove ? static_cast<int>(savedLastMoveFrom) : -1;
+  lastMoveTo = hasLastMove ? static_cast<int>(savedLastMoveTo) : -1;
+  lastMoveColor = savedLastMoveColor ? PieceColor::Black : PieceColor::White;
+
+  alertVisible = false;
+  aiThinking = false;
+  aiThinkingSinceMs = 0;
+  menuCancelBlockUntilMs = 0;
+  clearSelection();
+  if (!started) {
+    mode = Mode::Setup;
+  } else if (mode == Mode::History && historyCount == 0) {
+    mode = Mode::Playing;
+  }
+  setHint(gameOver ? "Game over"
+                   : (turn == PieceColor::White ? "White to move"
+                                                : "Black to move"));
+  maybeRunAi();
 }
 
 bool ChessApp::hasActiveSession() const { return started && !gameOver; }
@@ -1817,6 +2212,7 @@ int ChessApp::pieceValue(PieceType type) const {
 
 void ChessApp::appendHistory(const Move &move, Piece moving, Piece captured) {
   if (historyCount >= 96) {
+    historyReplayable = false;
     for (int i = 1; i < 96; ++i) {
       strcpy(history[i - 1], history[i]);
       historyPiece[i - 1] = historyPiece[i];

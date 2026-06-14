@@ -1,41 +1,64 @@
-#ifndef ENABLE_RTC_CLOCK
-#define ENABLE_RTC_CLOCK 0
-#endif
+#include "sys/pcf85063_clock.h"
 
 #if ENABLE_RTC_CLOCK
 
-#include "sys/pcf85063_clock.h"
 #include "sys/device_clock.h"
 #include "sys/global.h"
+#include "sys/touch_input.h"
 
 #include <Arduino.h>
-#include <Wire.h>
+#include <driver/i2c_master.h>
 
 Pcf85063Clock rtcClock;
 
+namespace {
+
+static const uint8_t RTC_ADDRESS = 0x51;
+static i2c_master_dev_handle_t rtcDevice = NULL;
+
+bool ensureRtcDevice() {
+  if (rtcDevice != NULL) {
+    return true;
+  }
+
+  i2c_master_bus_handle_t bus = touchI2cBusHandle();
+  if (bus == NULL) {
+    return false;
+  }
+
+  i2c_device_config_t devConfig = {};
+  devConfig.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  devConfig.device_address = RTC_ADDRESS;
+  devConfig.scl_speed_hz = 400000;
+
+  return i2c_master_bus_add_device(bus, &devConfig, &rtcDevice) == ESP_OK;
+}
+
+} // namespace
+
 void Pcf85063Clock::begin() {
-  Wire.begin(ESP32_I2C_SDA, ESP32_I2C_SCL);
-  Wire.setTimeOut(100);
+  ensureRtcDevice();
 }
 
 bool Pcf85063Clock::readToDeviceClock() {
-  Wire.beginTransmission(ADDRESS);
-  Wire.write(0x04);
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-  if (Wire.requestFrom(ADDRESS, 7) != 7) {
+  if (!ensureRtcDevice()) {
     return false;
   }
 
-  uint8_t secondReg = Wire.read();
+  uint8_t reg = 0x04;
+  uint8_t raw[7] = {};
+  if (i2c_master_transmit_receive(rtcDevice, &reg, sizeof(reg), raw,
+                                  sizeof(raw), 100) != ESP_OK) {
+    return false;
+  }
+
+  uint8_t secondReg = raw[0];
   int second = fromBcd(secondReg & 0x7F);
-  int minute = fromBcd(Wire.read() & 0x7F);
-  int hour = fromBcd(Wire.read() & 0x3F);
-  int day = fromBcd(Wire.read() & 0x3F);
-  Wire.read();
-  int month = fromBcd(Wire.read() & 0x1F);
-  int year = 2000 + fromBcd(Wire.read());
+  int minute = fromBcd(raw[1] & 0x7F);
+  int hour = fromBcd(raw[2] & 0x3F);
+  int day = fromBcd(raw[3] & 0x3F);
+  int month = fromBcd(raw[5] & 0x1F);
+  int year = 2000 + fromBcd(raw[6]);
 
   if ((secondReg & 0x80) || year < 2024 || month < 1 || month > 12 ||
       day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
@@ -49,6 +72,10 @@ bool Pcf85063Clock::readToDeviceClock() {
 }
 
 bool Pcf85063Clock::writeFromUnix(int64_t unixTime, int32_t utcOffsetSeconds) {
+  if (!ensureRtcDevice()) {
+    return false;
+  }
+
   int year;
   int month;
   int day;
@@ -59,16 +86,15 @@ bool Pcf85063Clock::writeFromUnix(int64_t unixTime, int32_t utcOffsetSeconds) {
   unixToDateTime(unixTime + utcOffsetSeconds, year, month, day, hour, minute,
                  second, weekday);
 
-  Wire.beginTransmission(ADDRESS);
-  Wire.write(0x04);
-  Wire.write(toBcd(second));
-  Wire.write(toBcd(minute));
-  Wire.write(toBcd(hour));
-  Wire.write(toBcd(day));
-  Wire.write(toBcd(weekday));
-  Wire.write(toBcd(month));
-  Wire.write(toBcd(year % 100));
-  return Wire.endTransmission() == 0;
+  uint8_t raw[8] = {0x04,
+                    toBcd(static_cast<uint8_t>(second)),
+                    toBcd(static_cast<uint8_t>(minute)),
+                    toBcd(static_cast<uint8_t>(hour)),
+                    toBcd(static_cast<uint8_t>(day)),
+                    toBcd(static_cast<uint8_t>(weekday)),
+                    toBcd(static_cast<uint8_t>(month)),
+                    toBcd(static_cast<uint8_t>(year % 100))};
+  return i2c_master_transmit(rtcDevice, raw, sizeof(raw), 100) == ESP_OK;
 }
 
 uint8_t Pcf85063Clock::toBcd(uint8_t value) {

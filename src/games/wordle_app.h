@@ -6,6 +6,7 @@
 #include "ui/t9_keyboard/t9_keyboard_component.h"
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
+#include <stddef.h>
 #include <stdint.h>
 
 class WordleApp : public MenuButtonConsumer {
@@ -19,6 +20,8 @@ public:
   bool handleMenuDoubleButton();
   bool handleMenuLongButton();
   bool hasActiveSession() const;
+  size_t saveContext(uint8_t *buffer, size_t capacity) const;
+  void restoreContext(const uint8_t *buffer, size_t length);
 
 private:
   enum State { STATE_INTRO, STATE_ENTER_WORD, STATE_GUESSING, STATE_WON, STATE_LOST };

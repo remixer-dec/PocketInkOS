@@ -8,8 +8,12 @@ extern const AppDefinition apps[];
 extern const size_t appCount;
 
 ActiveApp *contactLinksRuntime();
+const AppDefinition *contactLinksDefinition();
+const AppDefinition *findAppById(const char *id);
 void resetApps();
 void resetContactLinks();
 char wifiStatusIcon();
+bool wifiIsOn();
+void restoreWifiOn(bool enabled);
 
 #endif

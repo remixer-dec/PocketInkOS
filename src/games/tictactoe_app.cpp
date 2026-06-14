@@ -1,4 +1,5 @@
 #include "games/tictactoe_app.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -9,6 +10,7 @@ static const int CELL_SIZE = 50;
 static const UiRect CPU_BUTTON = {10, 28, 52, 18};
 static const UiRect PVP_BUTTON = {70, 28, 52, 18};
 static const UiRect NEW_BUTTON = {130, 28, 56, 18};
+static const uint8_t TICTACTOE_CONTEXT_VERSION = 1;
 
 void TicTacToeApp::reset() {
   vsCpu = true;
@@ -113,6 +115,55 @@ bool TicTacToeApp::hasActiveSession() const {
     }
   }
   return false;
+}
+
+size_t TicTacToeApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  if (capacity < 4) {
+    return 0;
+  }
+
+  uint16_t cells = 0;
+  uint16_t factor = 1;
+  for (int i = 0; i < 9; i++) {
+    uint8_t value = board[i] == 'X' ? 1 : board[i] == 'O' ? 2 : 0;
+    cells += value * factor;
+    factor *= 3;
+  }
+
+  uint8_t flags = 0;
+  flags |= vsCpu ? 1U : 0U;
+  flags |= turn == 'O' ? 2U : 0U;
+  flags |= winner == 'X'   ? 4U
+           : winner == 'O' ? 8U
+           : winner == 'D' ? 12U
+                            : 0U;
+
+  buffer[0] = TICTACTOE_CONTEXT_VERSION;
+  buffer[1] = flags;
+  buffer[2] = static_cast<uint8_t>(cells & 0xff);
+  buffer[3] = static_cast<uint8_t>(cells >> 8);
+  return 4;
+}
+
+void TicTacToeApp::restoreContext(const uint8_t *buffer, size_t length) {
+  if (length != 4 || buffer[0] != TICTACTOE_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint16_t cells = static_cast<uint16_t>(buffer[2]) |
+                   (static_cast<uint16_t>(buffer[3]) << 8);
+  for (int i = 0; i < 9; i++) {
+    uint8_t value = cells % 3;
+    cells /= 3;
+    board[i] = value == 1 ? 'X' : value == 2 ? 'O' : 0;
+  }
+
+  vsCpu = (buffer[1] & 1U) != 0;
+  turn = (buffer[1] & 2U) ? 'O' : 'X';
+  uint8_t winnerCode = (buffer[1] >> 2) & 3U;
+  winner = winnerCode == 1 ? 'X' : winnerCode == 2 ? 'O'
+                              : winnerCode == 3   ? 'D'
+                                                   : 0;
 }
 
 void TicTacToeApp::makeMove(int cell) {

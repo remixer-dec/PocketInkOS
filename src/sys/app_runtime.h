@@ -3,6 +3,7 @@
 
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef ENABLE_NETWORK_APPS
@@ -101,6 +102,8 @@ private:
 typedef void (*AppCallback)();
 typedef AppEventResult (*AppEventHandler)();
 typedef void (*AppRawTouchHandler)(const TouchEvent &event);
+typedef size_t (*AppSaveContextHandler)(uint8_t *buffer, size_t capacity);
+typedef void (*AppRestoreContextHandler)(const uint8_t *buffer, size_t length);
 
 struct AppBehavior {
   AppCallback onEnter = nullptr;
@@ -112,6 +115,8 @@ struct AppBehavior {
   AppEventHandler onPowerDouble = nullptr;
   AppEventHandler onPowerLong = nullptr;
   AppRawTouchHandler onRawTouch = nullptr;
+  AppSaveContextHandler onSaveContext = nullptr;
+  AppRestoreContextHandler onRestoreContext = nullptr;
 };
 
 struct AppDefinition {

@@ -1,6 +1,8 @@
 #include "games/minesweeper_app.h"
 #include "ui/ui_helpers.h"
 
+#include <stdint.h>
+
 static const int MINE_COUNT = 4;
 static const int GRID_X = 15;
 static const int GRID_Y = 16;
@@ -8,6 +10,37 @@ static const int CELL_SIZE = 34;
 static const int MODE_Y = 188;
 static const UiRect OPEN_BUTTON = {16, MODE_Y, 76, 12};
 static const UiRect FLAG_BUTTON = {108, MODE_Y, 76, 12};
+static const uint8_t MINESWEEPER_CONTEXT_VERSION = 1;
+
+static uint32_t packMask(const bool cells[], int count) {
+  uint32_t mask = 0;
+  for (int i = 0; i < count; i++) {
+    if (cells[i]) {
+      mask |= (1UL << i);
+    }
+  }
+  return mask;
+}
+
+static void unpackMask(uint32_t mask, bool cells[], int count) {
+  for (int i = 0; i < count; i++) {
+    cells[i] = (mask & (1UL << i)) != 0;
+  }
+}
+
+static void writeU32(uint8_t *target, uint32_t value) {
+  target[0] = static_cast<uint8_t>(value & 0xff);
+  target[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+  target[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+  target[3] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+static uint32_t readU32(const uint8_t *source) {
+  return static_cast<uint32_t>(source[0]) |
+         (static_cast<uint32_t>(source[1]) << 8) |
+         (static_cast<uint32_t>(source[2]) << 16) |
+         (static_cast<uint32_t>(source[3]) << 24);
+}
 
 void MinesweeperApp::reset() {
   for (int i = 0; i < W * H; i++) {
@@ -123,6 +156,34 @@ bool MinesweeperApp::handlePowerButton() {
 
 bool MinesweeperApp::hasActiveSession() const {
   return started && !lost && !won;
+}
+
+size_t MinesweeperApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  if (capacity < 14) {
+    return 0;
+  }
+
+  buffer[0] = MINESWEEPER_CONTEXT_VERSION;
+  buffer[1] = (flagMode ? 1U : 0U) | (started ? 2U : 0U) |
+              (lost ? 4U : 0U) | (won ? 8U : 0U);
+  writeU32(buffer + 2, packMask(mines, W * H));
+  writeU32(buffer + 6, packMask(revealed, W * H));
+  writeU32(buffer + 10, packMask(flagged, W * H));
+  return 14;
+}
+
+void MinesweeperApp::restoreContext(const uint8_t *buffer, size_t length) {
+  if (length != 14 || buffer[0] != MINESWEEPER_CONTEXT_VERSION) {
+    return;
+  }
+
+  flagMode = (buffer[1] & 1U) != 0;
+  started = (buffer[1] & 2U) != 0;
+  lost = (buffer[1] & 4U) != 0;
+  won = (buffer[1] & 8U) != 0;
+  unpackMask(readU32(buffer + 2), mines, W * H);
+  unpackMask(readU32(buffer + 6), revealed, W * H);
+  unpackMask(readU32(buffer + 10), flagged, W * H);
 }
 
 int MinesweeperApp::neighborMines(int x, int y) const {

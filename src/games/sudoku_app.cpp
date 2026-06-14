@@ -1,4 +1,5 @@
 #include "games/sudoku_app.h"
+#include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -353,6 +354,28 @@ static const int CELL = 20;
 static const int PICKER_GRID_X = 56;
 static const int PICKER_GRID_Y = 48;
 static const int PICKER_CELL = 28;
+static const uint8_t SUDOKU_CONTEXT_VERSION = 1;
+
+static bool writeSudokuDigits(RtcBitWriter &writer, const uint8_t *digits) {
+  for (int i = 0; i < 81; i++) {
+    if (digits[i] > 9) {
+      return false;
+    }
+    writer.writeBits(digits[i], 4);
+  }
+  return writer.ok();
+}
+
+static bool readSudokuDigits(RtcBitReader &reader, uint8_t *digits) {
+  uint32_t value = 0;
+  for (int i = 0; i < 81; i++) {
+    if (!reader.readBits(4, value) || value > 9) {
+      return false;
+    }
+    digits[i] = static_cast<uint8_t>(value);
+  }
+  return true;
+}
 
 static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
                              uint8_t textSize) {
@@ -729,6 +752,88 @@ bool SudokuApp::generatePuzzle() {
 
 bool SudokuApp::hasActiveSession() const {
   return state == STATE_PLAYING && !isSolved();
+}
+
+size_t SudokuApp::saveContext(uint8_t *buffer, size_t capacity) const {
+  if (state != STATE_PLAYING) {
+    return 0;
+  }
+
+  RtcBitWriter writer(buffer, capacity);
+  writer.writeBits(SUDOKU_CONTEXT_VERSION, 4);
+  writer.writeBits(static_cast<uint8_t>(difficulty), 2);
+  writer.writeBits(selected >= 0 ? static_cast<uint8_t>(selected) : 81, 7);
+  writer.writeBits(pickerOpen ? 1 : 0, 1);
+  writer.writeBits(guessMode ? 1 : 0, 1);
+  if (!writeSudokuDigits(writer, solution)) {
+    return 0;
+  }
+  for (int i = 0; i < 81; i++) {
+    writer.writeBits(fixed[i] > 0 ? 1 : 0, 1);
+  }
+  if (!writeSudokuDigits(writer, values)) {
+    return 0;
+  }
+  for (int i = 0; i < 81; i++) {
+    writer.writeBits((notes[i] >> 1) & 0x1ff, 9);
+  }
+  return writer.ok() ? writer.bytesWritten() : 0;
+}
+
+void SudokuApp::restoreContext(const uint8_t *buffer, size_t length) {
+  RtcBitReader reader(buffer, length);
+  uint32_t value = 0;
+  if (!reader.readBits(4, value) || value != SUDOKU_CONTEXT_VERSION) {
+    return;
+  }
+
+  uint32_t savedDifficulty = 0;
+  uint32_t savedSelected = 0;
+  uint32_t savedPickerOpen = 0;
+  uint32_t savedGuessMode = 0;
+  if (!reader.readBits(2, savedDifficulty) ||
+      !reader.readBits(7, savedSelected) ||
+      !reader.readBits(1, savedPickerOpen) ||
+      !reader.readBits(1, savedGuessMode) || savedDifficulty > EXTREME ||
+      savedSelected > 81) {
+    return;
+  }
+
+  uint8_t nextSolution[81] = {};
+  uint8_t nextFixed[81] = {};
+  uint8_t nextValues[81] = {};
+  uint16_t nextNotes[81] = {};
+  if (!readSudokuDigits(reader, nextSolution)) {
+    return;
+  }
+  for (int i = 0; i < 81; i++) {
+    if (!reader.readBits(1, value)) {
+      return;
+    }
+    nextFixed[i] = value ? nextSolution[i] : 0;
+  }
+  if (!readSudokuDigits(reader, nextValues)) {
+    return;
+  }
+  for (int i = 0; i < 81; i++) {
+    if (!reader.readBits(9, value)) {
+      return;
+    }
+    nextNotes[i] = static_cast<uint16_t>(value << 1);
+  }
+  if (!reader.ok()) {
+    return;
+  }
+
+  memcpy(solution, nextSolution, sizeof(solution));
+  memcpy(fixed, nextFixed, sizeof(fixed));
+  memcpy(values, nextValues, sizeof(values));
+  memcpy(notes, nextNotes, sizeof(notes));
+  difficulty = static_cast<Difficulty>(savedDifficulty);
+  selected = savedSelected == 81 ? -1 : static_cast<int>(savedSelected);
+  pickerOpen = savedPickerOpen != 0 && selected >= 0 && fixed[selected] == 0;
+  guessMode = savedGuessMode != 0;
+  state = STATE_PLAYING;
 }
 
 int SudokuApp::boardCellAt(const TouchPoint &point) const {
