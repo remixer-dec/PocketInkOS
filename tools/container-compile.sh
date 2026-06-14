@@ -46,7 +46,7 @@ FILES=( \
   "$ROOT/src/ui/components/smart_button.cpp" \
   "$ROOT/src/ui/status_bar.cpp" \
   "$ROOT/src/games/sudoku_app.cpp" \
-  "$ROOT/src/ui/t9_keyboard/t9_keyboard_component.cpp" \
+  "$ROOT/src/ui/components/t9_keyboard_component.cpp" \
   "$ROOT/src/ui/text_input_controller.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
   "$ROOT/src/sys/touch_input.cpp" \

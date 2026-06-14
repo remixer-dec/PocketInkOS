@@ -1,4 +1,4 @@
-#include "ui/t9_keyboard/t9_keyboard_component.h"
+#include "ui/components/t9_keyboard_component.h"
 
 #include <Arduino.h>
 #include <cstdio>

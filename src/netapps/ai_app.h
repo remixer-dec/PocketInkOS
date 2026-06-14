@@ -4,7 +4,7 @@
 #include "sys/audio_capture.h"
 #include "ui/components/menu_button_consumer.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
-#include "ui/t9_keyboard/t9_keyboard_component.h"
+#include "ui/components/t9_keyboard_component.h"
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <WiFiClientSecure.h>

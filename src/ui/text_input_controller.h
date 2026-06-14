@@ -6,7 +6,7 @@
 #include "sys/touch_input.h"
 #include "ui/components/keyboard_component.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
-#include "ui/t9_keyboard/t9_keyboard_component.h"
+#include "ui/components/t9_keyboard_component.h"
 #include <Arduino.h>
 
 class TextInputController {
