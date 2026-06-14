@@ -2,6 +2,7 @@
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
 #include "apps/deghost_app.h"
+#include "apps/files_app.h"
 #include "apps/gfx_app.h"
 #include "apps/paint_app.h"
 #include "apps/qr_app.h"
@@ -12,6 +13,7 @@
 #include "games/tictactoe_app.h"
 #include "games/wordle_app.h"
 #include "sys/app_display.h"
+#include "sys/sd_storage.h"
 #if ENABLE_NETWORK_APPS
 #include "netapps/ai_app.h"
 #include "netapps/hn_app.h"
@@ -20,6 +22,7 @@
 #include "netapps/wifi_app.h"
 #endif
 #include <cstring>
+#include <stdint.h>
 #if ENABLE_NETWORK_APPS
 #include <WiFi.h>
 #endif
@@ -33,6 +36,7 @@ QrApp qrApp;
 PaintApp paintApp;
 DeghostApp deghostApp;
 GfxApp gfxApp;
+FilesApp filesApp;
 ContactLinksApp contactLinks;
 #if ENABLE_NETWORK_APPS
 WifiApp wifiApp;
@@ -48,6 +52,8 @@ SudokuApp sudoku;
 WordleApp wordle;
 ChessApp chess;
 
+constexpr uint32_t CHESS_INACTIVITY_DEEP_SLEEP_MS = 5UL * 60UL * 1000UL;
+
 AppScreen<TicTacToeApp> ticTacToeScreen(ticTacToe);
 AppScreen<MinesweeperApp> minesweeperScreen(minesweeper);
 AppScreen<HangmanApp, true> hangmanScreen(hangman);
@@ -59,6 +65,7 @@ AppScreen<QrApp, true> qrScreen(qrApp);
 TouchlessAppScreen<PaintApp> paintScreen(paintApp);
 AppScreen<DeghostApp, true> deghostScreen(deghostApp);
 AppScreen<GfxApp, true> gfxScreen(gfxApp);
+AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
 #if ENABLE_NETWORK_APPS
 AppScreen<WifiApp, true> wifiScreen(wifiApp);
@@ -126,6 +133,12 @@ size_t saveQrContext(uint8_t *buffer, size_t capacity) {
 }
 void restoreQrContext(const uint8_t *buffer, size_t length) {
   qrApp.restoreContext(buffer, length);
+}
+size_t saveFilesContext(uint8_t *buffer, size_t capacity) {
+  return filesApp.saveContext(buffer, capacity);
+}
+void restoreFilesContext(const uint8_t *buffer, size_t length) {
+  filesApp.restoreContext(buffer, length);
 }
 
 AppEventResult handleHangmanPower() {
@@ -222,6 +235,34 @@ AppDefinition builtInApp(const char *id, const char *label, const char *icon,
   AppDefinition app = builtInApp(id, label, icon, category, screen, runtime,
                                 reset);
   app.behavior = behavior;
+  return app;
+}
+
+AppDefinition builtInAppWhen(const char *id, const char *label,
+                             const char *icon, MenuCategory category,
+                             Screen screen, ActiveApp *runtime,
+                             AppVisibleHandler visible, AppCallback reset) {
+  AppDefinition app = builtInApp(id, label, icon, category, screen, runtime);
+  app.visible = visible;
+  app.reset = reset;
+  return app;
+}
+
+AppDefinition builtInIconAppWhen(const char *id, const char *label,
+                                 const char *icon, MenuCategory category,
+                                 Screen screen, ActiveApp *runtime,
+                                 AppVisibleHandler visible,
+                                 AppCallback reset,
+                                 AppBehavior behavior = AppBehavior{}) {
+  AppDefinition app =
+      builtInAppWhen(id, label, icon, category, screen, runtime, visible, reset);
+  app.iconFont = true;
+  app.behavior = behavior;
+  return app;
+}
+
+AppDefinition withInactivityDeepSleep(AppDefinition app, uint32_t timeoutMs) {
+  app.inactivityDeepSleepMs = timeoutMs;
   return app;
 }
 
@@ -333,8 +374,10 @@ extern const AppDefinition apps[] = {
                &wordleScreen, []() { wordle.reset(); },
                powerContextBehavior(handleWordlePower, saveWordleContext,
                                     restoreWordleContext)),
-    builtInApp("chess", "chess", "C", MENU_GAMES, SCREEN_CHESS, &chessScreen,
-               []() { chess.reset(); }, chessBehavior()),
+    withInactivityDeepSleep(
+        builtInApp("chess", "chess", "C", MENU_GAMES, SCREEN_CHESS,
+                   &chessScreen, []() { chess.reset(); }, chessBehavior()),
+        CHESS_INACTIVITY_DEEP_SLEEP_MS),
     builtInApp("gfx", "gfx", "G", MENU_APPS, SCREEN_GFX, &gfxScreen,
                []() { gfxApp.reset(); }, gfxBehavior()),
     builtInApp("calculator", "calc", "=", MENU_APPS, SCREEN_CALCULATOR,
@@ -346,7 +389,11 @@ extern const AppDefinition apps[] = {
                []() { paintApp.reset(); }, paintBehavior()),
     builtInApp("deghost", "deghost", "D", MENU_APPS, SCREEN_DEGHOST,
                &deghostScreen, []() { deghostApp.reset(); },
-               deghostBehavior())
+               deghostBehavior()),
+    builtInIconAppWhen("files", "files", "N", MENU_APPS, SCREEN_FILES,
+                       &filesScreen, sdStorageMounted,
+                       []() { filesApp.reset(); },
+                       contextBehavior(saveFilesContext, restoreFilesContext))
 #if ENABLE_NETWORK_APPS
     ,
     builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen),
@@ -372,6 +419,9 @@ const AppDefinition *findAppById(const char *id) {
     return nullptr;
   }
   for (size_t i = 0; i < appCount; i++) {
+    if (apps[i].visible != nullptr && !apps[i].visible()) {
+      continue;
+    }
     if (strcmp(apps[i].id, id) == 0) {
       return &apps[i];
     }

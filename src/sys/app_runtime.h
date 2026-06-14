@@ -27,6 +27,7 @@ enum Screen {
   SCREEN_PAINT,
   SCREEN_DEGHOST,
   SCREEN_GFX,
+  SCREEN_FILES,
   SCREEN_CONTACT_LINKS
 #if ENABLE_NETWORK_APPS
   ,
@@ -100,6 +101,7 @@ private:
 };
 
 typedef void (*AppCallback)();
+typedef bool (*AppVisibleHandler)();
 typedef AppEventResult (*AppEventHandler)();
 typedef void (*AppRawTouchHandler)(const TouchEvent &event);
 typedef size_t (*AppSaveContextHandler)(uint8_t *buffer, size_t capacity);
@@ -126,9 +128,12 @@ struct AppDefinition {
   MenuCategory category;
   Screen screen;
   ActiveApp *runtime;
+  AppVisibleHandler visible = nullptr;
+  bool iconFont = false;
   AppCallback launch = nullptr;
   AppCallback reset = nullptr;
   AppBehavior behavior = {};
+  uint32_t inactivityDeepSleepMs = 0;
 };
 
 struct MenuState {

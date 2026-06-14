@@ -5,26 +5,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static const size_t RTC_CONTEXT_APP_CAPACITY = 6144;
+static const size_t RTC_CONTEXT_APP_CAPACITY = 4096;
 static const size_t RTC_CONTEXT_APP_ID_SIZE = 24;
 
 struct RtcNavigationContext {
-  Screen screen = SCREEN_HOME;
-  MenuCategory menuCategory = MENU_GAMES;
-  uint8_t menuPage = 0;
-  bool hasActiveApp = false;
-  char appId[RTC_CONTEXT_APP_ID_SIZE] = "";
+  Screen screen;
+  MenuCategory menuCategory;
+  uint8_t menuPage;
+  bool hasActiveApp;
+  char appId[RTC_CONTEXT_APP_ID_SIZE];
 };
 
 struct RtcSystemContext {
-  bool clockSet = false;
-  int64_t clockLocalUnix = 0;
-  bool wifiOn = false;
+  bool clockSet;
+  int64_t clockLocalUnix;
+  bool wifiOn;
 };
 
 struct RtcAppContext {
-  uint16_t appDataLength = 0;
-  uint8_t appData[RTC_CONTEXT_APP_CAPACITY] = {};
+  uint16_t appDataLength;
+  uint8_t appData[RTC_CONTEXT_APP_CAPACITY];
 };
 
 struct RtcContextSnapshot {

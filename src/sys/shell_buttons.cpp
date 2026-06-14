@@ -18,6 +18,7 @@ volatile uint8_t pendingMenuLongPresses = 0;
 volatile uint8_t pendingPowerClicks = 0;
 volatile uint8_t pendingPowerDoubleClicks = 0;
 volatile uint8_t pendingPowerLongPresses = 0;
+volatile uint8_t pendingButtonActivity = 0;
 
 void queueButtonEvent(volatile uint8_t &counter) {
   if (counter < 255) {
@@ -56,17 +57,20 @@ void shellButtonsBegin(const ShellButtonHandlers &handlers) {
   backButton.begin();
   mainButton.setLongPressMs(1200);
   backButton.setLongPressMs(1200);
+  backButton.setDoubleClickMs(300);
 
   mainButton.attachSingleClick([]() { queueButtonEvent(pendingMenuClicks); });
   mainButton.attachDoubleClick(
       []() { queueButtonEvent(pendingMenuDoubleClicks); });
   mainButton.attachLongPressStart(
       []() { queueButtonEvent(pendingMenuLongPresses); });
+  mainButton.attachActivity([]() { queueButtonEvent(pendingButtonActivity); });
   backButton.attachSingleClick([]() { queueButtonEvent(pendingPowerClicks); });
   backButton.attachDoubleClick(
       []() { queueButtonEvent(pendingPowerDoubleClicks); });
   backButton.attachLongPressStart(
       []() { queueButtonEvent(pendingPowerLongPresses); });
+  backButton.attachActivity([]() { queueButtonEvent(pendingButtonActivity); });
 
   if (buttonTaskHandle == NULL) {
     xTaskCreatePinnedToCore(buttonTask, "buttons", 2048, NULL, 2,
@@ -74,23 +78,34 @@ void shellButtonsBegin(const ShellButtonHandlers &handlers) {
   }
 }
 
-void shellButtonsDispatch() {
+bool shellButtonsDispatch() {
+  bool dispatched = consumeButtonEvent(pendingButtonActivity);
+  while (consumeButtonEvent(pendingButtonActivity)) {
+    dispatched = true;
+  }
   while (consumeButtonEvent(pendingMenuLongPresses)) {
+    dispatched = true;
     call(activeHandlers.onMenuLong);
   }
   while (consumeButtonEvent(pendingMenuDoubleClicks)) {
+    dispatched = true;
     call(activeHandlers.onMenuDouble);
   }
   while (consumeButtonEvent(pendingMenuClicks)) {
+    dispatched = true;
     call(activeHandlers.onMenu);
   }
   while (consumeButtonEvent(pendingPowerLongPresses)) {
+    dispatched = true;
     call(activeHandlers.onPowerLong);
   }
   while (consumeButtonEvent(pendingPowerDoubleClicks)) {
+    dispatched = true;
     call(activeHandlers.onPowerDouble);
   }
   while (consumeButtonEvent(pendingPowerClicks)) {
+    dispatched = true;
     call(activeHandlers.onPower);
   }
+  return dispatched;
 }

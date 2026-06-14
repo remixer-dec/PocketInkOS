@@ -20,6 +20,7 @@ public:
   void attachSingleClick(std::function<void()> callback);
   void attachDoubleClick(std::function<void()> callback);
   void attachLongPressStart(std::function<void()> callback);
+  void attachActivity(std::function<void()> callback);
 
   // Configuration settings
   void setLongPressMs(uint16_t ms);
@@ -45,6 +46,7 @@ private:
   std::function<void()> _cbSingleClick = nullptr;
   std::function<void()> _cbDoubleClick = nullptr;
   std::function<void()> _cbLongPressStart = nullptr;
+  std::function<void()> _cbActivity = nullptr;
 };
 
 #endif

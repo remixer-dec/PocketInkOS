@@ -33,6 +33,7 @@ private:
   void spi_gpio_init();
   void spi_port_init();
   void read_busy();
+  void ensureBuffer();
 
   void set_cs_1() { gpio_set_level((gpio_num_t)lcd_spi_data.cs, 1); }
   void set_cs_0() { gpio_set_level((gpio_num_t)lcd_spi_data.cs, 0); }
@@ -58,11 +59,14 @@ public:
   ~epaper_driver_display();
 
   void EPD_Init();
+  void EPD_InitColdPartial();
+  void EPD_ReattachPartial();
   void EPD_Clear();
   void EPD_Display();
   void EPD_DisplayRegion(int16_t x, int16_t y, int16_t w, int16_t h);
 
   void EPD_LoadPartBaseImage();
+  void EPD_LoadPartBothImages();
   void EPD_DisplayPartBaseImage();
   void EPD_Init_Partial();
   void EPD_DisplayPart();

@@ -22,6 +22,22 @@ void AppDisplay::begin() {
   partialReady = false;
 }
 
+void AppDisplay::beginRetainedPartial() {
+  pinMode(EPD_PWR_PIN, OUTPUT);
+  digitalWrite(EPD_PWR_PIN, LOW);
+  delay(10);
+  driver.EPD_ReattachPartial();
+  partialReady = true;
+}
+
+void AppDisplay::beginColdPartial() {
+  pinMode(EPD_PWR_PIN, OUTPUT);
+  digitalWrite(EPD_PWR_PIN, LOW);
+  delay(50);
+  driver.EPD_InitColdPartial();
+  partialReady = true;
+}
+
 void AppDisplay::drawPixel(int16_t x, int16_t y, uint16_t color) {
   if (x < 0 || x >= EPD_WIDTH || y < 0 || y >= EPD_HEIGHT) {
     return;
@@ -48,6 +64,8 @@ void AppDisplay::clear() {
   fillScreen(0);
 }
 
+void AppDisplay::seedPartialBothImages() { driver.EPD_LoadPartBothImages(); }
+
 void AppDisplay::requestFullRefresh() { partialReady = false; }
 
 void AppDisplay::flush() {
@@ -63,13 +81,13 @@ void AppDisplay::flush() {
   partialReady = true;
 }
 
-void AppDisplay::flushPartial(int16_t, int16_t, int16_t, int16_t) {
+void AppDisplay::flushPartial(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!partialReady) {
     flush();
     return;
   }
 
-  driver.EPD_DisplayPart();
+  driver.EPD_DisplayRegion(x, y, w, h);
 }
 
 void AppDisplay::lock() {

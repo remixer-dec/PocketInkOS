@@ -166,7 +166,8 @@ size_t countCategoryApps(const AppDefinition *apps, size_t appCount,
                          MenuCategory category) {
   size_t count = 0;
   for (size_t i = 0; i < appCount; i++) {
-    if (apps[i].category == category) {
+    const bool visible = apps[i].visible == nullptr || apps[i].visible();
+    if (apps[i].category == category && visible) {
       count++;
     }
   }
@@ -189,7 +190,8 @@ const AppDefinition *appAtVisibleSlot(const AppDefinition *apps,
       static_cast<size_t>(state.page) * MENU_PAGE_SIZE + slot;
   size_t visibleIndex = 0;
   for (size_t i = 0; i < appCount; i++) {
-    if (apps[i].category != state.category) {
+    const bool visible = apps[i].visible == nullptr || apps[i].visible();
+    if (apps[i].category != state.category || !visible) {
       continue;
     }
     if (visibleIndex == targetIndex) {
@@ -232,9 +234,25 @@ void drawMenuItem(AppDisplay &display, const AppDefinition &app, uint8_t slot,
   }
   display.drawRect(x, y, MENU_ICON_W, MENU_ICON_H, 1);
   display.setTextColor(selected ? 0 : 1);
-  display.setTextSize(2);
-  display.setCursor(x + 14, y + 8);
-  display.print(app.icon);
+  if (app.iconFont && app.icon != nullptr && app.icon[0] != '\0') {
+    display.setFont(&iconASCII12pt7b);
+    display.setTextSize(1);
+    int16_t iconX;
+    int16_t iconY;
+    uint16_t iconW;
+    uint16_t iconH;
+    display.getTextBounds(app.icon, 0, 0, &iconX, &iconY, &iconW, &iconH);
+    display.setCursor(x + (MENU_ICON_W - static_cast<int16_t>(iconW)) / 2 -
+                          iconX,
+                      y + (MENU_ICON_H - static_cast<int16_t>(iconH)) / 2 -
+                          iconY + 1);
+    display.print(app.icon);
+    display.setFont();
+  } else {
+    display.setTextSize(2);
+    display.setCursor(x + 14, y + 8);
+    display.print(app.icon);
+  }
 
   display.setTextColor(1);
   display.setTextSize(1);
@@ -365,6 +383,17 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   }
   display.setCursor(4, 22);
   display.print(batteryText);
+
+  char sdText[24];
+  if (data.sd != nullptr && data.sd->mounted) {
+    snprintf(sdText, sizeof(sdText), "[SD] %lu/%luGB free",
+             static_cast<unsigned long>(data.sd->freeGb),
+             static_cast<unsigned long>(data.sd->totalGb));
+  } else {
+    snprintf(sdText, sizeof(sdText), "SD no card");
+  }
+  display.setCursor(4, 34);
+  display.print(sdText);
 
   const EnvironmentSnapshot *env = data.environment;
   char ambientText[12];
@@ -564,7 +593,27 @@ void drawPowerOffScreen(AppDisplay &display) {
   display.fillScreen(0);
 }
 
+void drawLowBatteryScreen(AppDisplay &display) {
+  display.fillScreen(0);
+  drawCenteredIcon(display, 'E', 114, 2);
+}
+
 void drawDeepSleepScreen(AppDisplay &display) {
   display.fillScreen(0);
   drawCenteredIcon(display, 'S', 114, 2);
+}
+
+void drawDeepSleepClockScreen(AppDisplay &display, const char *timeText,
+                              const char *dateText) {
+  display.fillScreen(0);
+  drawCenteredIcon(display, 'S', 42, 1);
+
+  display.setFont();
+  display.setTextColor(1);
+  display.setTextSize(4);
+  drawCenteredText(display, timeText, 104);
+
+  display.setTextSize(1);
+  drawCenteredText(display, dateText, 140);
+  display.setTextSize(1);
 }

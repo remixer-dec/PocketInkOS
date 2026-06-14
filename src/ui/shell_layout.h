@@ -5,6 +5,7 @@
 #include "sys/app_runtime.h"
 #include "sys/battery_monitor.h"
 #include "sys/environment_monitor.h"
+#include "sys/sd_storage.h"
 #include "sys/touch_input.h"
 #include "ui/status_bar.h"
 #include <stddef.h>
@@ -14,6 +15,7 @@ struct ShellData {
   StatusBarSnapshot status;
   const BatterySnapshot *battery;
   const EnvironmentSnapshot *environment;
+  const SdStorageSnapshot *sd;
 };
 
 MenuCategory previousMenuCategory(MenuCategory category);
@@ -77,6 +79,9 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
 PowerDialogAction powerDialogHitAction(const TouchPoint &point,
                                        PowerDialogPage page);
 void drawPowerOffScreen(AppDisplay &display);
+void drawLowBatteryScreen(AppDisplay &display);
 void drawDeepSleepScreen(AppDisplay &display);
+void drawDeepSleepClockScreen(AppDisplay &display, const char *timeText,
+                              const char *dateText);
 
 #endif

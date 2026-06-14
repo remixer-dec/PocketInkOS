@@ -26,6 +26,7 @@ FILES=( \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
   "$ROOT/src/apps/deghost_app.cpp" \
+  "$ROOT/src/apps/files_app.cpp" \
   "$ROOT/src/sys/battery_monitor.cpp" \
   "$ROOT/src/games/cube_app.cpp" \
   "$ROOT/src/sys/device_controls.cpp" \
@@ -34,6 +35,8 @@ FILES=( \
   "$ROOT/src/sys/pcf85063_clock.cpp" \
   "$ROOT/src/sys/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
+  "$ROOT/src/sys/sd_storage.cpp" \
+  "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/sys/shell_buttons.cpp" \
   "$ROOT/src/ui/components/keyboard_component.cpp" \
@@ -50,6 +53,7 @@ FILES=( \
   "$ROOT/src/ui/text_input_controller.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
   "$ROOT/src/sys/touch_input.cpp" \
+  "$ROOT/src/sys/usb_status.cpp" \
   "$ROOT/src/games/wordle_app.cpp")
 
 if [[ "$NETWORK_APPS" != "0" ]]; then

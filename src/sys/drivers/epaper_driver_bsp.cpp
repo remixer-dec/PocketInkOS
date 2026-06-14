@@ -102,9 +102,37 @@ void epaper_driver_display::spi_port_init() {
 
 void epaper_driver_display::read_busy() {
   int busy = lcd_spi_data.busy;
-  while (gpio_get_level((gpio_num_t)busy) == 1) {
+  uint16_t waits = 0;
+  while (gpio_get_level((gpio_num_t)busy) == 1 && waits < 1000) {
     vTaskDelay(pdMS_TO_TICKS(5)); // LOW: idle, HIGH: busy
+    waits++;
   }
+  if (waits >= 1000) {
+    ESP_LOGW(TAG, "EPD busy wait timed out");
+  }
+}
+
+void epaper_driver_display::ensureBuffer() {
+  if (buffer != NULL) {
+    return;
+  }
+
+  // This 5 KB framebuffer is touched per pixel while rendering. Keep it in
+  // internal RAM first; PSRAM is slower and not needed for a buffer this small.
+  buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA |
+                                           MALLOC_CAP_8BIT);
+
+  // Fall back to PSRAM only if internal RAM is too fragmented or unavailable.
+  if (buffer == NULL) {
+    ESP_LOGW(TAG,
+             "Internal framebuffer allocation failed, falling back to PSRAM");
+    buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
+                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  }
+
+  assert(buffer);
+  memset(buffer, 0xFF, lcd_spi_data.buffer_len);
 }
 
 void epaper_driver_display::SPI_SendByte(uint8_t data) {
@@ -220,29 +248,7 @@ void epaper_driver_display::EPD_Init() {
   spi_gpio_init();
 
   // 2. Allocate Memory (moved from constructor)
-  if (buffer == NULL) {
-    // This 5 KB framebuffer is touched per pixel while rendering. Keep it in
-    // internal RAM first; PSRAM is slower and not needed for a buffer this small.
-    buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
-                                         MALLOC_CAP_INTERNAL |
-                                             MALLOC_CAP_DMA |
-                                             MALLOC_CAP_8BIT);
-
-    // Fall back to PSRAM only if internal RAM is too fragmented or unavailable.
-    if (buffer == NULL) {
-      ESP_LOGW(TAG,
-               "Internal framebuffer allocation failed, falling back to PSRAM");
-      buffer = (uint8_t *)heap_caps_malloc(lcd_spi_data.buffer_len,
-                                           MALLOC_CAP_SPIRAM |
-                                               MALLOC_CAP_8BIT);
-    }
-
-    // If both fail, we really have a problem
-    assert(buffer);
-
-    // Initialize buffer to white
-    memset(buffer, 0xFF, lcd_spi_data.buffer_len);
-  }
+  ensureBuffer();
 
   // 3. Begin Reset Sequence
   set_rst_1();
@@ -282,6 +288,42 @@ void epaper_driver_display::EPD_Init() {
   EPD_SetLut(WF_Full_1IN54);
 }
 
+void epaper_driver_display::EPD_InitColdPartial() {
+  spi_port_init();
+  spi_gpio_init();
+  ensureBuffer();
+
+  set_rst_1();
+  vTaskDelay(pdMS_TO_TICKS(50));
+  set_rst_0();
+  vTaskDelay(pdMS_TO_TICKS(20));
+  set_rst_1();
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  read_busy();
+  EPD_SendCommand(0x12); // SWRESET
+  read_busy();
+
+  EPD_SendCommand(0x01); // Driver output control
+  EPD_SendData(0xC7);
+  EPD_SendData(0x00);
+  EPD_SendData(0x01);
+
+  EPD_SendCommand(0x11); // Data entry mode
+  EPD_SendData(0x01);
+
+  EPD_SetWindows(0, Width - 1, Height - 1, 0);
+  EPD_SetCursor(0, Height - 1);
+
+  EPD_SendCommand(0x3C); // BorderWavefrom
+  EPD_SendData(0x80);
+
+  EPD_SendCommand(0x18);
+  EPD_SendData(0x80);
+
+  EPD_SetLut(WF_PARTIAL_1IN54_0);
+}
+
 void epaper_driver_display::EPD_Clear() {
   int buffer_len = lcd_spi_data.buffer_len;
   memset(buffer, 0xff, buffer_len);
@@ -295,15 +337,57 @@ void epaper_driver_display::EPD_Display() {
   EPD_TurnOnDisplay();
 }
 
-void epaper_driver_display::EPD_DisplayRegion(int16_t, int16_t, int16_t,
-                                              int16_t) {
-  EPD_DisplayPart();
+void epaper_driver_display::EPD_DisplayRegion(int16_t x, int16_t y, int16_t w,
+                                              int16_t h) {
+  assert(buffer);
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+
+  int16_t x0 = x < 0 ? 0 : x;
+  int16_t y0 = y < 0 ? 0 : y;
+  int16_t x1 = x + w - 1;
+  int16_t y1 = y + h - 1;
+  if (x1 >= Width) {
+    x1 = Width - 1;
+  }
+  if (y1 >= Height) {
+    y1 = Height - 1;
+  }
+  if (x0 > x1 || y0 > y1) {
+    return;
+  }
+
+  const int16_t byteX0 = x0 >> 3;
+  const int16_t byteX1 = x1 >> 3;
+  EPD_SetWindows(byteX0 << 3, y1, (byteX1 << 3) + 7, y0);
+  EPD_SetCursor(byteX0 << 3, y1);
+
+  EPD_SendCommand(0x24);
+  for (int16_t row = y0; row <= y1; row++) {
+    const int rowOffset = row * (Width / 8);
+    for (int16_t byteX = byteX0; byteX <= byteX1; byteX++) {
+      EPD_SendData(buffer[rowOffset + byteX]);
+    }
+  }
+  EPD_TurnOnDisplayPart();
+  EPD_SetWindows(0, Width - 1, Height - 1, 0);
+  EPD_SetCursor(0, Height - 1);
 }
 
 void epaper_driver_display::EPD_LoadPartBaseImage() {
   int buffer_len = lcd_spi_data.buffer_len;
   EPD_SendCommand(0x26);
   assert(buffer);
+  writeBytes(buffer, buffer_len);
+}
+
+void epaper_driver_display::EPD_LoadPartBothImages() {
+  int buffer_len = lcd_spi_data.buffer_len;
+  assert(buffer);
+  EPD_SendCommand(0x24);
+  writeBytes(buffer, buffer_len);
+  EPD_SendCommand(0x26);
   writeBytes(buffer, buffer_len);
 }
 
@@ -325,6 +409,35 @@ void epaper_driver_display::EPD_Init_Partial() {
   set_rst_1();
   vTaskDelay(pdMS_TO_TICKS(50));
 
+  read_busy();
+
+  EPD_SetLut(WF_PARTIAL_1IN54_0);
+
+  EPD_SendCommand(0x37);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x40);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+  EPD_SendData(0x00);
+
+  EPD_SendCommand(0x3C); // BorderWavefrom
+  EPD_SendData(0x80);
+
+  EPD_SendCommand(0x22);
+  EPD_SendData(0xc0);
+  EPD_SendCommand(0x20);
+  read_busy();
+}
+
+void epaper_driver_display::EPD_ReattachPartial() {
+  spi_port_init();
+  spi_gpio_init();
+  ensureBuffer();
   read_busy();
 
   EPD_SetLut(WF_PARTIAL_1IN54_0);

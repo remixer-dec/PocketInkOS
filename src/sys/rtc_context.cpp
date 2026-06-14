@@ -1,5 +1,9 @@
 #include "sys/rtc_context.h"
 
+#if __has_include(<esp_attr.h>)
+#include <esp_attr.h>
+#endif
+
 #include <cstring>
 
 #ifndef RTC_DATA_ATTR
@@ -10,17 +14,25 @@
 #define RTC_SLOW_ATTR RTC_DATA_ATTR
 #endif
 
+#ifndef RTC_NOINIT_ATTR
+#define RTC_NOINIT_ATTR RTC_SLOW_ATTR
+#endif
+
+#ifndef RTC_FAST_ATTR
+#define RTC_FAST_ATTR RTC_NOINIT_ATTR
+#endif
+
 namespace {
 
 static const uint16_t CONTEXT_MAGIC = 0x5049U; // PI
 
 struct StoredContext {
-  uint16_t magic = 0;
-  uint16_t checksum = 0;
-  RtcContextSnapshot snapshot = {};
+  uint16_t magic;
+  uint16_t checksum;
+  RtcContextSnapshot snapshot;
 };
 
-RTC_SLOW_ATTR StoredContext retainedContext;
+RTC_FAST_ATTR StoredContext retainedContext;
 
 uint16_t fnv1a16(const uint8_t *data, size_t length) {
   uint32_t hash = 2166136261UL;
@@ -110,4 +122,4 @@ bool rtcContextLoad(RtcContextSnapshot &snapshot) {
   return true;
 }
 
-void rtcContextClear() { retainedContext = StoredContext{}; }
+void rtcContextClear() { memset(&retainedContext, 0, sizeof(retainedContext)); }

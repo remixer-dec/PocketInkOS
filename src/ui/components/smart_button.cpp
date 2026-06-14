@@ -16,6 +16,8 @@ void SmartButton::update() {
 
   // 1. Button just pressed
   if (_bounce.pressed()) {
+    if (_cbActivity)
+      _cbActivity();
     _pressStartTime = currentMillis;
     _isLongPressing = false;
   }
@@ -32,6 +34,8 @@ void SmartButton::update() {
 
   // 3. Button just released
   if (_bounce.released()) {
+    if (_cbActivity)
+      _cbActivity();
     if (!_isLongPressing) {
       if (_cbDoubleClick) {
         _clickCount++;
@@ -67,6 +71,9 @@ void SmartButton::attachDoubleClick(std::function<void()> callback) {
 }
 void SmartButton::attachLongPressStart(std::function<void()> callback) {
   _cbLongPressStart = callback;
+}
+void SmartButton::attachActivity(std::function<void()> callback) {
+  _cbActivity = callback;
 }
 void SmartButton::setLongPressMs(uint16_t ms) { _longPressMs = ms; }
 void SmartButton::setDoubleClickMs(uint16_t ms) { _doubleClickMs = ms; }

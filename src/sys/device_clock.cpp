@@ -22,6 +22,17 @@ bool DeviceClock::snapshotLocalUnix(int64_t &localUnix) const {
   return true;
 }
 
+bool DeviceClock::snapshotLocalUnixMillis(int64_t &localUnix,
+                                          uint16_t &millisIntoSecond) const {
+  if (!setFlag) {
+    return false;
+  }
+  const unsigned long elapsed = millis() - baseMillis;
+  localUnix = baseUnix + utcOffset + static_cast<int64_t>(elapsed / 1000);
+  millisIntoSecond = static_cast<uint16_t>(elapsed % 1000);
+  return true;
+}
+
 void DeviceClock::restoreLocalUnix(int64_t localUnix) { set(localUnix, 0); }
 
 int64_t DeviceClock::localMinuteIndex() const {

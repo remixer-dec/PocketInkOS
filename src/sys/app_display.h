@@ -11,12 +11,15 @@ class AppDisplay : public Adafruit_GFX {
 public:
   AppDisplay();
   void begin();
+  void beginColdPartial();
+  void beginRetainedPartial();
   void drawPixel(int16_t x, int16_t y, uint16_t color) override;
   void drawBlackPixelUnchecked(int16_t x, int16_t y);
   void drawBlackBlock2x2Unchecked(int16_t x, int16_t y);
   void flush();
   void flushPartial(int16_t x, int16_t y, int16_t w, int16_t h);
   void clear();
+  void seedPartialBothImages();
   void requestFullRefresh();
   void lock();
   void unlock();

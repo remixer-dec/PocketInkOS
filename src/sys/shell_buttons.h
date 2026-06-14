@@ -13,6 +13,6 @@ struct ShellButtonHandlers {
 };
 
 void shellButtonsBegin(const ShellButtonHandlers &handlers);
-void shellButtonsDispatch();
+bool shellButtonsDispatch();
 
 #endif

@@ -4,10 +4,10 @@
 namespace {
 
 constexpr BatterySocPoint kDefaultSocCurve[] = {
-    {3.27f, 0},  {3.55f, 5},   {3.62f, 10}, {3.67f, 15}, {3.71f, 20},
-    {3.73f, 25}, {3.75f, 30},  {3.77f, 35}, {3.79f, 40}, {3.81f, 45},
-    {3.82f, 50}, {3.84f, 55},  {3.86f, 60}, {3.88f, 70}, {3.90f, 80},
-    {3.92f, 88}, {3.93f, 93},  {3.94f, 97}, {3.95f, 100},
+    {BATTERY_EMPTY_VOLTAGE, 0}, {2.95f, 5},  {3.10f, 10},
+    {3.20f, 15},                {3.30f, 25}, {3.45f, 40},
+    {3.60f, 55},                {3.70f, 70}, {3.80f, 85},
+    {3.90f, 96},                {BATTERY_FULL_VOLTAGE, 100},
 };
 
 BatteryMonitorConfig defaultConfig() {

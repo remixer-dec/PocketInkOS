@@ -21,6 +21,7 @@ bool ensureRtcDevice() {
     return true;
   }
 
+  touchI2cBegin();
   i2c_master_bus_handle_t bus = touchI2cBusHandle();
   if (bus == NULL) {
     return false;

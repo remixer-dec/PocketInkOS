@@ -25,6 +25,10 @@
 #define ESP32_I2C_SDA 47
 #define ESP32_I2C_SCL 48
 
+#define SD_MMC_CLK_PIN 39
+#define SD_MMC_D0_PIN 40
+#define SD_MMC_CMD_PIN 41
+
 #define EPD_WIDTH 200
 #define EPD_HEIGHT 200
 

@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 
+constexpr float BATTERY_EMPTY_VOLTAGE = 2.80f;
+constexpr float BATTERY_FULL_VOLTAGE = 3.95f;
+
 struct BatterySocPoint {
   float voltage;
   int percentage;

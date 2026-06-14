@@ -167,7 +167,7 @@ static void touchTask(void *) {
   }
 }
 
-static bool beginTouchBus() {
+static bool beginI2cBus() {
   if (touchBus == NULL) {
     i2c_master_bus_config_t busConfig = {};
     busConfig.clk_source = I2C_CLK_SRC_DEFAULT;
@@ -180,6 +180,14 @@ static bool beginTouchBus() {
     if (i2c_new_master_bus(&busConfig, &touchBus) != ESP_OK) {
       return false;
     }
+  }
+
+  return true;
+}
+
+static bool beginTouchDevice() {
+  if (!beginI2cBus()) {
+    return false;
   }
 
   if (touchDev == NULL) {
@@ -211,7 +219,7 @@ void TouchInput::begin() {
   digitalWrite(EPD_TP_RST_PIN, HIGH);
   delay(300);
 
-  touchReady = beginTouchBus();
+  touchReady = beginTouchDevice();
   if (touchReady && touchQueue == NULL) {
     touchQueue = xQueueCreate(TOUCH_QUEUE_DEPTH, sizeof(TouchEvent));
   }
@@ -254,5 +262,7 @@ bool TouchInput::readEvent(TouchEvent &event) {
 
   return xQueueReceive(touchQueue, &event, 0) == pdPASS;
 }
+
+bool touchI2cBegin() { return beginI2cBus(); }
 
 i2c_master_bus_handle_t touchI2cBusHandle() { return touchBus; }

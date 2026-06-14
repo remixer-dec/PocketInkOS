@@ -17,6 +17,9 @@
 #include "sys/power_control.h"
 #include "sys/pcf85063_clock.h"
 #include "sys/rtc_context.h"
+#include "sys/sleep_clock_context.h"
+#include "sys/sd_storage.h"
+#include "sys/usb_status.h"
 #include <Arduino.h>
 #include <cstring>
 #include <stdint.h>
@@ -42,6 +45,22 @@ int64_t lastHomeMinute = -1;
 RtcContextSnapshot retainedSleepContext;
 
 static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
+static const unsigned long BATTERY_REFRESH_INTERVAL_MS = 30000;
+static const unsigned long DEFAULT_INACTIVITY_DEEP_SLEEP_MS = 120000;
+static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
+
+bool batteryShutdownStarted = false;
+bool inactivitySleepStarted = false;
+unsigned long lastBatteryRefreshAt = 0;
+unsigned long lastUserActivityAt = 0;
+
+bool batteryCutoffReached();
+void checkInactivitySleep();
+void enterInactivityDeepSleep();
+unsigned long inactivityDeepSleepMs();
+void noteUserActivity();
+void refreshBatteryAndCheckCutoff();
+void shutdownForLowBattery();
 
 void switchTo(Screen next, ActiveApp *nextApp = nullptr,
               const AppDefinition *nextDefinition = nullptr) {
@@ -55,7 +74,7 @@ void switchTo(Screen next, ActiveApp *nextApp = nullptr,
   activeDefinition = nextDefinition;
   activePausedForDialog = false;
   if (screen == SCREEN_HOME) {
-    batteryMonitor.refresh();
+    refreshBatteryAndCheckCutoff();
     environmentMonitor.refresh();
   }
   if (activeDefinition != nullptr &&
@@ -72,14 +91,79 @@ PowerDialogSnapshot currentPowerDialogSnapshot();
 PowerDialogPage previousPowerDialogPage(PowerDialogPage page);
 PowerDialogPage nextPowerDialogPage(PowerDialogPage page);
 void renderPowerDialogPressed(PowerDialogAction action);
+void renderLowBatteryScreen();
 void renderPowerOffScreen();
 void renderDeepSleepScreen();
+void renderSleepClockScreen(bool partialUpdate = false);
+void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock);
+uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix);
+uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds);
+bool syncDeviceClockFromRtc();
+bool waitForRtcMinuteChangeIfNeeded();
 void redrawActiveScreenPartial();
+void prepareForPowerTransition();
 void saveRetainedContextForSleep();
 void restoreRetainedContextAfterSleep();
+void enterSleepClockDeepSleep();
+bool handleSleepClockTimerWake();
 
 bool isSessionScreen() {
   return activeApp != nullptr && activeApp->hasActiveSession();
+}
+
+void noteUserActivity() { lastUserActivityAt = millis(); }
+
+bool batteryCutoffReached() {
+  const BatterySnapshot &battery = batteryMonitor.snapshot();
+  return battery.valid && battery.voltage <= BATTERY_EMPTY_VOLTAGE;
+}
+
+void shutdownForLowBattery() {
+  if (batteryShutdownStarted) {
+    return;
+  }
+  batteryShutdownStarted = true;
+  renderLowBatteryScreen();
+  prepareForPowerTransition();
+  powerOffDevice();
+}
+
+void refreshBatteryAndCheckCutoff() {
+  batteryMonitor.refresh();
+  lastBatteryRefreshAt = millis();
+  if (batteryCutoffReached()) {
+    shutdownForLowBattery();
+  }
+}
+
+void enterInactivityDeepSleep() {
+  if (batteryShutdownStarted || inactivitySleepStarted) {
+    return;
+  }
+  if (usbDataConnected()) {
+    noteUserActivity();
+    return;
+  }
+  inactivitySleepStarted = true;
+  saveRetainedContextForSleep();
+  enterSleepClockDeepSleep();
+}
+
+unsigned long inactivityDeepSleepMs() {
+  if (activeDefinition != nullptr &&
+      activeDefinition->inactivityDeepSleepMs > 0) {
+    return activeDefinition->inactivityDeepSleepMs;
+  }
+  return DEFAULT_INACTIVITY_DEEP_SLEEP_MS;
+}
+
+void checkInactivitySleep() {
+  if (batteryShutdownStarted || inactivitySleepStarted) {
+    return;
+  }
+  if (millis() - lastUserActivityAt >= inactivityDeepSleepMs()) {
+    enterInactivityDeepSleep();
+  }
 }
 
 void openQuitDialog() {
@@ -133,6 +217,7 @@ bool applyAppEventResult(AppEventResult result) {
     switchTo(SCREEN_MENU);
     return true;
   case AppEventResult::Reboot:
+    prepareForPowerTransition();
     rebootDevice();
     return true;
   }
@@ -291,11 +376,23 @@ void handlePowerSingleButton() {
 }
 
 void handlePowerDoubleButton() {
-  AppEventHandler handler = nullptr;
-  if (activeDefinition != nullptr) {
-    handler = activeDefinition->behavior.onPowerDouble;
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
   }
-  handlePowerButton(handler);
+  if (confirmQuit) {
+    return;
+  }
+  if (activeDefinition != nullptr &&
+      handleAppEvent(activeDefinition->behavior.onPowerDouble)) {
+    return;
+  }
+  if (textInput.isScreen(screen)) {
+    return;
+  }
+  saveRetainedContextForSleep();
+  enterSleepClockDeepSleep();
 }
 
 void handlePowerLongButton() {
@@ -350,6 +447,7 @@ ShellData currentShellData(char *dateText, size_t dateSize, char *timeText,
 
   const BatterySnapshot &battery = batteryMonitor.snapshot();
   const EnvironmentSnapshot &env = environmentMonitor.snapshot();
+  const SdStorageSnapshot &sd = sdStorageSnapshot();
 
   ShellData data = {};
   data.status.dateText = dateText;
@@ -358,6 +456,7 @@ ShellData currentShellData(char *dateText, size_t dateSize, char *timeText,
   data.status.wifiIcon = wifiStatusIcon();
   data.battery = &battery;
   data.environment = &env;
+  data.sd = &sd;
   return data;
 }
 
@@ -400,18 +499,19 @@ bool handlePowerDialogTouch(const TouchPoint &point) {
     return true;
   case PowerDialogAction::Reboot:
     renderPowerDialogPressed(PowerDialogAction::Reboot);
+    prepareForPowerTransition();
     rebootDevice();
     return true;
   case PowerDialogAction::PowerOff:
     renderPowerDialogPressed(PowerDialogAction::PowerOff);
     renderPowerOffScreen();
+    prepareForPowerTransition();
     powerOffDevice();
     return true;
   case PowerDialogAction::DeepSleep:
     saveRetainedContextForSleep();
     renderPowerDialogPressed(PowerDialogAction::DeepSleep);
-    renderDeepSleepScreen();
-    enterDeepSleep();
+    enterSleepClockDeepSleep();
     return true;
   case PowerDialogAction::WifiToggle:
     renderPowerDialogPressed(PowerDialogAction::WifiToggle);
@@ -578,12 +678,165 @@ void renderPowerOffScreen() {
   display.unlock();
 }
 
+void renderLowBatteryScreen() {
+  display.lock();
+  display.clear();
+  drawLowBatteryScreen(display);
+  display.flush();
+  display.unlock();
+}
+
 void renderDeepSleepScreen() {
   display.lock();
   display.clear();
   drawDeepSleepScreen(display);
   display.flush();
   display.unlock();
+}
+
+void renderSleepClockScreen(bool partialUpdate) {
+  char timeText[16];
+  char dateText[16];
+  deviceClock.formatTime(timeText, sizeof(timeText));
+  deviceClock.formatDate(dateText, sizeof(dateText));
+
+  display.lock();
+  display.clear();
+  drawDeepSleepClockScreen(display, timeText, dateText);
+  if (partialUpdate) {
+    display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+  } else {
+    display.flush();
+  }
+  display.unlock();
+}
+
+void prepareForPowerTransition() { sdStorageEnd(); }
+
+uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix) {
+  if (!clockSet) {
+    return 60;
+  }
+
+  const int second = static_cast<int>((localUnix % 60 + 60) % 60);
+  return second == 0 ? 60 : static_cast<uint16_t>(60 - second);
+}
+
+uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds) {
+  return static_cast<uint64_t>(wakeIntervalSeconds) * 1000ULL * 1000ULL;
+}
+
+bool syncDeviceClockFromRtc() {
+#if ENABLE_RTC_CLOCK
+  touchI2cBegin();
+  rtcClock.begin();
+  return rtcClock.readToDeviceClock();
+#else
+  return false;
+#endif
+}
+
+bool waitForRtcMinuteChangeIfNeeded() {
+  int64_t localUnix = 0;
+  uint16_t millisIntoSecond = 0;
+  if (!deviceClock.snapshotLocalUnixMillis(localUnix, millisIntoSecond)) {
+    return false;
+  }
+
+  const int second = static_cast<int>((localUnix % 60 + 60) % 60);
+  (void)millisIntoSecond;
+  const bool atLastRtcSecondOfMinute = second == 59;
+  if (!atLastRtcSecondOfMinute) {
+    return false;
+  }
+
+  const int64_t previousMinute = localUnix / 60;
+  const unsigned long startedAt = millis();
+  while (millis() - startedAt < 1500) {
+    delay(25);
+    if (!syncDeviceClockFromRtc()) {
+      continue;
+    }
+    int64_t refreshedUnix = 0;
+    if (deviceClock.snapshotLocalUnix(refreshedUnix) &&
+        refreshedUnix / 60 != previousMinute) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void enterSleepClockDeepSleep() {
+  int64_t localUnix = 0;
+  const bool clockSet = deviceClock.snapshotLocalUnix(localUnix);
+  const uint16_t wakeIntervalSeconds =
+      sleepClockWakeIntervalSeconds(clockSet, localUnix);
+  sleepClockContextStart(clockSet, localUnix, wakeIntervalSeconds);
+  renderSleepClockScreen();
+  prepareForPowerTransition();
+  enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
+                 SLEEP_CLOCK_RETAIN_EPD_POWER);
+}
+
+void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock) {
+  if (sleepClock.clockSet) {
+    deviceClock.restoreLocalUnix(sleepClock.localUnix);
+  }
+
+  display.lock();
+  display.clear();
+  char timeText[16];
+  char dateText[16];
+  deviceClock.formatTime(timeText, sizeof(timeText));
+  deviceClock.formatDate(dateText, sizeof(dateText));
+  drawDeepSleepClockScreen(display, timeText, dateText);
+  display.seedPartialBothImages();
+  display.unlock();
+}
+
+bool handleSleepClockTimerWake() {
+  SleepClockSnapshot sleepClock;
+  if (!deepSleepWokeFromTimer() || !sleepClockContextLoad(sleepClock)) {
+    return false;
+  }
+
+  if (SLEEP_CLOCK_RETAIN_EPD_POWER) {
+    display.beginRetainedPartial();
+  } else {
+    display.beginColdPartial();
+    seedSleepClockPreviousFrame(sleepClock);
+  }
+
+  if (!syncDeviceClockFromRtc() && sleepClock.clockSet) {
+    deviceClock.restoreLocalUnix(sleepClock.localUnix +
+                                 sleepClock.wakeIntervalSeconds);
+  }
+  waitForRtcMinuteChangeIfNeeded();
+
+  refreshBatteryAndCheckCutoff();
+  if (batteryShutdownStarted) {
+    return true;
+  }
+
+  renderSleepClockScreen(true);
+  if (syncDeviceClockFromRtc() && waitForRtcMinuteChangeIfNeeded()) {
+    renderSleepClockScreen(true);
+  }
+
+  int64_t localUnix = 0;
+  bool clockSet = syncDeviceClockFromRtc();
+  if (!clockSet) {
+    clockSet = deviceClock.snapshotLocalUnix(localUnix);
+  } else {
+    clockSet = deviceClock.snapshotLocalUnix(localUnix);
+  }
+  const uint16_t wakeIntervalSeconds =
+      sleepClockWakeIntervalSeconds(clockSet, localUnix);
+  sleepClockContextUpdate(clockSet, localUnix, wakeIntervalSeconds);
+  prepareForPowerTransition();
+  enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
+                 SLEEP_CLOCK_RETAIN_EPD_POWER);
+  return true;
 }
 
 void saveRetainedContextForSleep() {
@@ -657,6 +910,10 @@ void setup() {
   keepPowerLatchOn();
   releasePowerHolds();
   keepPowerLatchOn();
+  if (handleSleepClockTimerWake()) {
+    return;
+  }
+  sleepClockContextClear();
   audioPowerBegin();
   deviceControlsBegin();
   display.begin();
@@ -665,12 +922,17 @@ void setup() {
   rtcClock.begin();
   rtcClock.readToDeviceClock();
 #endif
-  batteryMonitor.refresh();
+  refreshBatteryAndCheckCutoff();
+  if (batteryShutdownStarted) {
+    return;
+  }
   environmentMonitor.refresh();
+  sdStorageBegin();
 
   shellButtonsBegin({handleMenuButton, handleMenuDoubleButton,
                      handleMenuLongButton, handlePowerSingleButton,
                      handlePowerDoubleButton, handlePowerLongButton});
+  noteUserActivity();
 
   resetApps();
   restoreRetainedContextAfterSleep();
@@ -678,18 +940,22 @@ void setup() {
 }
 
 void loop() {
-  shellButtonsDispatch();
+  if (shellButtonsDispatch()) {
+    noteUserActivity();
+  }
 
   if (activeDefinition != nullptr &&
       activeDefinition->behavior.onRawTouch != nullptr && !confirmQuit &&
       !confirmPower) {
     TouchEvent event;
     while (touch.readEvent(event)) {
+      noteUserActivity();
       activeDefinition->behavior.onRawTouch(event);
     }
   } else {
     TouchPoint point;
     if (touch.read(point)) {
+      noteUserActivity();
       if (confirmPower) {
         handlePowerDialogTouch(point);
         delay(1);
@@ -706,6 +972,11 @@ void loop() {
     }
   }
 
+  checkInactivitySleep();
+  if (inactivitySleepStarted) {
+    return;
+  }
+
   if (dirty) {
     render();
   }
@@ -714,14 +985,38 @@ void loop() {
     dirty = true;
   }
 
+  if (sdStorageUpdate()) {
+    clampMenuState(menuState, apps, appCount);
+    dirty = true;
+  }
+
   if (activeApp != nullptr && activeApp->update()) {
     dirty = true;
+  }
+
+  checkInactivitySleep();
+  if (inactivitySleepStarted) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (now - lastBatteryRefreshAt >= BATTERY_REFRESH_INTERVAL_MS) {
+    refreshBatteryAndCheckCutoff();
+    if (batteryShutdownStarted) {
+      return;
+    }
+    if (screen == SCREEN_HOME || confirmPower || confirmQuit) {
+      dirty = true;
+    }
   }
 
   int64_t currentHomeMinute = deviceClock.localMinuteIndex();
   if (screen == SCREEN_HOME && currentHomeMinute >= 0 &&
       currentHomeMinute != lastHomeMinute) {
-    batteryMonitor.refresh();
+    refreshBatteryAndCheckCutoff();
+    if (batteryShutdownStarted) {
+      return;
+    }
     environmentMonitor.refresh();
     lastHomeMinute = currentHomeMinute;
     dirty = true;

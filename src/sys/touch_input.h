@@ -27,6 +27,7 @@ public:
   bool readEvent(TouchEvent &event);
 };
 
+bool touchI2cBegin();
 i2c_master_bus_handle_t touchI2cBusHandle();
 
 #endif
