@@ -1,5 +1,6 @@
 #include "sys/audio_capture.h"
 
+#include "sys/audio_power.h"
 #include "sys/touch_input.h"
 
 #include <Arduino.h>
@@ -51,7 +52,11 @@ bool AudioCapture::recordPcm16(AudioCaptureResult &out, uint32_t durationMs,
 bool AudioCapture::beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
                               char *error, int errorSize) {
   release(out);
+  audioSpeakerAmpOff();
+  audioPowerOn();
+  delay(50);
   if (!ensureCodec(error, errorSize) || !ensureI2s(error, errorSize)) {
+    shutdownHardware();
     return false;
   }
 
@@ -66,6 +71,7 @@ bool AudioCapture::beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
   }
   if (activeBuffer == nullptr) {
     setError(error, errorSize, "No audio buffer");
+    shutdownHardware();
     return false;
   }
 
@@ -76,6 +82,7 @@ bool AudioCapture::beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
     activeBuffer = nullptr;
     activeCapacity = 0;
     setError(error, errorSize, "No DMA audio buffer");
+    shutdownHardware();
     return false;
   }
 
@@ -92,7 +99,7 @@ bool AudioCapture::pumpPcm16(AudioCaptureResult &out, char *error,
     return true;
   }
   if (!readPcmChunk(error, errorSize)) {
-    active = false;
+    release(out);
     return false;
   }
   out.data = activeBuffer;
@@ -116,6 +123,7 @@ void AudioCapture::finishPcm16(AudioCaptureResult &out) {
   activeCapacity = 0;
   activeLength = 0;
   active = false;
+  shutdownHardware();
 }
 
 void AudioCapture::release(AudioCaptureResult &result) {
@@ -130,6 +138,7 @@ void AudioCapture::release(AudioCaptureResult &result) {
   activeCapacity = 0;
   activeLength = 0;
   active = false;
+  shutdownHardware();
   if (result.data != nullptr) {
     free(result.data);
   }
@@ -207,6 +216,45 @@ bool AudioCapture::ensureI2s(char *error, int errorSize) {
 
   i2sReady = true;
   return true;
+}
+
+void AudioCapture::shutdownHardware() {
+  audioSpeakerAmpOff();
+  stopI2s();
+  standbyCodec();
+  audioPowerOff();
+}
+
+void AudioCapture::stopI2s() {
+  if (!i2sReady && txChannel == NULL && rxChannel == NULL) {
+    return;
+  }
+  if (txChannel != NULL) {
+    i2s_channel_disable(txChannel);
+    i2s_del_channel(txChannel);
+    txChannel = NULL;
+  }
+  if (rxChannel != NULL) {
+    i2s_channel_disable(rxChannel);
+    i2s_del_channel(rxChannel);
+    rxChannel = NULL;
+  }
+  i2sReady = false;
+}
+
+void AudioCapture::standbyCodec() {
+  if (codecDevice == NULL) {
+    codecReady = false;
+    return;
+  }
+
+  // Best-effort ES8311 idle sequence. The rail is cut afterward, so failure is
+  // not fatal; this just avoids leaving analog blocks active while powered.
+  writeCodecRegister(0x32, 0x00);
+  writeCodecRegister(0x14, 0x00);
+  writeCodecRegister(0x0d, 0x00);
+  writeCodecRegister(0x00, 0x00);
+  codecReady = false;
 }
 
 bool AudioCapture::readPcmChunk(char *error, int errorSize) {

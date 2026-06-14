@@ -7,6 +7,7 @@
 #include "netapps/weather_app.h"
 #include "netapps/lightweight_json_parser.h"
 #include "secrets_config.h"
+#include "sys/builtin_apps.h"
 #include "sys/device_clock.h"
 
 #include "../fonts/generated/WeatherSymbols_16pt7b.h"
@@ -332,7 +333,8 @@ bool WeatherApp::update() {
 
 bool WeatherApp::handleTouch(const TouchPoint &point) {
   if (state == STATE_FAILED) {
-    reset();
+    wifiTurnOff();
+    setStatus("WiFi off");
     return true;
   }
   if (state != STATE_READY) {
@@ -582,11 +584,9 @@ void WeatherApp::drawLoading(Adafruit_GFX &gfx) {
 void WeatherApp::drawFailed(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  drawIcon(gfx, 'F', 88, 54);
-  gfx.setCursor(34, 100);
-  gfx.print(status[0] ? status : "Weather failed");
-  gfx.setCursor(44, 122);
-  gfx.print("Touch to retry");
+  drawCenteredIcon(gfx, 'F', 76);
+  drawCentered(gfx, status[0] ? status : "Weather failed", 112);
+  drawCentered(gfx, "Touch: WiFi off", 134);
 }
 
 void WeatherApp::drawCurrent(Adafruit_GFX &gfx) {
@@ -792,6 +792,22 @@ void WeatherApp::drawCentered(Adafruit_GFX &gfx, const char *text, int16_t y) {
   gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
   gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
   gfx.print(text);
+}
+
+void WeatherApp::drawCenteredIcon(Adafruit_GFX &gfx, char icon, int16_t y,
+                                  uint8_t size) {
+  char text[2] = {icon, '\0'};
+  gfx.setFont(&WeatherSymbols16pt7b);
+  gfx.setTextSize(size);
+  int16_t x1;
+  int16_t y1;
+  uint16_t w;
+  uint16_t h;
+  gfx.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  gfx.setCursor((200 - static_cast<int>(w)) / 2 - x1, y);
+  gfx.print(text);
+  gfx.setFont();
+  gfx.setTextSize(1);
 }
 
 void WeatherApp::drawIcon(Adafruit_GFX &gfx, char icon, int16_t x, int16_t y,

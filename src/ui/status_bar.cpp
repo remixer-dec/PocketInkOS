@@ -4,6 +4,10 @@
 
 namespace {
 
+static const int16_t kStatusBarHeight = 16;
+static const int16_t kStatusTextY = 4;
+static const int16_t kStatusIconY = 11;
+
 char batteryIconCharForPercentage(int percentage) {
   if (percentage >= 90) {
     return 'B';
@@ -25,7 +29,7 @@ void drawGlyph(AppDisplay &display, char glyph, int16_t &cursorX) {
   uint16_t glyphH;
   display.getTextBounds(text, 0, 0, &glyphX, &glyphY, &glyphW, &glyphH);
   cursorX -= static_cast<int16_t>(glyphW);
-  display.setCursor(cursorX - glyphX, 11);
+  display.setCursor(cursorX - glyphX, kStatusIconY);
   display.print(text);
 }
 
@@ -53,18 +57,19 @@ void drawRightAlignedText(AppDisplay &display, const char *text, int16_t y,
 } // namespace
 
 void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
+  display.fillRect(0, 0, EPD_WIDTH, kStatusBarHeight, 0);
   display.setTextColor(1);
   display.setTextSize(1);
 
   if (status.dateText != nullptr && status.dateText[0] != '\0') {
-    display.setCursor(4, 8);
+    display.setCursor(4, kStatusTextY);
     display.print(status.dateText);
   }
 
   display.setFont(&iconASCII8pt7b);
   display.setTextSize(1);
 
-  int16_t cursorX = EPD_WIDTH - 8;
+  int16_t cursorX = EPD_WIDTH - 6;
   const int16_t spacing = 5;
   const char batteryGlyph =
       status.battery != nullptr && status.battery->valid
@@ -78,7 +83,8 @@ void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
 
   if (status.timeText != nullptr && status.timeText[0] != '\0') {
     display.setFont();
-    drawRightAlignedText(display, status.timeText, 8, iconLeftX - 4);
+    drawRightAlignedText(display, status.timeText, kStatusTextY,
+                         iconLeftX - 4);
     display.setFont(&iconASCII8pt7b);
   }
 
@@ -89,4 +95,6 @@ void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
   }
 
   display.setFont();
+  display.drawLine(0, kStatusBarHeight - 1, EPD_WIDTH - 1,
+                   kStatusBarHeight - 1, 1);
 }

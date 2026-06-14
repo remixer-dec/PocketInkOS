@@ -8,6 +8,7 @@
 #include "sys/touch_input.h"
 #include "ui/status_bar.h"
 #include <stddef.h>
+#include <stdint.h>
 
 struct ShellData {
   StatusBarSnapshot status;
@@ -33,8 +34,47 @@ const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
                                     const AppDefinition *apps,
                                     size_t appCount, bool &stateChanged);
 
-void drawQuitDialog(AppDisplay &display);
+void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status);
 bool quitDialogHitYes(const TouchPoint &point);
 bool quitDialogHitNo(const TouchPoint &point);
+
+enum class PowerDialogAction : uint8_t {
+  None,
+  PreviousPage,
+  NextPage,
+  Reboot,
+  PowerOff,
+  DeepSleep,
+  WifiToggle,
+  BluetoothToggle,
+  CpuCycle,
+  VolumeDown,
+  VolumeMute,
+  VolumeUp,
+};
+
+enum class PowerDialogPage : uint8_t {
+  Power,
+  Device,
+  Volume,
+};
+
+struct PowerDialogSnapshot {
+  PowerDialogPage page = PowerDialogPage::Power;
+  bool wifiOn = false;
+  bool wifiConnected = false;
+  bool bluetoothOn = false;
+  uint16_t cpuMhz = 240;
+  uint8_t volume = 60;
+  bool muted = false;
+};
+
+void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
+                     const PowerDialogSnapshot &snapshot,
+                     PowerDialogAction pressed = PowerDialogAction::None);
+PowerDialogAction powerDialogHitAction(const TouchPoint &point,
+                                       PowerDialogPage page);
+void drawPowerOffScreen(AppDisplay &display);
+void drawDeepSleepScreen(AppDisplay &display);
 
 #endif

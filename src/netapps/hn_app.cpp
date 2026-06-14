@@ -6,6 +6,7 @@
 
 #include "netapps/hn_app.h"
 #include "netapps/lightweight_json_parser.h"
+#include "sys/builtin_apps.h"
 
 #include <Arduino.h>
 #include <HTTPClient.h>
@@ -88,10 +89,8 @@ void HnApp::draw(Adafruit_GFX &gfx) {
   if (state == STATE_FAILED) {
     gfx.setTextColor(1);
     gfx.setTextSize(1);
-    gfx.setCursor(18, 82);
-    gfx.print(status[0] ? status : "HN failed");
-    gfx.setCursor(32, 108);
-    gfx.print("Touch to retry");
+    drawCentered(gfx, status[0] ? status : "HN failed", 88);
+    drawCentered(gfx, "Touch: WiFi off", 112);
     return;
   }
 
@@ -111,8 +110,8 @@ bool HnApp::update() {
 
 bool HnApp::handleTouch(const TouchPoint &point) {
   if (state == STATE_FAILED) {
-    requested = false;
-    state = STATE_IDLE;
+    wifiTurnOff();
+    setStatus("WiFi off");
     return true;
   }
   if (state != STATE_READY) {

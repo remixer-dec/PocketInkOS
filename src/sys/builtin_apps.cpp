@@ -20,6 +20,9 @@
 #include "netapps/wifi_app.h"
 #endif
 #include <cstring>
+#if ENABLE_NETWORK_APPS
+#include <WiFi.h>
+#endif
 
 extern AppDisplay display;
 
@@ -185,6 +188,7 @@ AppEventResult handleHnPower() {
 AppEventResult handleAiPower() {
   return dirtyIfHandled(aiApp.handlePowerButton());
 }
+void stopAiAudio() { aiApp.stopAudio(); }
 
 char wifiIconCharForState(WifiDisplayState state) {
   if (state == WIFI_DISPLAY_CONNECTED) {
@@ -296,6 +300,7 @@ AppBehavior hnBehavior() {
 
 AppBehavior aiBehavior() {
   AppBehavior behavior;
+  behavior.onExit = stopAiAudio;
   behavior.onPower = handleAiPower;
   return behavior;
 }
@@ -407,10 +412,42 @@ bool wifiIsOn() {
 #endif
 }
 
+bool wifiIsConnected() {
+#if ENABLE_NETWORK_APPS
+  return WiFi.status() == WL_CONNECTED;
+#else
+  return false;
+#endif
+}
+
+void wifiTurnOn() {
+#if ENABLE_NETWORK_APPS
+  if (wifiApp.displayState() == WIFI_DISPLAY_OFF) {
+    wifiApp.connect();
+  }
+#endif
+}
+
+void wifiTurnOff() {
+#if ENABLE_NETWORK_APPS
+  wifiApp.disconnect();
+#endif
+}
+
+void wifiToggle() {
+#if ENABLE_NETWORK_APPS
+  if (wifiApp.displayState() == WIFI_DISPLAY_OFF) {
+    wifiApp.connect();
+  } else {
+    wifiApp.disconnect();
+  }
+#endif
+}
+
 void restoreWifiOn(bool enabled) {
 #if ENABLE_NETWORK_APPS
-  if (enabled && wifiApp.displayState() == WIFI_DISPLAY_OFF) {
-    wifiApp.connect();
+  if (enabled) {
+    wifiTurnOn();
   }
 #else
   (void)enabled;

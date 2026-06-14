@@ -20,6 +20,7 @@ public:
   bool handleMenuButton();
   bool handleMenuDoubleButton();
   bool handleMenuLongButton();
+  void stopAudio();
   bool hasActiveSession() const;
 
 private:

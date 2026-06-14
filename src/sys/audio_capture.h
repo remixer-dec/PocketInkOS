@@ -30,6 +30,9 @@ private:
   bool ensureCodec(char *error, int errorSize);
   bool ensureI2s(char *error, int errorSize);
   bool readPcmChunk(char *error, int errorSize);
+  void shutdownHardware();
+  void stopI2s();
+  void standbyCodec();
   bool writeCodecRegister(uint8_t reg, uint8_t value);
   void setError(char *error, int errorSize, const char *message);
 };

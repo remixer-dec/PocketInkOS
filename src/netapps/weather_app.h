@@ -138,6 +138,8 @@ private:
   void drawHeader(Adafruit_GFX &gfx, const char *title);
   void drawFooter(Adafruit_GFX &gfx);
   void drawCentered(Adafruit_GFX &gfx, const char *text, int16_t y);
+  void drawCenteredIcon(Adafruit_GFX &gfx, char icon, int16_t y,
+                        uint8_t size = 1);
   void drawIcon(Adafruit_GFX &gfx, char icon, int16_t x, int16_t y,
                 uint8_t size = 1);
   char currentIcon() const;

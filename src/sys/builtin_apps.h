@@ -14,6 +14,10 @@ void resetApps();
 void resetContactLinks();
 char wifiStatusIcon();
 bool wifiIsOn();
+bool wifiIsConnected();
+void wifiTurnOn();
+void wifiTurnOff();
+void wifiToggle();
 void restoreWifiOn(bool enabled);
 
 #endif

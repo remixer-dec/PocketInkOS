@@ -7,6 +7,7 @@
 #include "netapps/ai_app.h"
 #include "netapps/lightweight_json_parser.h"
 #include "secrets_config.h"
+#include "sys/builtin_apps.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -291,6 +292,12 @@ bool AiApp::handleTouch(const TouchPoint &point) {
     return handleKeyboardTouch(point);
   }
 
+  if (state == STATE_FAILED && WiFi.status() != WL_CONNECTED) {
+    wifiTurnOff();
+    setStatus("WiFi off");
+    return true;
+  }
+
   if (uiContains(MODEL_SELECTOR, point)) {
     toggleModel();
     return true;
@@ -373,6 +380,15 @@ bool AiApp::handleMenuLongButton() {
   keyboardOpen = false;
   clearActiveMenuButtonConsumer(this);
   return true;
+}
+
+void AiApp::stopAudio() {
+  if (state == STATE_RECORDING) {
+    state = STATE_FAILED;
+    setStatus("Recording stopped");
+  }
+  pendingAudio = false;
+  releaseCapturedAudio();
 }
 
 void AiApp::openKeyboard() {

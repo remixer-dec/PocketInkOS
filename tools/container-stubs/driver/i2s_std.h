@@ -59,6 +59,8 @@ inline esp_err_t i2s_channel_init_std_mode(i2s_chan_handle_t,
   return ESP_OK;
 }
 inline esp_err_t i2s_channel_enable(i2s_chan_handle_t) { return ESP_OK; }
+inline esp_err_t i2s_channel_disable(i2s_chan_handle_t) { return ESP_OK; }
+inline esp_err_t i2s_del_channel(i2s_chan_handle_t) { return ESP_OK; }
 inline esp_err_t i2s_channel_read(i2s_chan_handle_t, void *dest, size_t size,
                                   size_t *bytes_read, unsigned long) {
   if (dest) {

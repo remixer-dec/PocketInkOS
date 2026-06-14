@@ -9,6 +9,8 @@
 #define BAT_ADC_PIN 4
 #define BAT_CTRL_PIN 17
 
+#define AUDIO_PWR_PIN 42
+#define PA_CTRL_PIN 46
 #define EPD_PWR_PIN 6
 #define EPD_CS_PIN 11
 #define EPD_DC_PIN 10

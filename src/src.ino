@@ -9,10 +9,16 @@
 #include "sys/touch_input.h"
 #include "ui/shell_layout.h"
 #include "ui/text_input_controller.h"
+#include "sys/audio_power.h"
 #include "sys/device_clock.h"
 #include "sys/battery_monitor.h"
+#include "sys/device_controls.h"
 #include "sys/environment_monitor.h"
+#include "sys/power_control.h"
+#include "sys/pcf85063_clock.h"
+#include "sys/rtc_context.h"
 #include <Arduino.h>
+#include <cstring>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -25,10 +31,14 @@ ActiveApp *activeApp = nullptr;
 const AppDefinition *activeDefinition = nullptr;
 bool dirty = true;
 bool confirmQuit = false;
+bool confirmPower = false;
 bool activePausedForDialog = false;
 MenuState menuState = {MENU_GAMES, 0};
+PowerDialogPage powerDialogPage = PowerDialogPage::Power;
 unsigned long quitDialogOpenedAt = 0;
+unsigned long powerDialogOpenedAt = 0;
 int64_t lastHomeMinute = -1;
+RtcContextSnapshot retainedSleepContext;
 
 void switchTo(Screen next, ActiveApp *nextApp = nullptr,
               const AppDefinition *nextDefinition = nullptr) {
@@ -50,16 +60,26 @@ void switchTo(Screen next, ActiveApp *nextApp = nullptr,
     activeDefinition->behavior.onEnter();
   }
   confirmQuit = false;
+  confirmPower = false;
   dirty = true;
 }
 
 void switchKeyboardMode();
+PowerDialogSnapshot currentPowerDialogSnapshot();
+PowerDialogPage previousPowerDialogPage(PowerDialogPage page);
+PowerDialogPage nextPowerDialogPage(PowerDialogPage page);
+void renderPowerDialogPressed(PowerDialogAction action);
+void renderPowerOffScreen();
+void renderDeepSleepScreen();
+void saveRetainedContextForSleep();
+void restoreRetainedContextAfterSleep();
 
 bool isSessionScreen() {
   return activeApp != nullptr && activeApp->hasActiveSession();
 }
 
 void openQuitDialog() {
+  confirmPower = false;
   if (activeDefinition != nullptr &&
       activeDefinition->behavior.onExit != nullptr) {
     activeDefinition->behavior.onExit();
@@ -67,6 +87,26 @@ void openQuitDialog() {
   }
   confirmQuit = true;
   quitDialogOpenedAt = millis();
+  dirty = true;
+}
+
+void cancelQuitDialog() {
+  confirmQuit = false;
+  if (activePausedForDialog && activeDefinition != nullptr &&
+      activeDefinition->behavior.onEnter != nullptr) {
+    activeDefinition->behavior.onEnter();
+  }
+  activePausedForDialog = false;
+  dirty = true;
+}
+
+void openPowerDialog(PowerDialogPage page = PowerDialogPage::Power) {
+  if (confirmQuit) {
+    cancelQuitDialog();
+  }
+  powerDialogPage = page;
+  confirmPower = true;
+  powerDialogOpenedAt = millis();
   dirty = true;
 }
 
@@ -89,7 +129,7 @@ bool applyAppEventResult(AppEventResult result) {
     switchTo(SCREEN_MENU);
     return true;
   case AppEventResult::Reboot:
-    ESP.restart();
+    rebootDevice();
     return true;
   }
   return false;
@@ -102,7 +142,35 @@ bool handleAppEvent(AppEventHandler handler) {
   return applyAppEventResult(handler());
 }
 
+bool restorableShellScreen(Screen value) {
+  switch (value) {
+  case SCREEN_HOME:
+  case SCREEN_MENU:
+    return true;
+  default:
+    return false;
+  }
+}
+
+Screen retainedScreenForSave() {
+  if (textInput.isScreen(screen)) {
+    return SCREEN_HOME;
+  }
+  if (activeDefinition != nullptr) {
+    return activeDefinition->screen;
+  }
+  if (restorableShellScreen(screen)) {
+    return screen;
+  }
+  return SCREEN_HOME;
+}
+
 void handleMenuButton() {
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
+  }
   if (confirmQuit) {
     return;
   }
@@ -126,6 +194,11 @@ void handleMenuButton() {
 }
 
 void handleMenuDoubleButton() {
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
+  }
   if (confirmQuit) {
     return;
   }
@@ -143,6 +216,11 @@ void handleMenuDoubleButton() {
 }
 
 void handleMenuLongButton() {
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
+  }
   if (confirmQuit) {
     return;
   }
@@ -171,9 +249,15 @@ void switchKeyboardMode() {
 }
 
 void handlePowerButton(AppEventHandler overrideHandler) {
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
+  }
   if (screen == SCREEN_HOME) {
     resetContactLinks();
-    switchTo(SCREEN_CONTACT_LINKS, contactLinksRuntime());
+    switchTo(SCREEN_CONTACT_LINKS, contactLinksRuntime(),
+             contactLinksDefinition());
     return;
   }
   if (screen == SCREEN_CONTACT_LINKS) {
@@ -211,11 +295,44 @@ void handlePowerDoubleButton() {
 }
 
 void handlePowerLongButton() {
-  if (activeDefinition != nullptr &&
-      handleAppEvent(activeDefinition->behavior.onPowerLong)) {
-    return;
+  openPowerDialog();
+}
+
+PowerDialogSnapshot currentPowerDialogSnapshot() {
+  DeviceControlSnapshot controls = deviceControlSnapshot();
+  PowerDialogSnapshot snapshot;
+  snapshot.page = powerDialogPage;
+  snapshot.wifiOn = wifiIsOn();
+  snapshot.wifiConnected = wifiIsConnected();
+  snapshot.bluetoothOn = controls.bluetoothOn;
+  snapshot.cpuMhz = controls.cpuMhz;
+  snapshot.volume = controls.volume;
+  snapshot.muted = controls.muted;
+  return snapshot;
+}
+
+PowerDialogPage previousPowerDialogPage(PowerDialogPage page) {
+  switch (page) {
+  case PowerDialogPage::Power:
+    return PowerDialogPage::Volume;
+  case PowerDialogPage::Device:
+    return PowerDialogPage::Power;
+  case PowerDialogPage::Volume:
+    return PowerDialogPage::Device;
   }
-  applyAppEventResult(AppEventResult::Reboot);
+  return PowerDialogPage::Power;
+}
+
+PowerDialogPage nextPowerDialogPage(PowerDialogPage page) {
+  switch (page) {
+  case PowerDialogPage::Power:
+    return PowerDialogPage::Device;
+  case PowerDialogPage::Device:
+    return PowerDialogPage::Volume;
+  case PowerDialogPage::Volume:
+    return PowerDialogPage::Power;
+  }
+  return PowerDialogPage::Power;
 }
 
 ShellData currentShellData(char *dateText, size_t dateSize, char *timeText,
@@ -257,12 +374,67 @@ bool handleQuitDialogTouch(const TouchPoint &point) {
     return true;
   }
   if (quitDialogHitNo(point)) {
-    confirmQuit = false;
-    if (activePausedForDialog && activeDefinition != nullptr &&
-        activeDefinition->behavior.onEnter != nullptr) {
-      activeDefinition->behavior.onEnter();
-    }
-    activePausedForDialog = false;
+    cancelQuitDialog();
+    return true;
+  }
+  return true;
+}
+
+bool handlePowerDialogTouch(const TouchPoint &point) {
+  if (millis() - powerDialogOpenedAt < 350) {
+    return true;
+  }
+
+  switch (powerDialogHitAction(point, powerDialogPage)) {
+  case PowerDialogAction::PreviousPage:
+    powerDialogPage = previousPowerDialogPage(powerDialogPage);
+    dirty = true;
+    return true;
+  case PowerDialogAction::NextPage:
+    powerDialogPage = nextPowerDialogPage(powerDialogPage);
+    dirty = true;
+    return true;
+  case PowerDialogAction::Reboot:
+    renderPowerDialogPressed(PowerDialogAction::Reboot);
+    rebootDevice();
+    return true;
+  case PowerDialogAction::PowerOff:
+    renderPowerDialogPressed(PowerDialogAction::PowerOff);
+    renderPowerOffScreen();
+    powerOffDevice();
+    return true;
+  case PowerDialogAction::DeepSleep:
+    saveRetainedContextForSleep();
+    renderPowerDialogPressed(PowerDialogAction::DeepSleep);
+    renderDeepSleepScreen();
+    enterDeepSleep();
+    return true;
+  case PowerDialogAction::WifiToggle:
+    wifiToggle();
+    dirty = true;
+    return true;
+  case PowerDialogAction::BluetoothToggle:
+    toggleBluetooth();
+    dirty = true;
+    return true;
+  case PowerDialogAction::CpuCycle:
+    cycleCpuFrequency();
+    dirty = true;
+    return true;
+  case PowerDialogAction::VolumeDown:
+    volumeDown();
+    dirty = true;
+    return true;
+  case PowerDialogAction::VolumeMute:
+    toggleMute();
+    dirty = true;
+    return true;
+  case PowerDialogAction::VolumeUp:
+    volumeUp();
+    dirty = true;
+    return true;
+  case PowerDialogAction::None:
+    confirmPower = false;
     dirty = true;
     return true;
   }
@@ -350,7 +522,17 @@ void render() {
   display.clear();
   drawActiveScreen();
   if (confirmQuit) {
-    drawQuitDialog(display);
+    char dateText[16];
+    char timeText[16];
+    ShellData data =
+        currentShellData(dateText, sizeof(dateText), timeText, sizeof(timeText));
+    drawQuitDialog(display, data.status);
+  } else if (confirmPower) {
+    char dateText[16];
+    char timeText[16];
+    ShellData data =
+        currentShellData(dateText, sizeof(dateText), timeText, sizeof(timeText));
+    drawPowerDialog(display, data.status, currentPowerDialogSnapshot());
   }
   display.flush();
   display.unlock();
@@ -360,12 +542,116 @@ void render() {
   }
 }
 
+void renderPowerDialogPressed(PowerDialogAction action) {
+  char dateText[16];
+  char timeText[16];
+  ShellData data =
+      currentShellData(dateText, sizeof(dateText), timeText, sizeof(timeText));
+
+  display.lock();
+  display.clear();
+  drawActiveScreen();
+  drawPowerDialog(display, data.status, currentPowerDialogSnapshot(), action);
+  display.flush();
+  display.unlock();
+  delay(180);
+}
+
+void renderPowerOffScreen() {
+  display.lock();
+  display.clear();
+  drawPowerOffScreen(display);
+  display.flush();
+  display.unlock();
+}
+
+void renderDeepSleepScreen() {
+  display.lock();
+  display.clear();
+  drawDeepSleepScreen(display);
+  display.flush();
+  display.unlock();
+}
+
+void saveRetainedContextForSleep() {
+  retainedSleepContext = RtcContextSnapshot{};
+  retainedSleepContext.navigation.screen = retainedScreenForSave();
+  retainedSleepContext.navigation.menuCategory = menuState.category;
+  retainedSleepContext.navigation.menuPage = menuState.page;
+  retainedSleepContext.system.wifiOn = wifiIsOn();
+  retainedSleepContext.system.clockSet =
+      deviceClock.snapshotLocalUnix(retainedSleepContext.system.clockLocalUnix);
+
+  if (activeDefinition != nullptr) {
+    retainedSleepContext.navigation.hasActiveApp = true;
+    strncpy(retainedSleepContext.navigation.appId, activeDefinition->id,
+            RTC_CONTEXT_APP_ID_SIZE - 1);
+    retainedSleepContext.navigation.appId[RTC_CONTEXT_APP_ID_SIZE - 1] = '\0';
+
+    if (activeDefinition->behavior.onSaveContext != nullptr) {
+      size_t length = activeDefinition->behavior.onSaveContext(
+          retainedSleepContext.app.appData, RTC_CONTEXT_APP_CAPACITY);
+      if (length > RTC_CONTEXT_APP_CAPACITY) {
+        length = RTC_CONTEXT_APP_CAPACITY;
+      }
+      retainedSleepContext.app.appDataLength = static_cast<uint16_t>(length);
+    }
+  }
+
+  rtcContextSave(retainedSleepContext);
+}
+
+void restoreRetainedContextAfterSleep() {
+  if (!rtcContextLoad(retainedSleepContext)) {
+    return;
+  }
+
+  if (!deviceClock.isSet() && retainedSleepContext.system.clockSet) {
+    deviceClock.restoreLocalUnix(retainedSleepContext.system.clockLocalUnix);
+  }
+
+  restoreWifiOn(retainedSleepContext.system.wifiOn);
+  menuState.category = retainedSleepContext.navigation.menuCategory;
+  menuState.page = retainedSleepContext.navigation.menuPage;
+  clampMenuState(menuState, apps, appCount);
+
+  if (retainedSleepContext.navigation.hasActiveApp) {
+    const AppDefinition *app = findAppById(retainedSleepContext.navigation.appId);
+    if (app != nullptr) {
+      launchApp(*app);
+      if (app->behavior.onRestoreContext != nullptr) {
+        app->behavior.onRestoreContext(retainedSleepContext.app.appData,
+                                       retainedSleepContext.app.appDataLength);
+      }
+      rtcContextClear();
+      dirty = true;
+      return;
+    }
+  }
+
+  if (restorableShellScreen(retainedSleepContext.navigation.screen)) {
+    switchTo(retainedSleepContext.navigation.screen);
+  }
+
+  rtcContextClear();
+  dirty = true;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
 
+  keepPowerLatchOn();
+  releasePowerHolds();
+  keepPowerLatchOn();
+  audioPowerBegin();
+  deviceControlsBegin();
   display.begin();
   touch.begin();
+#if ENABLE_RTC_CLOCK
+  rtcClock.begin();
+  rtcClock.readToDeviceClock();
+#endif
   batteryMonitor.refresh();
   environmentMonitor.refresh();
 
@@ -374,6 +660,7 @@ void setup() {
                      handlePowerDoubleButton, handlePowerLongButton});
 
   resetApps();
+  restoreRetainedContextAfterSleep();
   dirty = true;
 }
 
@@ -381,7 +668,8 @@ void loop() {
   shellButtonsDispatch();
 
   if (activeDefinition != nullptr &&
-      activeDefinition->behavior.onRawTouch != nullptr && !confirmQuit) {
+      activeDefinition->behavior.onRawTouch != nullptr && !confirmQuit &&
+      !confirmPower) {
     TouchEvent event;
     while (touch.readEvent(event)) {
       activeDefinition->behavior.onRawTouch(event);
@@ -389,6 +677,11 @@ void loop() {
   } else {
     TouchPoint point;
     if (touch.read(point)) {
+      if (confirmPower) {
+        handlePowerDialogTouch(point);
+        delay(1);
+        return;
+      }
       if (confirmQuit) {
         handleQuitDialogTouch(point);
         delay(1);

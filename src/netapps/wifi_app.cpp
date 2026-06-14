@@ -6,6 +6,7 @@
 
 #include "netapps/wifi_app.h"
 #include "sys/device_clock.h"
+#include "sys/pcf85063_clock.h"
 #include "secrets_config.h"
 #include "ui/ui_helpers.h"
 
@@ -244,6 +245,9 @@ bool WifiApp::fetchCurrentTime() {
     return false;
   }
   deviceClock.set(unixTime, utcOffsetSeconds);
+#if ENABLE_RTC_CLOCK
+  rtcClock.writeFromUnix(unixTime, utcOffsetSeconds);
+#endif
   setTimeStatus("Time synced");
   return true;
 }
