@@ -30,6 +30,7 @@ private:
   int neighborMines(int x, int y) const;
   void reveal(int x, int y);
   void checkWin();
+  void refreshOutcomeFromBoard();
 };
 
 #endif

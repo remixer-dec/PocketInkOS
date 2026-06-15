@@ -65,10 +65,12 @@ public:
   bool handleTouch(const TouchPoint &point);
   bool handlePowerButton();
   bool handleMenuButton();
+  bool cancelTargetSelection();
   bool handleMenuLongPress();
   bool hasActiveSession() const;
   bool isGameOver() const;
   bool isHistoryOpen() const;
+  bool isTargetSelectionActive() const;
   bool loadPosition(const char *fen, PieceColor sideToMove);
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
@@ -151,6 +153,9 @@ private:
   unsigned long aiThinkingSinceMs = 0;
   bool aiBookEnabled = false;
   unsigned long menuCancelBlockUntilMs = 0;
+  bool hasLastTouchPoint = false;
+  int16_t lastTouchX = 0;
+  int16_t lastTouchY = 0;
   SearchSnapshot searchSnapshots[SEARCH_MAX_PLY] = {};
   Move searchMoves[SEARCH_MAX_PLY][96] = {};
   int16_t searchOrdering[SEARCH_MAX_PLY][96] = {};
@@ -172,6 +177,7 @@ private:
   int boardRowToDisplayRow(int boardRow) const;
   void drawBoard(Adafruit_GFX &gfx);
   void drawExperimentalCoordinates(Adafruit_GFX &gfx);
+  void drawTouchMarker(Adafruit_GFX &gfx);
   void drawSetup(Adafruit_GFX &gfx);
   void drawHistory(Adafruit_GFX &gfx);
   void drawStatus(Adafruit_GFX &gfx);

@@ -9,6 +9,9 @@ static const int BOARD_X = 8;
 static const int BOARD_Y = 8;
 static const int BOARD_SIZE = 184;
 static const int CELL = BOARD_SIZE / 8;
+static const int BOARD_TOUCH_ASSIST = CELL / 2;
+static const int DISPLAY_WIDTH = 200;
+static const int DISPLAY_HEIGHT = 200;
 static const int AI_MOVE_LIMIT = 96;
 static const unsigned long AI3_TIME_BUDGET_MS = 2200;
 static const uint8_t AI3_MAX_DEPTH = 5;
@@ -658,6 +661,10 @@ bool ChessApp::isGameOver() const { return started && gameOver; }
 
 bool ChessApp::isHistoryOpen() const { return mode == Mode::History; }
 
+bool ChessApp::isTargetSelectionActive() const {
+  return mode == Mode::Playing && selectedFrom >= 0 && sourceConfirmed;
+}
+
 bool ChessApp::update() {
   bool changed = false;
   if (mode == Mode::Playing && aiThinking && !alertVisible && !gameOver &&
@@ -723,10 +730,7 @@ bool ChessApp::handleMenuButton() {
     return true;
   }
   if (mode == Mode::Playing) {
-    if (selectedFrom >= 0 && sourceConfirmed && selectedTo < 0) {
-      clearSelection();
-      setHint(turn == PieceColor::White ? "White to move" : "Black to move");
-      menuCancelBlockUntilMs = now + 350;
+    if (cancelTargetSelection()) {
       return true;
     }
     mode = Mode::History;
@@ -739,14 +743,29 @@ bool ChessApp::handleMenuButton() {
   return false;
 }
 
+bool ChessApp::cancelTargetSelection() {
+  if (!isTargetSelectionActive()) {
+    return false;
+  }
+  clearSelection();
+  setHint(turn == PieceColor::White ? "White to move" : "Black to move");
+  menuCancelBlockUntilMs = millis() + 350;
+  return true;
+}
+
 bool ChessApp::handleMenuLongPress() {
   if (aiThinking) {
     return true;
   }
-  return started && (mode == Mode::Playing || mode == Mode::History);
+  return started && !isTargetSelectionActive() &&
+         (mode == Mode::Playing || mode == Mode::History);
 }
 
 bool ChessApp::handleTouch(const TouchPoint &point) {
+  hasLastTouchPoint = true;
+  lastTouchX = point.x;
+  lastTouchY = point.y;
+
   if (aiThinking) {
     return true;
   }
@@ -800,7 +819,7 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
   }
 
   if (gameOver || !isBoardRowPoint(point)) {
-    return false;
+    return true;
   }
   if (!isHumanTurn()) {
     setHint("AI turn");
@@ -842,8 +861,7 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
     return true;
   }
   if (selectedFrom == square) {
-    clearSelection();
-    setHint(turn == PieceColor::White ? "White to move" : "Black to move");
+    setHint("Pick target");
     return true;
   }
   square = resolveTargetSquare(square);
@@ -911,7 +929,10 @@ bool ChessApp::isInsideBoardPoint(const TouchPoint &point) const {
 }
 
 bool ChessApp::isBoardRowPoint(const TouchPoint &point) const {
-  return point.y >= BOARD_Y && point.y < BOARD_Y + BOARD_SIZE;
+  return point.x >= BOARD_X - BOARD_TOUCH_ASSIST &&
+         point.x < BOARD_X + BOARD_SIZE + BOARD_TOUCH_ASSIST &&
+         point.y >= BOARD_Y - BOARD_TOUCH_ASSIST &&
+         point.y < BOARD_Y + BOARD_SIZE + BOARD_TOUCH_ASSIST;
 }
 
 int ChessApp::displayRowToBoardRow(int displayRow) const {
@@ -929,8 +950,14 @@ int ChessApp::pointToSquare(const TouchPoint &point) const {
   } else if (clampedX >= BOARD_X + BOARD_SIZE) {
     clampedX = BOARD_X + BOARD_SIZE - 1;
   }
+  int clampedY = point.y;
+  if (clampedY < BOARD_Y) {
+    clampedY = BOARD_Y;
+  } else if (clampedY >= BOARD_Y + BOARD_SIZE) {
+    clampedY = BOARD_Y + BOARD_SIZE - 1;
+  }
   int displayCol = (clampedX - BOARD_X) / CELL;
-  int displayRow = (point.y - BOARD_Y) / CELL;
+  int displayRow = (clampedY - BOARD_Y) / CELL;
   int row = displayRowToBoardRow(displayRow);
   int col = humanColor == PieceColor::White ? displayCol : 7 - displayCol;
   return row * 8 + col;
@@ -1049,6 +1076,7 @@ void ChessApp::draw(Adafruit_GFX &gfx) {
   } else if (aiThinking) {
     drawThinkingOverlay(gfx);
   }
+  drawTouchMarker(gfx);
 }
 
 void ChessApp::drawSetup(Adafruit_GFX &gfx) {
@@ -1205,6 +1233,47 @@ void ChessApp::drawMoveOutline(Adafruit_GFX &gfx, int square) {
   int x = BOARD_X + displayCol * CELL + 1;
   int y = BOARD_Y + displayRow * CELL + 1;
   gfx.drawRect(x, y, CELL - 2, CELL - 2, color);
+
+  const int dot = 3;
+  const int centerX = x + (CELL - 2) / 2;
+  const int centerY = y + (CELL - 2) / 2;
+  gfx.fillRect(centerX - dot / 2, y - dot / 2, dot, dot, color);
+  gfx.fillRect(centerX - dot / 2, y + CELL - 2 - dot / 2, dot, dot, color);
+  gfx.fillRect(x - dot / 2, centerY - dot / 2, dot, dot, color);
+  gfx.fillRect(x + CELL - 2 - dot / 2, centerY - dot / 2, dot, dot, color);
+}
+
+void ChessApp::drawTouchMarker(Adafruit_GFX &gfx) {
+  if (!hasLastTouchPoint) {
+    return;
+  }
+
+  const int gap = 3;
+  const int dot = 2;
+  struct Dot {
+    int16_t x;
+    int16_t y;
+    uint16_t color;
+  };
+  const Dot dots[4] = {
+      {static_cast<int16_t>(lastTouchX - gap),
+       static_cast<int16_t>(lastTouchY - gap), 1},
+      {static_cast<int16_t>(lastTouchX + gap),
+       static_cast<int16_t>(lastTouchY - gap), 0},
+      {static_cast<int16_t>(lastTouchX - gap),
+       static_cast<int16_t>(lastTouchY + gap), 0},
+      {static_cast<int16_t>(lastTouchX + gap),
+       static_cast<int16_t>(lastTouchY + gap), 1},
+  };
+
+  for (const Dot &markerDot : dots) {
+    if (markerDot.x < 0 || markerDot.y < 0 ||
+        markerDot.x + dot > DISPLAY_WIDTH ||
+        markerDot.y + dot > DISPLAY_HEIGHT) {
+      continue;
+    }
+    gfx.fillRect(markerDot.x, markerDot.y, dot, dot, markerDot.color);
+  }
 }
 
 void ChessApp::drawSelection(Adafruit_GFX &gfx, int square) {

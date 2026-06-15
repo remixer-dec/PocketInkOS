@@ -179,11 +179,10 @@ void MinesweeperApp::restoreContext(const uint8_t *buffer, size_t length) {
 
   flagMode = (buffer[1] & 1U) != 0;
   started = (buffer[1] & 2U) != 0;
-  lost = (buffer[1] & 4U) != 0;
-  won = (buffer[1] & 8U) != 0;
   unpackMask(readU32(buffer + 2), mines, W * H);
   unpackMask(readU32(buffer + 6), revealed, W * H);
   unpackMask(readU32(buffer + 10), flagged, W * H);
+  refreshOutcomeFromBoard();
 }
 
 int MinesweeperApp::neighborMines(int x, int y) const {
@@ -235,4 +234,28 @@ void MinesweeperApp::checkWin() {
       return;
   }
   won = true;
+}
+
+void MinesweeperApp::refreshOutcomeFromBoard() {
+  lost = false;
+  won = false;
+  bool hiddenSafeCell = false;
+  bool touchedCell = false;
+
+  for (int i = 0; i < W * H; i++) {
+    touchedCell = touchedCell || revealed[i] || flagged[i];
+    if (mines[i] && revealed[i]) {
+      lost = true;
+    }
+    if (!mines[i] && !revealed[i]) {
+      hiddenSafeCell = true;
+    }
+  }
+
+  if (!started && touchedCell) {
+    started = true;
+  }
+  if (!lost && !hiddenSafeCell) {
+    won = true;
+  }
 }
