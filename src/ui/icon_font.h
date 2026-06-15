@@ -15,6 +15,13 @@ enum class GlyphId : uint8_t {
     AdjustContrast,
     DeleteOutline,
     TabsOutline,
+    Bluetooth,
+    Book,
+    Exec,
+    OpenBook,
+    SdCard,
+    Owl,
+    Crab,
     Film,
     Camera,
     ArrowLeftThick,
@@ -56,7 +63,6 @@ enum class GlyphId : uint8_t {
     WeatherStormy,
     WeatherShower,
     WeatherPartlySunny,
-
     WeatherSnow,
     Minus,
     World,
@@ -83,11 +89,10 @@ enum class GlyphId : uint8_t {
     Time,
     User,
     BusinessCard,
-
     Brush,
-    Tick,
+    Calculator,
     Calendar,
-    Times,
+    Picture,
 };
 
 static constexpr GlyphId ASCII_TO_GLYPH[94] = {
@@ -106,13 +111,16 @@ static constexpr GlyphId ASCII_TO_GLYPH[94] = {
     /* - */ GlyphId::AdjustContrast,
     /* . */ GlyphId::DeleteOutline,
     /* / */ GlyphId::TabsOutline,
-
-    // 48..57 (not present in font map)
-    GlyphId::Placeholder, GlyphId::Placeholder, GlyphId::Placeholder,
-    GlyphId::Placeholder, GlyphId::Placeholder, GlyphId::Placeholder,
-    GlyphId::Placeholder, GlyphId::Placeholder, GlyphId::Placeholder,
-    GlyphId::Placeholder,
-
+    /* 0 */ GlyphId::Bluetooth,
+    /* 1 */ GlyphId::Book,
+    /* 2 */ GlyphId::Exec,
+    /* 3 */ GlyphId::OpenBook,
+    /* 4 */ GlyphId::SdCard,
+    /* 5 */ GlyphId::Owl,
+    /* 6 */ GlyphId::Crab,
+    /* 7 */ GlyphId::Placeholder,
+    /* 8 */ GlyphId::Placeholder,
+    /* 9 */ GlyphId::Placeholder,
     /* : */ GlyphId::Film,
     /* ; */ GlyphId::Camera,
     /* < */ GlyphId::ArrowLeftThick,
@@ -120,7 +128,6 @@ static constexpr GlyphId ASCII_TO_GLYPH[94] = {
     /* > */ GlyphId::ArrowRightThick,
     /* ? */ GlyphId::Map,
     /* @ */ GlyphId::At,
-
     /* A */ GlyphId::BatteryCharge,
     /* B */ GlyphId::BatteryFull,
     /* C */ GlyphId::BatteryHigh,
@@ -147,14 +154,12 @@ static constexpr GlyphId ASCII_TO_GLYPH[94] = {
     /* X */ GlyphId::Plus,
     /* Y */ GlyphId::Pencil,
     /* Z */ GlyphId::Refresh,
-
     /* [ */ GlyphId::WeatherCloudy,
     /* \ */ GlyphId::WeatherDownpour,
     /* ] */ GlyphId::WeatherSunny,
     /* ^ */ GlyphId::WeatherStormy,
     /* _ */ GlyphId::WeatherShower,
     /* ` */ GlyphId::WeatherPartlySunny,
-
     /* a */ GlyphId::WeatherSnow,
     /* b */ GlyphId::Minus,
     /* c */ GlyphId::World,
@@ -181,11 +186,10 @@ static constexpr GlyphId ASCII_TO_GLYPH[94] = {
     /* x */ GlyphId::Time,
     /* y */ GlyphId::User,
     /* z */ GlyphId::BusinessCard,
-
     /* { */ GlyphId::Brush,
-    /* | */ GlyphId::Tick,
+    /* | */ GlyphId::Calculator,
     /* } */ GlyphId::Calendar,
-    /* ~ */ GlyphId::Times,
+    /* ~ */ GlyphId::Picture,
 };
 
 constexpr GlyphId GetGlyph(char c) {
