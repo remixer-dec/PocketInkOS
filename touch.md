@@ -132,17 +132,84 @@ The e-paper high-voltage refresh can interfere with capacitive sensing, so touch
 
 ## Partial Refresh Notes
 
-The first true rectangular partial-region attempt was not usable on hardware. It caused the initial UI to render as a tiny outline, then subsequent touch updates shifted content and blackened most of the screen.
+There are two separate "partial" concepts in the firmware:
 
-Current status: the app uses the safer full-buffer partial flow:
+1. App drawing: what gets rendered into the in-memory framebuffer.
+2. Display flushing: what part of the framebuffer is sent to the e-paper
+   controller.
 
-1. The first render calls `EPD_Display()` for a real full refresh.
-2. The same framebuffer is then copied into the controller old-image RAM with `EPD_LoadPartBaseImage()`; this does not turn the panel on again.
-3. `EPD_Init_Partial()` enables the partial waveform immediately after the full render.
-4. Screen changes and in-screen updates use `EPD_DisplayPart()` while the partial baseline is valid. This still sends the full 5 KB framebuffer, but uses the partial waveform to avoid the multi-blink full refresh.
+`draw(...)` only draws into the framebuffer. It does not update the physical
+panel. The panel changes only when `AppDisplay::flush()` or
+`AppDisplay::flushPartial(...)` is called.
 
-This is not true rectangle-only refresh yet. It is an intermediate hardware-safe step intended to avoid the destructive full black/white refresh while preserving correct layout and framebuffer ordering.
+Normal full render flow:
 
-`EPD_DisplayRegion(...)` is deliberately neutralized to use `EPD_DisplayPart()` until a correct controller-specific rectangular window sequence is proven on hardware.
+1. `display.clear()` clears the driver framebuffer.
+2. `drawActiveScreen()` renders the current screen/app into that framebuffer.
+3. `display.flush()` sends the framebuffer to the panel.
+4. After a full refresh, the framebuffer is copied into controller old-image RAM
+   with `EPD_LoadPartBaseImage()`.
+5. `EPD_Init_Partial()` leaves the controller ready for partial waveform
+   updates.
+
+Normal touch update flow:
+
+1. The touch handler updates app/screen state.
+2. `redrawActiveScreenPartial()` redraws the affected screen content into the
+   framebuffer.
+3. `display.flushPartial(...)` sends a partial update to the panel.
+
+For apps that do not report a dirty region, `redrawActiveScreenPartial()` uses a
+full-screen partial update: it clears the framebuffer, calls `drawActiveScreen()`,
+and then calls `flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT)`.
+
+Apps can optionally report a dirty rectangle with `consumeDirtyRegion(...)`.
+When they do, the runtime clears that rectangle, calls normal full app `draw(...)`
+into the framebuffer, and then calls `flushPartial(x, y, w, h)`. This is not
+partial CPU-side drawing; it is only a dirty-region hint for the display flush.
+
+`AppDisplay::flushPartial(...)` uses the known-good full-buffer partial path when
+the partial baseline is ready. If partial mode is not ready, it falls back through
+`display.flush()` to establish a valid full-refresh baseline first.
+
+`EPD_DisplayRegion(...)` is not proven safe on this panel. Hardware testing has
+shown shifted/warped rectangular output, stale-frame flipping, and very long
+lockups when many tiny regions are flushed sequentially. It is deliberately
+neutralized to call `EPD_DisplayPart()` and marked deprecated so future uses
+produce a compile warning. Region-test measurements showed no useful speedup:
+single region refreshes still took about 576-584 ms, two region refreshes were
+additive, and the controller showed alternating two-frame behavior unless both
+EPD image planes were carefully managed. The known-good production path is
+full-buffer partial refresh: `EPD_DisplayPart()` sends the full 5 KB framebuffer
+but uses the partial waveform to avoid the full black/white blink.
+
+## Paint Refresh Path
+
+Paint is not driven by normal `handleScreenTouch(...)` point events. Its app
+behavior registers `onRawTouch`, so the main loop forwards raw touch down/move/up
+events directly to `PaintApp::handleTouchEvent(...)`.
+
+In normal mode, `PaintApp` runs a small FreeRTOS task:
+
+1. Raw touch events are queued as paint commands.
+2. The paint task locks the display.
+3. It drains one or more queued touch/clear commands.
+4. Touch commands write strokes directly into the framebuffer with
+   `display->drawPixel(...)` or `display->drawLine(...)`.
+5. The task calls `display->flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT)` once for
+   the drained batch.
+6. The task unlocks the display.
+
+If the paint task cannot be created, fallback mode handles raw touch events
+synchronously. In fallback mode, touch down/move events update the framebuffer,
+but the display flush happens only on `TOUCH_EVENT_UP`.
+
+The paint clear action also uses this path. The power-button handler calls
+`paintApp.clear()`, which either queues a clear command for the paint task or
+clears and flushes immediately in fallback mode.
+
+Paint currently flushes the full panel rectangle. Its special behavior is that it
+avoids full app redraws while drawing: strokes are written directly into the
+framebuffer and flushed afterward.
 
 Touch input is sampled by a small FreeRTOS task on the other core. The app loop consumes the queued press after display refresh returns, so short taps made during synchronous e-paper updates are not lost.

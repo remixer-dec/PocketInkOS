@@ -339,40 +339,12 @@ void epaper_driver_display::EPD_Display() {
 
 void epaper_driver_display::EPD_DisplayRegion(int16_t x, int16_t y, int16_t w,
                                               int16_t h) {
-  assert(buffer);
+  (void)x;
+  (void)y;
   if (w <= 0 || h <= 0) {
     return;
   }
-
-  int16_t x0 = x < 0 ? 0 : x;
-  int16_t y0 = y < 0 ? 0 : y;
-  int16_t x1 = x + w - 1;
-  int16_t y1 = y + h - 1;
-  if (x1 >= Width) {
-    x1 = Width - 1;
-  }
-  if (y1 >= Height) {
-    y1 = Height - 1;
-  }
-  if (x0 > x1 || y0 > y1) {
-    return;
-  }
-
-  const int16_t byteX0 = x0 >> 3;
-  const int16_t byteX1 = x1 >> 3;
-  EPD_SetWindows(byteX0 << 3, y1, (byteX1 << 3) + 7, y0);
-  EPD_SetCursor(byteX0 << 3, y1);
-
-  EPD_SendCommand(0x24);
-  for (int16_t row = y0; row <= y1; row++) {
-    const int rowOffset = row * (Width / 8);
-    for (int16_t byteX = byteX0; byteX <= byteX1; byteX++) {
-      EPD_SendData(buffer[rowOffset + byteX]);
-    }
-  }
-  EPD_TurnOnDisplayPart();
-  EPD_SetWindows(0, Width - 1, Height - 1, 0);
-  EPD_SetCursor(0, Height - 1);
+  EPD_DisplayPart();
 }
 
 void epaper_driver_display::EPD_LoadPartBaseImage() {

@@ -63,8 +63,27 @@ public:
   virtual void draw(Adafruit_GFX &gfx) = 0;
   virtual bool handleTouch(const TouchPoint &point) = 0;
   virtual bool update() { return false; }
+  virtual bool consumeDirtyRegion(int16_t *, int16_t *, int16_t *, int16_t *) {
+    return false;
+  }
   virtual bool hasActiveSession() const = 0;
 };
+
+namespace app_runtime_detail {
+
+template <typename T>
+auto consumeDirtyRegion(T &app, int16_t *x, int16_t *y, int16_t *w,
+                        int16_t *h, int)
+    -> decltype(app.consumeDirtyRegion(x, y, w, h), bool()) {
+  return app.consumeDirtyRegion(x, y, w, h);
+}
+
+template <typename T>
+bool consumeDirtyRegion(T &, int16_t *, int16_t *, int16_t *, int16_t *, ...) {
+  return false;
+}
+
+} // namespace app_runtime_detail
 
 template <typename T, bool SupportsUpdate = false>
 class AppScreen : public ActiveApp {
@@ -80,6 +99,10 @@ public:
       return app.update();
     }
     return false;
+  }
+  bool consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w,
+                          int16_t *h) override {
+    return app_runtime_detail::consumeDirtyRegion(app, x, y, w, h, 0);
   }
   bool hasActiveSession() const override { return app.hasActiveSession(); }
 

@@ -25,6 +25,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#if __has_include(<esp_rom_sys.h>)
+#include <esp_rom_sys.h>
+#define POCKETINK_HAS_ROM_PRINTF 1
+#else
+#define POCKETINK_HAS_ROM_PRINTF 0
+#endif
+
 AppDisplay display;
 TouchInput touch;
 TextInputController textInput;
@@ -263,6 +270,12 @@ void handleMenuButton() {
   if (confirmQuit) {
     return;
   }
+  if (screen == SCREEN_HOME) {
+    resetContactLinks();
+    switchTo(SCREEN_CONTACT_LINKS, contactLinksRuntime(),
+             contactLinksDefinition());
+    return;
+  }
   if (activeDefinition != nullptr &&
       handleAppEvent(activeDefinition->behavior.onMenu)) {
     return;
@@ -344,9 +357,11 @@ void handlePowerButton(AppEventHandler overrideHandler) {
     return;
   }
   if (screen == SCREEN_HOME) {
-    resetContactLinks();
-    switchTo(SCREEN_CONTACT_LINKS, contactLinksRuntime(),
-             contactLinksDefinition());
+    switchTo(SCREEN_MENU);
+    return;
+  }
+  if (screen == SCREEN_MENU) {
+    switchTo(SCREEN_HOME);
     return;
   }
   if (screen == SCREEN_CONTACT_LINKS) {
@@ -359,9 +374,6 @@ void handlePowerButton(AppEventHandler overrideHandler) {
   }
 
   if (activeApp != nullptr) {
-    return;
-  }
-  if (screen == SCREEN_MENU) {
     return;
   }
   switchKeyboardMode();
@@ -605,10 +617,23 @@ void drawActiveScreen() {
 }
 
 void redrawActiveScreenPartial() {
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t w = EPD_WIDTH;
+  int16_t h = EPD_HEIGHT;
+  const bool hasRegion =
+      activeApp != nullptr && activeApp->consumeDirtyRegion(&x, &y, &w, &h);
+
   display.lock();
-  display.clear();
-  drawActiveScreen();
-  display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+  if (hasRegion) {
+    display.fillRect(x, y, w, h, 0);
+    activeApp->draw(display);
+    display.flushPartial(x, y, w, h);
+  } else {
+    display.clear();
+    drawActiveScreen();
+    display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+  }
   display.unlock();
 }
 
@@ -903,40 +928,73 @@ void restoreRetainedContextAfterSleep() {
   dirty = true;
 }
 
+void waitForSerialDebugWindow() {
+  const unsigned long startedAt = millis();
+  while (!Serial && millis() - startedAt < 3000) {
+    delay(10);
+  }
+}
+
+void logSetupStage(const char *stage) {
+  const unsigned long now = millis();
+#if POCKETINK_HAS_ROM_PRINTF
+  esp_rom_printf("[pocketink-rom] %lu setup %s\n", now, stage);
+#endif
+  Serial.printf("[pocketink] %lu setup %s\n", now, stage);
+  Serial.flush();
+}
+
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  waitForSerialDebugWindow();
+  logSetupStage("start");
 
+  logSetupStage("power latch");
   keepPowerLatchOn();
   releasePowerHolds();
   keepPowerLatchOn();
+  logSetupStage("check sleep-clock wake");
   if (handleSleepClockTimerWake()) {
     return;
   }
+  logSetupStage("normal boot");
   sleepClockContextClear();
+  logSetupStage("audio");
   audioPowerBegin();
+  logSetupStage("device controls");
   deviceControlsBegin();
+  logSetupStage("display");
   display.begin();
+  logSetupStage("touch");
   touch.begin();
 #if ENABLE_RTC_CLOCK
+  logSetupStage("rtc");
   rtcClock.begin();
   rtcClock.readToDeviceClock();
 #endif
+  logSetupStage("battery");
   refreshBatteryAndCheckCutoff();
   if (batteryShutdownStarted) {
+    logSetupStage("battery shutdown");
     return;
   }
+  logSetupStage("environment");
   environmentMonitor.refresh();
+  logSetupStage("sd");
   sdStorageBegin();
 
+  logSetupStage("buttons");
   shellButtonsBegin({handleMenuButton, handleMenuDoubleButton,
                      handleMenuLongButton, handlePowerSingleButton,
                      handlePowerDoubleButton, handlePowerLongButton});
   noteUserActivity();
 
+  logSetupStage("apps");
   resetApps();
+  logSetupStage("restore context");
   restoreRetainedContextAfterSleep();
   dirty = true;
+  logSetupStage("ready");
 }
 
 void loop() {

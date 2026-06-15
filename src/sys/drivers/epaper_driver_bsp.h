@@ -63,6 +63,7 @@ public:
   void EPD_ReattachPartial();
   void EPD_Clear();
   void EPD_Display();
+  [[deprecated("EPD_DisplayRegion is not hardware-safe; use EPD_DisplayPart/full-buffer partial refresh")]]
   void EPD_DisplayRegion(int16_t x, int16_t y, int16_t w, int16_t h);
 
   void EPD_LoadPartBaseImage();

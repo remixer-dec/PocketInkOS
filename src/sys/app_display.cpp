@@ -87,7 +87,11 @@ void AppDisplay::flushPartial(int16_t x, int16_t y, int16_t w, int16_t h) {
     return;
   }
 
-  driver.EPD_DisplayRegion(x, y, w, h);
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  driver.EPD_DisplayPart();
 }
 
 void AppDisplay::lock() {

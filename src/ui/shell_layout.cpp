@@ -419,8 +419,8 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   drawRightAlignedText(display, humidityText, 34);
   drawRightAlignedText(display, chipText, 46);
 
-  drawCenteredText(display, "SUN: apps", 182);
-  drawCenteredText(display, "PWR: contact", 192);
+  drawCenteredText(display, "SUN: contact", 182);
+  drawCenteredText(display, "PWR: apps", 192);
 }
 
 void drawAppMenu(AppDisplay &display, const MenuState &state,
