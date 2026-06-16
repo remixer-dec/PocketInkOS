@@ -41,6 +41,8 @@ struct SerialStub {
   void print(const String &) {}
   void print(int) {}
   void printf(const char *, ...) {}
+  void flush() {}
+  explicit operator bool() const { return true; }
 };
 inline SerialStub Serial;
 struct ESPStub {

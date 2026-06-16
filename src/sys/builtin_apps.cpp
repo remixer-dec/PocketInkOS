@@ -160,6 +160,15 @@ AppEventResult handleDeghostPower() {
 AppEventResult handleGfxPower() {
   return dirtyIfHandled(gfxApp.handlePowerButton());
 }
+AppEventResult handleFilesMenu() {
+  if (filesApp.handleMenuButton()) {
+    return AppEventResult::Dirty;
+  }
+  return AppEventResult::Unhandled;
+}
+AppEventResult handleFilesPower() {
+  return dirtyIfHandled(filesApp.handlePowerButton());
+}
 AppEventResult handleChessMenu() {
   if (chess.handleMenuButton()) {
     return AppEventResult::Dirty;
@@ -167,6 +176,18 @@ AppEventResult handleChessMenu() {
   return AppEventResult::GoMenu;
 }
 AppEventResult handleChessMenuLong() {
+  if (chess.cancelTargetSelection()) {
+    return AppEventResult::Dirty;
+  }
+  if (chess.handleMenuLongPress()) {
+    return AppEventResult::QuitRequested;
+  }
+  return AppEventResult::Unhandled;
+}
+AppEventResult handleChessMenuDouble() {
+  if (chess.cancelTargetSelection()) {
+    return AppEventResult::Dirty;
+  }
   if (chess.handleMenuLongPress()) {
     return AppEventResult::QuitRequested;
   }
@@ -292,6 +313,7 @@ AppBehavior powerContextBehavior(AppEventHandler handler,
 AppBehavior chessBehavior() {
   AppBehavior behavior;
   behavior.onMenu = handleChessMenu;
+  behavior.onMenuDouble = handleChessMenuDouble;
   behavior.onMenuLong = handleChessMenuLong;
   behavior.onPower = handleChessPower;
   behavior.onSaveContext = saveChessContext;
@@ -303,6 +325,15 @@ AppBehavior gfxBehavior() {
   AppBehavior behavior;
   behavior.onEnter = startGfx;
   behavior.onPower = handleGfxPower;
+  return behavior;
+}
+
+AppBehavior filesBehavior() {
+  AppBehavior behavior;
+  behavior.onMenu = handleFilesMenu;
+  behavior.onPower = handleFilesPower;
+  behavior.onSaveContext = saveFilesContext;
+  behavior.onRestoreContext = restoreFilesContext;
   return behavior;
 }
 
@@ -393,7 +424,7 @@ extern const AppDefinition apps[] = {
     builtInIconAppWhen("files", "files", "N", MENU_APPS, SCREEN_FILES,
                        &filesScreen, sdStorageMounted,
                        []() { filesApp.reset(); },
-                       contextBehavior(saveFilesContext, restoreFilesContext))
+                       filesBehavior())
 #if ENABLE_NETWORK_APPS
     ,
     builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen),
