@@ -65,6 +65,23 @@ static void buildLabel(char *out, size_t outSize, int key, bool caps) {
   out[write] = '\0';
 }
 
+static void buildNumberLabel(char *out, size_t outSize, int key) {
+  if (outSize == 0) {
+    return;
+  }
+  if (key >= 0 && key <= 9) {
+    snprintf(out, outSize, "%d", key);
+  } else if (key == 10) {
+    strncpy(out, "BACK", outSize - 1);
+    out[outSize - 1] = '\0';
+  } else if (key == 11) {
+    strncpy(out, "OK", outSize - 1);
+    out[outSize - 1] = '\0';
+  } else {
+    out[0] = '\0';
+  }
+}
+
 void T9KeyboardComponent::drawInput(Adafruit_GFX &gfx, const String &text,
                                     int maxLength) {
   gfx.fillRect(INPUT_X, INPUT_Y, INPUT_W, INPUT_H, 0);
@@ -106,7 +123,9 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
   gfx.print(digit);
 
   char label[12] = "";
-  if (key >= 0 && key <= 9) {
+  if (layout == Layout::Numbers) {
+    buildNumberLabel(label, sizeof(label), key);
+  } else if (key >= 0 && key <= 9) {
     buildLabel(label, sizeof(label), key, caps);
   } else if (key == 10) {
     strncpy(label, "BACK", sizeof(label) - 1);
@@ -117,7 +136,7 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
   gfx.setCursor(x + 8, y + 28);
   gfx.print(label);
 
-  if (active && !disabled) {
+  if (active && !disabled && layout == Layout::Text) {
     gfx.setTextSize(2);
     char selected[2] = {currentChar(), 0};
     gfx.setCursor(x + w - 24, y + 10);
@@ -147,6 +166,13 @@ void T9KeyboardComponent::draw(Adafruit_GFX &gfx, const String &text,
       drawKey(gfx, key, x, y, KEY_W, KEY_H, disabled);
     }
   }
+}
+
+void T9KeyboardComponent::setLayout(Layout nextLayout) {
+  if (layout != nextLayout) {
+    clearPending();
+  }
+  layout = nextLayout;
 }
 
 char T9KeyboardComponent::currentChar() const {
@@ -216,6 +242,17 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
   if (key == 11) {
     clearPending();
     return {KEY_OK, 0};
+  }
+
+  if (layout == Layout::Numbers) {
+    int limit = maxLength > 0 ? maxLength : 64;
+    if ((int)text.length() >= limit) {
+      return {KEY_NONE, 0};
+    }
+    char value = static_cast<char>('0' + key);
+    text += value;
+    clearPending();
+    return {KEY_CHAR, value};
   }
 
   const bool sameKey = pendingKey == key && isPendingActive();
