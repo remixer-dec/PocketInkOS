@@ -26,12 +26,20 @@ FILES=( \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
   "$ROOT/src/apps/deghost_app.cpp" \
+  "$ROOT/src/fs/file_provider.cpp" \
+  "$ROOT/src/fs/file_viewer_registry.cpp" \
+  "$ROOT/src/fs/providers/hex_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/pdf_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/image_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/svg_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/text_file_viewer.cpp" \
   "$ROOT/src/apps/files_app.cpp" \
   "$ROOT/src/sys/battery_monitor.cpp" \
   "$ROOT/src/games/cube_app.cpp" \
   "$ROOT/src/sys/device_controls.cpp" \
   "$ROOT/src/sys/device_clock.cpp" \
   "$ROOT/src/sys/environment_monitor.cpp" \
+  "$ROOT/src/sys/inactivity_sleep_guard.cpp" \
   "$ROOT/src/sys/pcf85063_clock.cpp" \
   "$ROOT/src/sys/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \

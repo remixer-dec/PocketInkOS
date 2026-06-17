@@ -14,6 +14,7 @@
 #include "sys/battery_monitor.h"
 #include "sys/device_controls.h"
 #include "sys/environment_monitor.h"
+#include "sys/inactivity_sleep_guard.h"
 #include "sys/power_control.h"
 #include "sys/pcf85063_clock.h"
 #include "sys/rtc_context.h"
@@ -54,6 +55,7 @@ RtcContextSnapshot retainedSleepContext;
 static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
 static const unsigned long BATTERY_REFRESH_INTERVAL_MS = 30000;
 static const unsigned long DEFAULT_INACTIVITY_DEEP_SLEEP_MS = 120000;
+static const uint32_t INACTIVITY_SLEEP_GUARD_GRACE_MS = 3000;
 static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
 
 bool batteryShutdownStarted = false;
@@ -148,6 +150,10 @@ void enterInactivityDeepSleep() {
     return;
   }
   if (usbDataConnected()) {
+    noteUserActivity();
+    return;
+  }
+  if (inactivitySleepBlocked(INACTIVITY_SLEEP_GUARD_GRACE_MS)) {
     noteUserActivity();
     return;
   }
