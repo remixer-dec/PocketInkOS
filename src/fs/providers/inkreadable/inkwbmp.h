@@ -213,7 +213,8 @@ static bool iwbmp_setup_output(iwbmp_state *wbmp,
       render != NULL && render->scale <= (uint8_t)IWBMP_SCALE_FIT
           ? render->scale
           : (uint8_t)IWBMP_SCALE_NONE;
-  if (render == NULL || render->width == 0 || render->height == 0) {
+  if (render == NULL || render->pixel == NULL || render->width == 0 ||
+      render->height == 0) {
     return true;
   }
   if (wbmp->info.width > UINT16_MAX || wbmp->info.height > UINT16_MAX) {

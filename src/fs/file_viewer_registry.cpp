@@ -1,4 +1,5 @@
 #include "fs/file_viewer_registry.h"
+#include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/hex_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
 #include "fs/providers/image_file_viewer.h"
@@ -69,6 +70,7 @@ const FileViewerExtension *const VIEWERS[] = {
     &IMAGE_FILE_VIEWER,
     &SVG_FILE_VIEWER,
     &PDF_FILE_VIEWER,
+    &EPUB_FILE_VIEWER,
     &TEXT_FILE_VIEWER,
     &HEX_FILE_VIEWER,
 };

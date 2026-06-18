@@ -106,6 +106,9 @@ private:
   bool openViewer(const char *path, const char *title, const char *viewerId);
   bool providerMounted() const;
   void closeViewer();
+  FileViewerActivity viewerActivity() const;
+  FileViewerRuntime makeViewerRuntime(bool fullscreen,
+                                      FileViewerActivity *activity) const;
   void scrollViewerBy(int8_t lines);
   bool handleViewerTouch(const TouchPoint &point);
   bool handleViewerPageJumpTouch(const TouchPoint &point);

@@ -29,6 +29,7 @@ FILES=( \
   "$ROOT/src/fs/file_provider.cpp" \
   "$ROOT/src/fs/file_viewer_registry.cpp" \
   "$ROOT/src/fs/providers/hex_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/epub_file_viewer.cpp" \
   "$ROOT/src/fs/providers/pdf_file_viewer.cpp" \
   "$ROOT/src/fs/providers/image_file_viewer.cpp" \
   "$ROOT/src/fs/providers/svg_file_viewer.cpp" \

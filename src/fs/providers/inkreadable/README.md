@@ -5,6 +5,7 @@ InkReadable Headers - a collection of incredible fully vibe-coded from scratch a
 
 | **format** | **file**  | **notes**                                                                               | **license**     |
 |------------|-----------|-----------------------------------------------------------------------------------------|-----------------|
+| .epub      | inkepub.h | text extraction, image extraction, support for large files                              | CC BY-NC-SA 3.0 |
 | .png       | inkpng.h  | full support, dithered rendering                                                        | CC BY-NC-SA 3.0 |
 | .svg       | inksvg.h  | most black and white images should work colorful images are translated to binary colors | CC BY-NC-SA 3.0 |
 | .jpg       | inkjpg.h  | full support, dithered rendering                                                        | CC BY-NC-SA 3.0 |

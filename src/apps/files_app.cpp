@@ -1,6 +1,8 @@
 #include "apps/files_app.h"
 #include "fs/file_provider.h"
+#include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
+#include "sys/inactivity_sleep_guard.h"
 #include "ui/icon_ascii_font.h"
 
 #include <Arduino.h>
@@ -95,6 +97,16 @@ void finishFilesLogLine() {
 }
 #endif
 
+void filesViewerKeepAwake(void *) { inactivitySleepKeepAwake(); }
+
+void filesViewerSleepGuard(void *, bool active) {
+  if (active) {
+    inactivitySleepGuardAcquire();
+  } else {
+    inactivitySleepGuardRelease();
+  }
+}
+
 struct FilesContextSnapshotV1 {
   uint8_t version = 1;
   char path[96] = "/";
@@ -131,6 +143,7 @@ static const int8_t kScrollStep = 3;
 static const unsigned long kStatusMs = 2000;
 static const unsigned long kPdfProgressRedrawMs = 2000;
 static const uint32_t kPdfBackgroundIndexBudgetUs = 180000;
+static const uint32_t kEpubBackgroundIndexBudgetUs = 180000;
 static const uint8_t kSmallFolderLimit = 8;
 static const int8_t kViewerScrollLines = 4;
 static const int16_t kScrollbarX = 198;
@@ -168,6 +181,38 @@ void drawIcon(Adafruit_GFX &gfx, char icon, int16_t x, int16_t y) {
 bool viewerIsPdf(const FileViewerExtension *viewer) {
   return viewer != nullptr && viewer->id != nullptr &&
          equalsIgnoreCase(viewer->id, "pdf");
+}
+
+bool viewerIsEpub(const FileViewerExtension *viewer) {
+  return viewer != nullptr && viewer->id != nullptr &&
+         equalsIgnoreCase(viewer->id, "epub");
+}
+
+bool viewerSupportsPageJump(const FileViewerExtension *viewer) {
+  return viewerIsPdf(viewer) || viewerIsEpub(viewer);
+}
+
+uint16_t viewerPageCount(const FileViewerExtension *viewer,
+                         const char *providerId, const char *path) {
+  if (viewerIsPdf(viewer)) {
+    return pdfViewerPageCount(providerId, path);
+  }
+  if (viewerIsEpub(viewer)) {
+    return epubViewerPageCount(providerId, path);
+  }
+  return 0;
+}
+
+void viewerPageStatus(const FileViewerExtension *viewer,
+                      const FileViewerRuntime &runtime, char *out,
+                      size_t outSize) {
+  if (viewerIsPdf(viewer)) {
+    pdfViewerStatus(runtime, out, outSize);
+  } else if (viewerIsEpub(viewer)) {
+    epubViewerStatus(runtime, out, outSize);
+  } else if (out != nullptr && outSize > 0) {
+    out[0] = '\0';
+  }
 }
 
 bool copyText(char *dest, size_t destSize, const char *source) {
@@ -269,7 +314,7 @@ bool extensionIs(const char *extension, const char *value) {
   return extension != nullptr && equalsIgnoreCase(extension, value);
 }
 
-const char *pngDitherName(uint8_t mode) {
+const char *imageDitherName(uint8_t mode) {
   static const char *const names[] = {"THR", "ATK", "S2R", "S2D"};
   return mode < 4 ? names[mode] : names[0];
 }
@@ -312,6 +357,7 @@ char iconForEntry(const char *name, bool directory) {
   if (extensionIs(extension, "jpg") || extensionIs(extension, "jpeg") ||
       extensionIs(extension, "png") || extensionIs(extension, "gif") ||
       extensionIs(extension, "bmp") || extensionIs(extension, "webp") ||
+      extensionIs(extension, "wbmp") ||
       extensionIs(extension, "svg")) {
     return '~';
   }
@@ -529,7 +575,10 @@ void FilesApp::reset() {
 }
 
 bool FilesApp::hasActiveSession() const {
-  return viewerIsPdf(activeViewer) && pdfViewerLoading(providerId, viewerPath);
+  return (viewerIsPdf(activeViewer) && pdfViewerLoading(providerId, viewerPath)) ||
+         (viewerIsEpub(activeViewer) &&
+          (epubViewerLoading(providerId, viewerPath) ||
+           epubViewerImageLoading(providerId, viewerPath, viewerOffset)));
 }
 
 bool FilesApp::consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w,
@@ -1116,8 +1165,9 @@ bool FilesApp::activateIndex(uint16_t index) {
   }
 
   const FileViewerExtension *viewer = nullptr;
+  FileViewerActivity activity = viewerActivity();
   const FileViewerOpenResult result =
-      openFileWithViewer(providerId, path, &viewer);
+      openFileWithViewer(providerId, path, &viewer, &activity);
   if (result == FileViewerOpenResult::Opened) {
     char title[FILES_LABEL_CAPACITY];
     copyDisplayText(title, sizeof(title), name);
@@ -1181,8 +1231,8 @@ bool FilesApp::openViewer(const char *path, const char *title,
   }
 
   activeViewer = viewer;
-  if (viewerIsPdf(activeViewer)) {
-    viewerSize = pdfViewerPageCount(providerId, viewerPath);
+  if (viewerSupportsPageJump(activeViewer)) {
+    viewerSize = viewerPageCount(activeViewer, providerId, viewerPath);
   }
   return true;
 }
@@ -1207,19 +1257,34 @@ void FilesApp::closeViewer() {
   nextPdfProgressRedrawMs = 0;
 }
 
-void FilesApp::scrollViewerBy(int8_t lines) {
-  if (activeViewer == nullptr || activeViewer->scroll == nullptr || lines == 0) {
-    return;
-  }
+FileViewerActivity FilesApp::viewerActivity() const {
+  FileViewerActivity activity;
+  activity.keepAwake = filesViewerKeepAwake;
+  activity.sleepGuard = filesViewerSleepGuard;
+  return activity;
+}
+
+FileViewerRuntime
+FilesApp::makeViewerRuntime(bool fullscreen, FileViewerActivity *activity) const {
   FileViewerRuntime runtime;
   runtime.providerId = providerId;
   runtime.path = viewerPath;
   runtime.title = viewerTitle;
   runtime.offset = viewerOffset;
   runtime.size = viewerSize;
-  runtime.fullscreen = viewerFullscreen;
+  runtime.fullscreen = fullscreen;
   runtime.imageDither = viewerDither;
   runtime.imageScaleToFit = viewerScaleToFit;
+  runtime.activity = activity;
+  return runtime;
+}
+
+void FilesApp::scrollViewerBy(int8_t lines) {
+  if (activeViewer == nullptr || activeViewer->scroll == nullptr || lines == 0) {
+    return;
+  }
+  FileViewerActivity activity = viewerActivity();
+  FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
   activeViewer->scroll(runtime, lines);
   viewerOffset = runtime.offset > viewerSize ? viewerSize : runtime.offset;
 }
@@ -1266,7 +1331,8 @@ bool FilesApp::handleViewerPageJumpTouch(const TouchPoint &point) {
   }
 
   if (event.action == KEY_OK) {
-    const uint16_t pageCount = pdfViewerPageCount(providerId, viewerPath);
+    const uint16_t pageCount =
+        viewerPageCount(activeViewer, providerId, viewerPath);
     uint32_t page = static_cast<uint32_t>(atoi(viewerPageInput.c_str()));
     if (page > 0 && pageCount > 0) {
       if (page > pageCount) {
@@ -1397,15 +1463,8 @@ void FilesApp::drawViewer(Adafruit_GFX &gfx) {
 
   if (viewerFullscreen) {
     if (activeViewer != nullptr && activeViewer->draw != nullptr) {
-      FileViewerRuntime runtime;
-      runtime.providerId = providerId;
-      runtime.path = viewerPath;
-      runtime.title = viewerTitle;
-      runtime.offset = viewerOffset;
-      runtime.size = viewerSize;
-      runtime.fullscreen = true;
-      runtime.imageDither = viewerDither;
-      runtime.imageScaleToFit = viewerScaleToFit;
+      FileViewerActivity activity = viewerActivity();
+      FileViewerRuntime runtime = makeViewerRuntime(true, &activity);
       activeViewer->draw(gfx, runtime);
     }
     if (viewerOptionsOpen) {
@@ -1419,14 +1478,10 @@ void FilesApp::drawViewer(Adafruit_GFX &gfx) {
   gfx.setCursor(4, kHeaderY);
   gfx.print(title[0] != '\0' ? title : "file");
   char viewerStatus[18];
-  if (viewerIsPdf(activeViewer)) {
-    FileViewerRuntime runtime;
-    runtime.providerId = providerId;
-    runtime.path = viewerPath;
-    runtime.title = viewerTitle;
-    runtime.offset = viewerOffset;
-    runtime.size = viewerSize;
-    pdfViewerStatus(runtime, viewerStatus, sizeof(viewerStatus));
+  if (viewerSupportsPageJump(activeViewer)) {
+    FileViewerActivity activity = viewerActivity();
+    FileViewerRuntime runtime = makeViewerRuntime(false, &activity);
+    viewerPageStatus(activeViewer, runtime, viewerStatus, sizeof(viewerStatus));
     drawRightText(gfx, viewerStatus, kHeaderY);
   } else {
     drawRightText(gfx, activeViewer != nullptr && activeViewer->label != nullptr
@@ -1437,18 +1492,11 @@ void FilesApp::drawViewer(Adafruit_GFX &gfx) {
   gfx.drawLine(0, kHeaderLineY, 199, kHeaderLineY, 1);
 
   if (activeViewer != nullptr && activeViewer->draw != nullptr) {
-    FileViewerRuntime runtime;
-    runtime.providerId = providerId;
-    runtime.path = viewerPath;
-    runtime.title = viewerTitle;
-    runtime.offset = viewerOffset;
-    runtime.size = viewerSize;
-    runtime.fullscreen = false;
-    runtime.imageDither = viewerDither;
-    runtime.imageScaleToFit = viewerScaleToFit;
+    FileViewerActivity activity = viewerActivity();
+    FileViewerRuntime runtime = makeViewerRuntime(false, &activity);
     activeViewer->draw(gfx, runtime);
-    if (viewerIsPdf(activeViewer)) {
-      viewerSize = pdfViewerPageCount(providerId, viewerPath);
+    if (viewerSupportsPageJump(activeViewer)) {
+      viewerSize = viewerPageCount(activeViewer, providerId, viewerPath);
       if (viewerSize > 0 && viewerOffset >= viewerSize) {
         viewerOffset = viewerSize - 1;
       }
@@ -1471,7 +1519,7 @@ void FilesApp::drawViewerOptions(Adafruit_GFX &gfx) {
   gfx.print("IMAGE");
 
   char line[28];
-  snprintf(line, sizeof(line), "DITHER %s", pngDitherName(viewerDither));
+  snprintf(line, sizeof(line), "DITHER %s", imageDitherName(viewerDither));
   gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 28);
   gfx.print(line);
   snprintf(line, sizeof(line), "SCALE %s", viewerScaleToFit ? "FIT" : "1:1");
@@ -1487,15 +1535,8 @@ void FilesApp::drawViewerScrollbar(Adafruit_GFX &gfx) const {
     return;
   }
 
-  FileViewerRuntime runtime;
-  runtime.providerId = providerId;
-  runtime.path = viewerPath;
-  runtime.title = viewerTitle;
-  runtime.offset = viewerOffset;
-  runtime.size = viewerSize;
-  runtime.fullscreen = viewerFullscreen;
-  runtime.imageDither = viewerDither;
-  runtime.imageScaleToFit = viewerScaleToFit;
+  FileViewerActivity activity = viewerActivity();
+  FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
   const uint32_t visible = activeViewer->visibleBytes(runtime);
   drawVerticalScrollbar(gfx, viewerOffset, visible, viewerSize, kListY,
                         kListBottomY - kListY);
@@ -1648,8 +1689,9 @@ bool FilesApp::handlePowerButton() {
     } else if (activeViewer->id != nullptr && equalsIgnoreCase(activeViewer->id, "svg")) {
       viewerFullscreen = !viewerFullscreen;
       markDirtyRegion(0, 0, 200, 200);
-    } else if (viewerIsPdf(activeViewer)) {
-      if (pdfViewerLoading(providerId, viewerPath)) {
+    } else if (viewerSupportsPageJump(activeViewer)) {
+      if ((viewerIsPdf(activeViewer) && pdfViewerLoading(providerId, viewerPath)) ||
+          (viewerIsEpub(activeViewer) && epubViewerLoading(providerId, viewerPath))) {
         return true;
       }
       viewerPageJumpOpen = !viewerPageJumpOpen;
@@ -1671,12 +1713,14 @@ bool FilesApp::handlePowerButton() {
 
 bool FilesApp::update() {
   if (viewerIsPdf(activeViewer)) {
+    inactivitySleepKeepAwake();
     const bool cacheReady = pdfViewerProgress(providerId, viewerPath) == 100;
     const bool wasLoading = pdfViewerLoading(providerId, viewerPath) ||
                             (!cacheReady &&
                              pdfViewerPageCount(providerId, viewerPath) == 0);
     bool finished = false;
     if (!cacheReady || pdfViewerLoading(providerId, viewerPath)) {
+      ScopedInactivitySleepGuard sleepGuard;
       finished = pdfViewerContinueLoading(providerId, viewerPath,
                                           kPdfBackgroundIndexBudgetUs);
     }
@@ -1699,6 +1743,42 @@ bool FilesApp::update() {
         return true;
       }
       return false;
+    }
+  }
+  if (viewerIsEpub(activeViewer)) {
+    const bool wasLoading = epubViewerLoading(providerId, viewerPath);
+    const bool imageLoading =
+        epubViewerImageLoading(providerId, viewerPath, viewerOffset);
+    if (wasLoading || imageLoading) {
+      inactivitySleepKeepAwake();
+    }
+    if (wasLoading) {
+      ScopedInactivitySleepGuard sleepGuard;
+      const bool stillActive = epubViewerContinueLoading(
+          providerId, viewerPath, kEpubBackgroundIndexBudgetUs);
+      const bool loading = epubViewerLoading(providerId, viewerPath);
+      if (!loading) {
+        viewerSize = epubViewerPageCount(providerId, viewerPath);
+        if (viewerSize > 0 && viewerOffset >= viewerSize) {
+          viewerOffset = viewerSize - 1;
+        }
+        markDirtyRegion(0, 0, 200, 200);
+        return true;
+      }
+      const unsigned long now = millis();
+      if (!stillActive || nextPdfProgressRedrawMs == 0 ||
+          now >= nextPdfProgressRedrawMs) {
+        nextPdfProgressRedrawMs = now + kPdfProgressRedrawMs;
+        markDirtyRegion(0, 0, 200, 200);
+        return true;
+      }
+      return false;
+    }
+    if (imageLoading) {
+      ScopedInactivitySleepGuard sleepGuard;
+      epubViewerContinueImage(providerId, viewerPath, viewerOffset);
+      markDirtyRegion(0, 0, 200, 200);
+      return true;
     }
   }
   if (clearExpiredStatus()) {
