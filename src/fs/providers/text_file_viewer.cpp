@@ -188,5 +188,7 @@ const FileViewerExtension TEXT_FILE_VIEWER = {
     openTextViewer,
     drawTextViewer,
     scrollTextViewer,
+    nullptr,
+    nullptr,
     textVisibleBytes,
 };

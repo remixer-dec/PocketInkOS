@@ -280,5 +280,7 @@ const FileViewerExtension PDF_FILE_VIEWER = {
     openPdfViewer,
     drawPdfViewer,
     scrollPdfViewer,
+    nullptr,
+    nullptr,
     pdfVisibleBytes,
 };

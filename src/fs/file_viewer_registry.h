@@ -2,6 +2,7 @@
 #define FILE_VIEWER_REGISTRY_H
 
 #include <Adafruit_GFX.h>
+#include "sys/touch_input.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -81,6 +82,9 @@ typedef void (*FileViewerDrawHandler)(Adafruit_GFX &gfx,
                                       const FileViewerRuntime &runtime);
 typedef void (*FileViewerScrollHandler)(FileViewerRuntime &runtime,
                                         int8_t lines);
+typedef bool (*FileViewerTouchHandler)(FileViewerRuntime &runtime,
+                                       const TouchPoint &point);
+typedef bool (*FileViewerUpdateHandler)(FileViewerRuntime &runtime);
 typedef uint32_t (*FileViewerVisibleBytesHandler)(
     const FileViewerRuntime &runtime);
 
@@ -92,6 +96,8 @@ struct FileViewerExtension {
   FileViewerOpenHandler open = nullptr;
   FileViewerDrawHandler draw = nullptr;
   FileViewerScrollHandler scroll = nullptr;
+  FileViewerTouchHandler touch = nullptr;
+  FileViewerUpdateHandler update = nullptr;
   FileViewerVisibleBytesHandler visibleBytes = nullptr;
 };
 

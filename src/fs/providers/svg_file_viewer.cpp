@@ -294,5 +294,7 @@ const FileViewerExtension SVG_FILE_VIEWER = {
     openSvgViewer,
     drawSvgViewer,
     scrollSvgViewer,
+    nullptr,
+    nullptr,
     svgVisibleBytes,
 };

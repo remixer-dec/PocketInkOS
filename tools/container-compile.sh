@@ -19,6 +19,7 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/audio_capture.cpp" \
+  "$ROOT/src/sys/audio_playback_renderer.cpp" \
   "$ROOT/src/sys/audio_power.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
@@ -30,6 +31,8 @@ FILES=( \
   "$ROOT/src/fs/file_viewer_registry.cpp" \
   "$ROOT/src/fs/providers/hex_file_viewer.cpp" \
   "$ROOT/src/fs/providers/epub_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/midi_file_viewer.cpp" \
+  "$ROOT/src/fs/providers/resonatto/remidi_synth.cpp" \
   "$ROOT/src/fs/providers/pdf_file_viewer.cpp" \
   "$ROOT/src/fs/providers/image_file_viewer.cpp" \
   "$ROOT/src/fs/providers/svg_file_viewer.cpp" \
@@ -49,6 +52,7 @@ FILES=( \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/sys/shell_buttons.cpp" \
   "$ROOT/src/ui/components/keyboard_component.cpp" \
+  "$ROOT/src/ui/components/audio_player_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \
   "$ROOT/src/apps/paint_app.cpp" \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \

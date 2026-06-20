@@ -374,5 +374,7 @@ const FileViewerExtension EPUB_FILE_VIEWER = {
     openEpubViewer,
     drawEpubViewer,
     scrollEpubViewer,
+    nullptr,
+    nullptr,
     epubVisibleBytes,
 };

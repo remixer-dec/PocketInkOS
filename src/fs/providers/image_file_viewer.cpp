@@ -699,5 +699,7 @@ const FileViewerExtension IMAGE_FILE_VIEWER = {
     openImageViewer,
     drawImageViewer,
     scrollImageViewer,
+    nullptr,
+    nullptr,
     imageVisibleBytes,
 };

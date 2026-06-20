@@ -1,6 +1,7 @@
 #include "apps/files_app.h"
 #include "fs/file_provider.h"
 #include "fs/providers/epub_file_viewer.h"
+#include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
 #include "sys/inactivity_sleep_guard.h"
 #include "ui/icon_ascii_font.h"
@@ -345,7 +346,8 @@ char iconForEntry(const char *name, bool directory) {
   if (extensionIs(extension, "mp3") || extensionIs(extension, "wav") ||
       extensionIs(extension, "flac") || extensionIs(extension, "aac") ||
       extensionIs(extension, "ogg") || extensionIs(extension, "m4a") ||
-      extensionIs(extension, "opus")) {
+      extensionIs(extension, "opus") || extensionIs(extension, "mid") ||
+      extensionIs(extension, "midi") || extensionIs(extension, "kar")) {
     return '$';
   }
   if (extensionIs(extension, "epub") || extensionIs(extension, "mobi") ||
@@ -1231,6 +1233,10 @@ bool FilesApp::openViewer(const char *path, const char *title,
   }
 
   activeViewer = viewer;
+  if (activeViewer != nullptr && activeViewer->id != nullptr &&
+      equalsIgnoreCase(activeViewer->id, "midi")) {
+    viewerSize = midiViewerDurationMs(providerId, viewerPath);
+  }
   if (viewerSupportsPageJump(activeViewer)) {
     viewerSize = viewerPageCount(activeViewer, providerId, viewerPath);
   }
@@ -1245,6 +1251,10 @@ bool FilesApp::providerMounted() const {
 }
 
 void FilesApp::closeViewer() {
+  if (activeViewer != nullptr && activeViewer->id != nullptr &&
+      equalsIgnoreCase(activeViewer->id, "midi")) {
+    midiViewerClose();
+  }
   activeViewer = nullptr;
   viewerPath[0] = '\0';
   viewerTitle[0] = '\0';
@@ -1312,6 +1322,19 @@ bool FilesApp::handleViewerTouch(const TouchPoint &point) {
     }
     markListDirty();
     return true;
+  }
+
+  if (activeViewer != nullptr && activeViewer->touch != nullptr) {
+    FileViewerActivity activity = viewerActivity();
+    FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
+    if (activeViewer->touch(runtime, point)) {
+      viewerOffset = runtime.offset;
+      if (runtime.size != 0) {
+        viewerSize = runtime.size;
+      }
+      markListDirty();
+      return true;
+    }
   }
 
   if (point.y < kListY || point.y >= kListBottomY) {
@@ -1682,6 +1705,17 @@ bool FilesApp::handleMenuButton() {
 bool FilesApp::handlePowerButton() {
   if (activeViewer != nullptr) {
     if (activeViewer->id != nullptr &&
+        equalsIgnoreCase(activeViewer->id, "midi")) {
+      FileViewerActivity activity = viewerActivity();
+      FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
+      if (midiViewerTogglePlayback(runtime)) {
+        viewerOffset = runtime.offset;
+        if (runtime.size != 0) {
+          viewerSize = runtime.size;
+        }
+        markDirtyRegion(0, 0, 200, 200);
+      }
+    } else if (activeViewer->id != nullptr &&
         (equalsIgnoreCase(activeViewer->id, "raster") ||
          equalsIgnoreCase(activeViewer->id, "png"))) {
       viewerOptionsOpen = !viewerOptionsOpen;
@@ -1712,6 +1746,19 @@ bool FilesApp::handlePowerButton() {
 }
 
 bool FilesApp::update() {
+  if (activeViewer != nullptr && activeViewer->update != nullptr) {
+    FileViewerActivity activity = viewerActivity();
+    FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
+    if (activeViewer->update(runtime)) {
+      viewerOffset = runtime.offset;
+      if (runtime.size != 0) {
+        viewerSize = runtime.size;
+      }
+      markDirtyRegion(0, 0, 200, 200);
+      return true;
+    }
+  }
+
   if (viewerIsPdf(activeViewer)) {
     inactivitySleepKeepAwake();
     const bool cacheReady = pdfViewerProgress(providerId, viewerPath) == 100;

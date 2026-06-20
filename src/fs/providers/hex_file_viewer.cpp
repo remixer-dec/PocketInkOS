@@ -119,5 +119,7 @@ const FileViewerExtension HEX_FILE_VIEWER = {
     openHexViewer,
     drawHexViewer,
     scrollHexViewer,
+    nullptr,
+    nullptr,
     hexVisibleBytes,
 };
