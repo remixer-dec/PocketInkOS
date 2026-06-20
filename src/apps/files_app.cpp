@@ -315,6 +315,17 @@ bool extensionIs(const char *extension, const char *value) {
   return extension != nullptr && equalsIgnoreCase(extension, value);
 }
 
+bool pathHasExtension(const char *path, const char *extension) {
+  if (path == nullptr || extension == nullptr) {
+    return false;
+  }
+  const char *name = strrchr(path, '/');
+  name = name != nullptr ? name + 1 : path;
+  const char *dot = strrchr(name, '.');
+  return dot != nullptr && dot[1] != '\0' &&
+         equalsIgnoreCase(dot + 1, extension);
+}
+
 const char *imageDitherName(uint8_t mode) {
   static const char *const names[] = {"THR", "ATK", "S2R", "S2D"};
   return mode < 4 ? names[mode] : names[0];
@@ -568,6 +579,8 @@ void FilesApp::reset() {
   directoryScanRoot = File();
   folderCount = 0;
   providerId[0] = '\0';
+  pendingPinkPath[0] = '\0';
+  pendingPinkLaunch = false;
   viewerPath[0] = '\0';
   viewerTitle[0] = '\0';
   viewerOptionsOpen = false;
@@ -1165,6 +1178,9 @@ bool FilesApp::activateIndex(uint16_t index) {
     setTransientStatus("PATH TOO LONG");
     return true;
   }
+  if (equalsIgnoreCase(providerId, "sd") && pathHasExtension(path, "pink")) {
+    return requestPinkLaunch(path);
+  }
 
   const FileViewerExtension *viewer = nullptr;
   FileViewerActivity activity = viewerActivity();
@@ -1197,6 +1213,26 @@ bool FilesApp::activateStorage() {
   }
   copyText(providerId, sizeof(providerId), provider->id);
   openDirectory("/");
+  return true;
+}
+
+bool FilesApp::requestPinkLaunch(const char *path) {
+  if (!copyText(pendingPinkPath, sizeof(pendingPinkPath), path)) {
+    setTransientStatus("PATH TOO LONG");
+    return true;
+  }
+  pendingPinkLaunch = true;
+  setTransientStatus("LAUNCHING");
+  return true;
+}
+
+bool FilesApp::consumePinkLaunch(char *path, size_t pathSize) {
+  if (!pendingPinkLaunch) {
+    return false;
+  }
+  pendingPinkLaunch = false;
+  copyText(path, pathSize, pendingPinkPath);
+  pendingPinkPath[0] = '\0';
   return true;
 }
 

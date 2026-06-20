@@ -13,6 +13,7 @@
 #include "games/tictactoe_app.h"
 #include "games/wordle_app.h"
 #include "sys/app_display.h"
+#include "sys/pink_executable.h"
 #include "sys/sd_storage.h"
 #if ENABLE_NETWORK_APPS
 #include "netapps/ai_app.h"
@@ -385,7 +386,7 @@ const AppDefinition contactLinksApp =
 
 } // namespace
 
-extern const AppDefinition apps[] = {
+const AppDefinition builtInApps[] = {
     builtInApp("tictactoe", "tictac", "T", MENU_GAMES, SCREEN_TICTACTOE,
                &ticTacToeScreen, []() { ticTacToe.reset(); },
                contextBehavior(saveTicTacToeContext, restoreTicTacToeContext)),
@@ -439,36 +440,103 @@ extern const AppDefinition apps[] = {
 #endif
 };
 
-extern const size_t appCount = sizeof(apps) / sizeof(apps[0]);
+const size_t builtInAppCount = sizeof(builtInApps) / sizeof(builtInApps[0]);
 
 ActiveApp *contactLinksRuntime() { return &contactLinksScreen; }
 
 const AppDefinition *contactLinksDefinition() { return &contactLinksApp; }
 
-const AppDefinition *findAppById(const char *id) {
-  if (id == nullptr || id[0] == '\0') {
-    return nullptr;
+bool appVisible(const AppDefinition &app) {
+  return app.visible == nullptr || app.visible();
+}
+
+void copyCatalogEntry(AppCatalogEntry &out, const AppDefinition &app) {
+  out.definition = app;
+  out.id[0] = '\0';
+  out.label[0] = '\0';
+  out.icon[0] = '\0';
+}
+
+size_t appCatalogCount(MenuCategory category) {
+  size_t count = 0;
+  for (size_t i = 0; i < builtInAppCount; i++) {
+    if (builtInApps[i].category == category && appVisible(builtInApps[i])) {
+      count++;
+    }
   }
-  for (size_t i = 0; i < appCount; i++) {
-    if (apps[i].visible != nullptr && !apps[i].visible()) {
+  return count + pinkExecutableCount(category);
+}
+
+bool appCatalogAtVisibleIndex(MenuCategory category, size_t index,
+                              AppCatalogEntry &out) {
+  size_t visibleIndex = 0;
+  for (size_t i = 0; i < builtInAppCount; i++) {
+    if (builtInApps[i].category != category || !appVisible(builtInApps[i])) {
       continue;
     }
-    if (strcmp(apps[i].id, id) == 0) {
-      return &apps[i];
+    if (visibleIndex == index) {
+      copyCatalogEntry(out, builtInApps[i]);
+      return true;
+    }
+    visibleIndex++;
+  }
+
+  return pinkExecutableDefinitionAt(category, index - visibleIndex,
+                                    &out.definition, out.id, sizeof(out.id),
+                                    out.label, sizeof(out.label), out.icon,
+                                    sizeof(out.icon));
+}
+
+bool findAppById(const char *id, AppCatalogEntry &out) {
+  if (id == nullptr || id[0] == '\0') {
+    return false;
+  }
+  for (size_t i = 0; i < builtInAppCount; i++) {
+    if (appVisible(builtInApps[i]) && strcmp(builtInApps[i].id, id) == 0) {
+      copyCatalogEntry(out, builtInApps[i]);
+      return true;
     }
   }
   if (strcmp(contactLinksApp.id, id) == 0) {
-    return &contactLinksApp;
+    copyCatalogEntry(out, contactLinksApp);
+    return true;
   }
-  return nullptr;
+
+  const MenuCategory categories[] = {
+      MENU_GAMES,
+      MENU_APPS
+#if ENABLE_NETWORK_APPS
+      ,
+      MENU_NETWORK
+#endif
+  };
+  for (MenuCategory category : categories) {
+    const size_t count = pinkExecutableCount(category);
+    for (size_t i = 0; i < count; i++) {
+      if (pinkExecutableDefinitionAt(category, i, &out.definition, out.id,
+                                     sizeof(out.id), out.label,
+                                     sizeof(out.label), out.icon,
+                                     sizeof(out.icon)) &&
+          strcmp(out.definition.id, id) == 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void refreshAppCatalog() {}
+
+bool consumeFilesPinkLaunch(char *path, size_t pathSize) {
+  return filesApp.consumePinkLaunch(path, pathSize);
 }
 
 void resetContactLinks() { contactLinks.reset(); }
 
 void resetApps() {
-  for (size_t i = 0; i < appCount; i++) {
-    if (apps[i].reset != nullptr) {
-      apps[i].reset();
+  for (size_t i = 0; i < builtInAppCount; i++) {
+    if (builtInApps[i].reset != nullptr) {
+      builtInApps[i].reset();
     }
   }
   resetContactLinks();

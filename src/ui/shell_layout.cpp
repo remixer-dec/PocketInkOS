@@ -162,50 +162,24 @@ void drawCenteredIcon(AppDisplay &display, char icon, int16_t y,
   display.setTextSize(1);
 }
 
-size_t countCategoryApps(const AppDefinition *apps, size_t appCount,
-                         MenuCategory category) {
-  size_t count = 0;
-  for (size_t i = 0; i < appCount; i++) {
-    const bool visible = apps[i].visible == nullptr || apps[i].visible();
-    if (apps[i].category == category && visible) {
-      count++;
-    }
-  }
-  return count;
-}
-
-uint8_t pageCountForCategory(const AppDefinition *apps, size_t appCount,
-                             MenuCategory category) {
-  const size_t count = countCategoryApps(apps, appCount, category);
+uint8_t pageCountForCategory(MenuCategory category) {
+  const size_t count = appCatalogCount(category);
   if (count == 0) {
     return 1;
   }
   return static_cast<uint8_t>((count + MENU_PAGE_SIZE - 1) / MENU_PAGE_SIZE);
 }
 
-const AppDefinition *appAtVisibleSlot(const AppDefinition *apps,
-                                      size_t appCount,
-                                      const MenuState &state, uint8_t slot) {
+bool appAtVisibleSlot(const MenuState &state, uint8_t slot,
+                      AppCatalogEntry &out) {
   const size_t targetIndex =
       static_cast<size_t>(state.page) * MENU_PAGE_SIZE + slot;
-  size_t visibleIndex = 0;
-  for (size_t i = 0; i < appCount; i++) {
-    const bool visible = apps[i].visible == nullptr || apps[i].visible();
-    if (apps[i].category != state.category || !visible) {
-      continue;
-    }
-    if (visibleIndex == targetIndex) {
-      return &apps[i];
-    }
-    visibleIndex++;
-  }
-  return nullptr;
+  return appCatalogAtVisibleIndex(state.category, targetIndex, out);
 }
 
-void drawMenuTitle(AppDisplay &display, const MenuState &state,
-                   const AppDefinition *apps, size_t appCount) {
+void drawMenuTitle(AppDisplay &display, const MenuState &state) {
   char title[24];
-  const uint8_t pages = pageCountForCategory(apps, appCount, state.category);
+  const uint8_t pages = pageCountForCategory(state.category);
   if (pages > 1) {
     snprintf(title, sizeof(title), "%s %u/%u", menuCategoryTitle(state.category),
              static_cast<unsigned>(state.page + 1), static_cast<unsigned>(pages));
@@ -318,29 +292,26 @@ const char *menuCategoryTitle(MenuCategory category) {
   return "GAMES";
 }
 
-void clampMenuState(MenuState &state, const AppDefinition *apps,
-                    size_t appCount) {
-  const uint8_t pages = pageCountForCategory(apps, appCount, state.category);
+void clampMenuState(MenuState &state) {
+  const uint8_t pages = pageCountForCategory(state.category);
   if (state.page >= pages) {
     state.page = pages - 1;
   }
 }
 
-void moveMenuPrevious(MenuState &state, const AppDefinition *apps,
-                      size_t appCount) {
-  clampMenuState(state, apps, appCount);
+void moveMenuPrevious(MenuState &state) {
+  clampMenuState(state);
   if (state.page > 0) {
     state.page--;
     return;
   }
   state.category = previousMenuCategory(state.category);
-  state.page = pageCountForCategory(apps, appCount, state.category) - 1;
+  state.page = pageCountForCategory(state.category) - 1;
 }
 
-void moveMenuNext(MenuState &state, const AppDefinition *apps,
-                  size_t appCount) {
-  clampMenuState(state, apps, appCount);
-  const uint8_t pages = pageCountForCategory(apps, appCount, state.category);
+void moveMenuNext(MenuState &state) {
+  clampMenuState(state);
+  const uint8_t pages = pageCountForCategory(state.category);
   if (state.page + 1 < pages) {
     state.page++;
     return;
@@ -424,7 +395,6 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
 }
 
 void drawAppMenu(AppDisplay &display, const MenuState &state,
-                 const AppDefinition *apps, size_t appCount,
                  int8_t pressedSlot) {
   display.setTextColor(1);
   display.setTextSize(2);
@@ -432,53 +402,54 @@ void drawAppMenu(AppDisplay &display, const MenuState &state,
   display.print("<");
   display.setCursor(184, 10);
   display.print(">");
-  drawMenuTitle(display, state, apps, appCount);
+  drawMenuTitle(display, state);
 
   for (uint8_t slot = 0; slot < MENU_PAGE_SIZE; slot++) {
-    const AppDefinition *app = appAtVisibleSlot(apps, appCount, state, slot);
-    if (app != nullptr) {
-      drawMenuItem(display, *app, slot, pressedSlot == slot);
+    AppCatalogEntry app;
+    if (appAtVisibleSlot(state, slot, app)) {
+      drawMenuItem(display, app.definition, slot, pressedSlot == slot);
     }
   }
 
   display.setTextSize(1);
 }
 
-const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
-                                    const AppDefinition *apps,
-                                    size_t appCount, bool &stateChanged,
-                                    int8_t *hitSlot) {
+bool hitTestAppMenu(const TouchPoint &point, MenuState &state,
+                    AppCatalogEntry &selected, bool &stateChanged,
+                    int8_t *hitSlot) {
   stateChanged = false;
   if (hitSlot != nullptr) {
     *hitSlot = -1;
   }
   if (point.y < MENU_HEADER_H) {
     if (point.x < 48) {
-      moveMenuPrevious(state, apps, appCount);
+      moveMenuPrevious(state);
       stateChanged = true;
     } else if (point.x > 152) {
-      moveMenuNext(state, apps, appCount);
+      moveMenuNext(state);
       stateChanged = true;
     }
-    return nullptr;
+    return false;
   }
 
   if (point.x < MENU_X || point.x >= EPD_WIDTH || point.y < MENU_Y ||
       point.y >= MENU_Y + MENU_ROWS * MENU_CELL_H) {
-    return nullptr;
+    return false;
   }
 
   const uint8_t col = (point.x - MENU_X) / MENU_CELL_W;
   const uint8_t row = (point.y - MENU_Y) / MENU_CELL_H;
   if (col >= MENU_COLUMNS || row >= MENU_ROWS) {
-    return nullptr;
+    return false;
   }
   const uint8_t slot = row * MENU_COLUMNS + col;
-  const AppDefinition *app = appAtVisibleSlot(apps, appCount, state, slot);
-  if (app != nullptr && hitSlot != nullptr) {
+  if (!appAtVisibleSlot(state, slot, selected)) {
+    return false;
+  }
+  if (hitSlot != nullptr) {
     *hitSlot = static_cast<int8_t>(slot);
   }
-  return app;
+  return true;
 }
 
 void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status) {

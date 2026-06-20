@@ -4,6 +4,7 @@
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
 #include "sys/battery_monitor.h"
+#include "sys/builtin_apps.h"
 #include "sys/environment_monitor.h"
 #include "sys/sd_storage.h"
 #include "sys/touch_input.h"
@@ -22,21 +23,16 @@ MenuCategory previousMenuCategory(MenuCategory category);
 MenuCategory nextMenuCategory(MenuCategory category);
 const char *menuCategoryTitle(MenuCategory category);
 
-void clampMenuState(MenuState &state, const AppDefinition *apps,
-                    size_t appCount);
-void moveMenuPrevious(MenuState &state, const AppDefinition *apps,
-                      size_t appCount);
-void moveMenuNext(MenuState &state, const AppDefinition *apps,
-                  size_t appCount);
+void clampMenuState(MenuState &state);
+void moveMenuPrevious(MenuState &state);
+void moveMenuNext(MenuState &state);
 
 void drawHomeScreen(AppDisplay &display, const ShellData &data);
 void drawAppMenu(AppDisplay &display, const MenuState &state,
-                 const AppDefinition *apps, size_t appCount,
                  int8_t pressedSlot = -1);
-const AppDefinition *hitTestAppMenu(const TouchPoint &point, MenuState &state,
-                                    const AppDefinition *apps,
-                                    size_t appCount, bool &stateChanged,
-                                    int8_t *hitSlot = nullptr);
+bool hitTestAppMenu(const TouchPoint &point, MenuState &state,
+                    AppCatalogEntry &selected, bool &stateChanged,
+                    int8_t *hitSlot = nullptr);
 
 void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status);
 bool quitDialogHitYes(const TouchPoint &point);

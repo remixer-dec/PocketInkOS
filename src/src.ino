@@ -17,6 +17,7 @@
 #include "sys/inactivity_sleep_guard.h"
 #include "sys/power_control.h"
 #include "sys/pcf85063_clock.h"
+#include "sys/pink_executable.h"
 #include "sys/rtc_context.h"
 #include "sys/sleep_clock_context.h"
 #include "sys/sd_storage.h"
@@ -40,6 +41,7 @@ TextInputController textInput;
 Screen screen = SCREEN_HOME;
 ActiveApp *activeApp = nullptr;
 const AppDefinition *activeDefinition = nullptr;
+AppCatalogEntry activeDefinitionEntry;
 bool dirty = true;
 bool confirmQuit = false;
 bool confirmPower = false;
@@ -70,17 +72,65 @@ unsigned long inactivityDeepSleepMs();
 void noteUserActivity();
 void refreshBatteryAndCheckCutoff();
 void shutdownForLowBattery();
+bool handlePendingFilesPinkLaunch();
+
+bool sameAppDefinition(const AppDefinition *current,
+                       const AppDefinition *nextDefinition) {
+  if (current == nullptr || nextDefinition == nullptr) {
+    return false;
+  }
+  if (current->id == nullptr || nextDefinition->id == nullptr) {
+    return current == nextDefinition;
+  }
+  return strcmp(current->id, nextDefinition->id) == 0;
+}
+
+void storeActiveDefinition(const AppDefinition &definition) {
+  activeDefinitionEntry.definition = definition;
+  activeDefinitionEntry.id[0] = '\0';
+  activeDefinitionEntry.label[0] = '\0';
+  activeDefinitionEntry.icon[0] = '\0';
+
+  if (definition.id != nullptr) {
+    strncpy(activeDefinitionEntry.id, definition.id,
+            sizeof(activeDefinitionEntry.id) - 1);
+    activeDefinitionEntry.id[sizeof(activeDefinitionEntry.id) - 1] = '\0';
+    activeDefinitionEntry.definition.id = activeDefinitionEntry.id;
+  }
+  if (definition.label != nullptr) {
+    strncpy(activeDefinitionEntry.label, definition.label,
+            sizeof(activeDefinitionEntry.label) - 1);
+    activeDefinitionEntry.label[sizeof(activeDefinitionEntry.label) - 1] =
+        '\0';
+    activeDefinitionEntry.definition.label = activeDefinitionEntry.label;
+  }
+  if (definition.icon != nullptr) {
+    strncpy(activeDefinitionEntry.icon, definition.icon,
+            sizeof(activeDefinitionEntry.icon) - 1);
+    activeDefinitionEntry.icon[sizeof(activeDefinitionEntry.icon) - 1] = '\0';
+    activeDefinitionEntry.definition.icon = activeDefinitionEntry.icon;
+  }
+
+  activeDefinition = &activeDefinitionEntry.definition;
+}
 
 void switchTo(Screen next, ActiveApp *nextApp = nullptr,
               const AppDefinition *nextDefinition = nullptr) {
+  const bool sameDefinition =
+      sameAppDefinition(activeDefinition, nextDefinition);
   if (!activePausedForDialog && activeDefinition != nullptr &&
-      activeDefinition != nextDefinition &&
+      !sameDefinition &&
       activeDefinition->behavior.onExit != nullptr) {
     activeDefinition->behavior.onExit();
   }
   screen = next;
   activeApp = nextApp;
-  activeDefinition = nextDefinition;
+  if (nextDefinition != nullptr) {
+    storeActiveDefinition(*nextDefinition);
+  } else {
+    activeDefinition = nullptr;
+    activeDefinitionEntry = AppCatalogEntry{};
+  }
   activePausedForDialog = false;
   if (screen == SCREEN_HOME) {
     refreshBatteryAndCheckCutoff();
@@ -414,6 +464,18 @@ void handlePowerDoubleButton() {
 }
 
 void handlePowerLongButton() {
+  if (confirmPower) {
+    confirmPower = false;
+    dirty = true;
+    return;
+  }
+  if (confirmQuit) {
+    return;
+  }
+  if (activeDefinition != nullptr &&
+      handleAppEvent(activeDefinition->behavior.onPowerLong)) {
+    return;
+  }
   openPowerDialog();
 }
 
@@ -568,13 +630,17 @@ bool handlePowerDialogTouch(const TouchPoint &point) {
 }
 
 void drawMenu() {
-  clampMenuState(menuState, apps, appCount);
-  drawAppMenu(display, menuState, apps, appCount, menuPressedSlot);
+  clampMenuState(menuState);
+  drawAppMenu(display, menuState, menuPressedSlot);
 }
 
 void launchApp(const AppDefinition &app) {
   if (app.reset != nullptr) {
     app.reset();
+  }
+  if (app.screen == SCREEN_PINK_EXECUTABLE &&
+      !pinkExecutableLaunchById(app.id)) {
+    return;
   }
   if (app.launch != nullptr) {
     app.launch();
@@ -585,18 +651,34 @@ void launchApp(const AppDefinition &app) {
 void handleMenuTouch(const TouchPoint &point) {
   bool stateChanged = false;
   int8_t hitSlot = -1;
-  const AppDefinition *selected =
-      hitTestAppMenu(point, menuState, apps, appCount, stateChanged, &hitSlot);
+  AppCatalogEntry selected;
+  const bool hasSelection =
+      hitTestAppMenu(point, menuState, selected, stateChanged, &hitSlot);
   if (stateChanged) {
     dirty = true;
   }
-  if (selected != nullptr) {
+  if (hasSelection) {
     menuPressedSlot = hitSlot;
     redrawActiveScreenPartial();
     delay(MENU_PRESS_HIGHLIGHT_MS);
     menuPressedSlot = -1;
-    launchApp(*selected);
+    launchApp(selected.definition);
   }
+}
+
+bool handlePendingFilesPinkLaunch() {
+  char path[288];
+  AppCatalogEntry app;
+  if (!consumeFilesPinkLaunch(path, sizeof(path))) {
+    return false;
+  }
+  if (!pinkExecutableLaunchPath(path, &app.definition, app.id, sizeof(app.id),
+                                app.label, sizeof(app.label), app.icon,
+                                sizeof(app.icon))) {
+    return false;
+  }
+  switchTo(app.definition.screen, app.definition.runtime, &app.definition);
+  return true;
 }
 
 void drawActiveScreen() {
@@ -910,15 +992,17 @@ void restoreRetainedContextAfterSleep() {
   restoreWifiOn(retainedSleepContext.system.wifiOn);
   menuState.category = retainedSleepContext.navigation.menuCategory;
   menuState.page = retainedSleepContext.navigation.menuPage;
-  clampMenuState(menuState, apps, appCount);
+  clampMenuState(menuState);
 
   if (retainedSleepContext.navigation.hasActiveApp) {
-    const AppDefinition *app = findAppById(retainedSleepContext.navigation.appId);
-    if (app != nullptr) {
-      launchApp(*app);
-      if (app->behavior.onRestoreContext != nullptr) {
-        app->behavior.onRestoreContext(retainedSleepContext.app.appData,
-                                       retainedSleepContext.app.appDataLength);
+    AppCatalogEntry app;
+    if (findAppById(retainedSleepContext.navigation.appId, app)) {
+      launchApp(app.definition);
+      if (activeDefinition != nullptr &&
+          activeDefinition->behavior.onRestoreContext != nullptr) {
+        activeDefinition->behavior.onRestoreContext(
+            retainedSleepContext.app.appData,
+            retainedSleepContext.app.appDataLength);
       }
       rtcContextClear();
       dirty = true;
@@ -988,6 +1072,8 @@ void setup() {
   environmentMonitor.refresh();
   logSetupStage("sd");
   sdStorageBegin();
+  pinkExecutableRefreshApps();
+  refreshAppCatalog();
 
   logSetupStage("buttons");
   shellButtonsBegin({handleMenuButton, handleMenuDoubleButton,
@@ -1030,7 +1116,12 @@ void loop() {
         delay(1);
         return;
       }
-      if (handleScreenTouch(point)) {
+      const bool screenTouched = handleScreenTouch(point);
+      if (handlePendingFilesPinkLaunch()) {
+        delay(1);
+        return;
+      }
+      if (screenTouched) {
         redrawActiveScreenPartial();
       }
     }
@@ -1050,12 +1141,18 @@ void loop() {
   }
 
   if (sdStorageUpdate()) {
-    clampMenuState(menuState, apps, appCount);
+    pinkExecutableRefreshApps();
+    refreshAppCatalog();
+    clampMenuState(menuState);
     dirty = true;
   }
 
   if (activeApp != nullptr && activeApp->update()) {
     dirty = true;
+  }
+  if (handlePendingFilesPinkLaunch()) {
+    delay(1);
+    return;
   }
 
   checkInactivitySleep();

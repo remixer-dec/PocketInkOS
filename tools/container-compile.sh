@@ -45,6 +45,7 @@ FILES=( \
   "$ROOT/src/sys/environment_monitor.cpp" \
   "$ROOT/src/sys/inactivity_sleep_guard.cpp" \
   "$ROOT/src/sys/pcf85063_clock.cpp" \
+  "$ROOT/src/sys/pink_executable.cpp" \
   "$ROOT/src/sys/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/sd_storage.cpp" \

@@ -27,6 +27,7 @@ public:
   bool consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w, int16_t *h);
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
+  bool consumePinkLaunch(char *path, size_t pathSize);
 
 private:
   enum class Mode : uint8_t { Scroll = 0, Select = 1 };
@@ -81,7 +82,9 @@ private:
   char providerId[12] = {};
   char viewerPath[FILES_PATH_CAPACITY] = {};
   char viewerTitle[FILES_LABEL_CAPACITY] = {};
+  char pendingPinkPath[FILES_PATH_CAPACITY] = {};
   File directoryScanRoot;
+  bool pendingPinkLaunch = false;
 
   void loadDirectory();
   bool loadDirectoryFast(const FileProvider *provider);
@@ -103,6 +106,7 @@ private:
   void scrollBy(int8_t delta);
   bool activateIndex(uint16_t index);
   bool activateStorage();
+  bool requestPinkLaunch(const char *path);
   bool openViewer(const char *path, const char *title, const char *viewerId);
   bool providerMounted() const;
   void closeViewer();
