@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Design philosophy, UX decisions, system flow, and input model for PocketInkOS." />
+    <meta name="robots" content="index, follow" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Concepts &amp; Design - Pocket Ink OS" />
+    <meta property="og:description" content="Design philosophy, UX decisions, system flow, and input model for PocketInkOS." />
+    <meta property="og:url" content="https://remixer-dec.github.io/PocketInkOS/concepts.html" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Concepts &amp; Design - Pocket Ink OS" />
+    <meta name="twitter:description" content="Design philosophy, UX decisions, system flow, and input model for PocketInkOS." />
+    <link rel="canonical" href="https://remixer-dec.github.io/PocketInkOS/concepts.html" />
+    <title>Concepts &amp; Design - Pocket Ink OS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quantico&family=Azeret+Mono:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Unbounded:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script type="importmap">
+      {
+        "imports": {
+          "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js",
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      @font-face {
+        font-family: "IconASCII";
+        src: url("./iconASCII.ttf") format("truetype");
+        font-display: block;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css?v=static" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Concepts & Design - Pocket Ink OS","description":"Design philosophy, UX decisions, system flow, and input model for PocketInkOS.","isPartOf":{"@type":"TechArticle","name":"PocketInkOS Documentation"},"mainEntityOfPage":"https://remixer-dec.github.io/PocketInkOS/concepts.html"}</script>
+    <script type="module" src="./hydrate.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="site-shell paper-theme heading-grotesk" data-static-docs>
+      <div class="theme-switch" aria-label="Theme switch">
+        <button type="button" class="active" data-theme-option="paper" aria-pressed="true">Paper</button>
+        <button type="button" data-theme-option="ink" aria-pressed="false">Ink</button>
+      </div>
+      <div class="page-frame">
+        <aside class="left-rail" aria-label="Documentation navigation">
+          <a class="brand-card" href="./index.html" aria-label="PocketInkOS documentation home">
+            <svg class="brand-mark" viewBox="0 0 40 72" aria-hidden="true" focusable="false">
+              <path class="feather-shape" d="M20 5C10 12 10 27 13 38c2 6 5 10 7 12 2-2 5-6 7-12 3-11 3-26-7-33Z" />
+              <path class="feather-spine" d="M20 8V58" />
+              <path class="feather-barb" d="M20 11q-1 1-2 2M20 11q1 1 2 2M20 14q-2 2-4 3M20 14q2 2 4 3M20 17q-3 2-6 4M20 17q3 2 6 4M20 20q-4 3-8 5M20 20q4 3 8 5M20 23q-4 3-8 5M20 23q4 3 8 5M20 26q-4 3-8 5M20 26q4 3 8 5M20 29q-4 3-7 5M20 29q4 3 7 5M20 32q-4 3-7 5M20 32q4 3 7 5M20 35q-3 3-6 5M20 35q3 3 6 5M20 38q-3 3-5 5M20 38q3 3 5 5M20 41q-2 2-4 4M20 41q2 2 4 4M20 44q-2 2-3 3M20 44q2 2 3 3" />
+              <path class="ink-jar" d="M10 60h20l-2 10H12l-2-10Z" />
+              <path class="ink-lip" d="M8 57h24v5H8Z" />
+              <path class="ink-fill" d="M13 66h14l-.5 2H13.5l-.5-2Z" />
+            </svg>
+            <span>
+              <strong class="brand-word">Pocket Ink <sup>OS</sup></strong>
+              <small>firmware docs</small>
+            </span>
+          </a>
+          <div class="page-register" aria-label="Documentation pages">
+            <p>Pages</p>
+            <nav class="register-screen"><a href="./index.html">Home</a>
+              <a href="./concepts.html" class="active">Concepts &amp; Design</a>
+              <a href="./developers.html">For Developers</a></nav>
+          </div>
+        </aside>
+
+        <main id="main" class="doc-main" tabindex="-1">
+          <section id="minimalism" class="doc-section">
+            <p class="eyebrow">Principle</p>
+            <h2>Digital Minimalism</h2>
+            <p><span class="brand-word">PocketInk<sup>OS</sup></span> was inspired by old PDAs. The OS favors deliberate entry points, monochrome UI, and pleasant UX as much as a small screen can deliver.</p>
+              <p>The design is shaped by a 200x200 e-ink display with 2 colors and limited refresh rate, leading to careful design approach, to tighten the UI elements to capture every touch accurately.</p>
+            
+            
+            <div class="rule-list"><article><strong>Finite surfaces</strong><p>Every screen should expose a small number of choices so the user can focus on what's on the screen without any distractions. Status bar only appears where you want to see it.</p></article>
+                <article><strong>Application concept</strong><p>Everyone is familiar with applications and icons on all modern operating systems, here it is exactly the same. Taking inspiration from old PDAs and phones, the UI suggests a grid-based app menu system. Each application is independent and self-sustained.</p></article></div>
+            
+          </section>
+
+          <section id="ux" class="doc-section">
+            <p class="eyebrow">Design record</p>
+            <h2>UX Design Decisions</h2>
+            <p>The UX priority is predictable operation on a small 200x200 touch surface with two reliable hardware buttons.</p>
+              <p>Touch is useful, but it is not treated as the only source of truth. Screens should avoid tiny hit targets, ambiguous taps, and destructive actions that depend on perfect touch accuracy.</p>
+            
+            
+            <div class="rule-list"><article><strong>Large touch targets</strong><p>Interactive touch elements should be large enough to select confidently on the physical display. If a control cannot be made large enough, the screen should use selection plus confirmation instead of immediate action.</p></article>
+                <article><strong>PWR confirms risky input</strong><p>When touch cannot be made reliable, use the PWR button as a deliberate confirmation step. This applies to destructive actions, dense grids, and screens where a wrong tap would be hard to recover from.</p></article>
+                <article><strong>Visible state</strong><p>Show the current mode, selected cell, or pending action before committing. The user should understand what PWR or the next tap will do without remembering hidden state.</p></article>
+                <article><strong>Monochrome first</strong><p>Design in black and white, visible elements, distinhuisible components, readable text.</p></article>
+                <article><strong>Refresh discipline</strong><p>Prefer static layouts and partial redraws where possible. Animation is allowed only for progress bars.</p></article>
+                <article><strong>Network is optional</strong><p>The OS should remain useful without network apps. Online features live in a separate menu category and can be compiled out.</p></article></div>
+            
+          </section>
+
+          <section id="flow" class="doc-section">
+            <p class="eyebrow">Runtime model</p>
+            <h2>System UI Flow</h2>
+            <p>The OS runs as a single active screen with optional active app ownership. <code>switchTo()</code> changes the screen, assigns an <code>ActiveApp</code> wrapper when needed, and marks the display dirty.</p>
+              <p>Rendering clears the framebuffer, draws the active screen, optionally overlays the quit dialog, then flushes the e-paper display.</p>
+            
+            <div class="spec-list"><article><strong>Boot</strong><p>Setup initializes serial, display, touch, environment snapshot, buttons, app state, and the button polling task.</p></article>
+                <article><strong>Home</strong><p>Home shows the Pocket Ink mark, date/time when available, Wi-Fi status when network apps are enabled, and ambient/chip readings.</p></article>
+                <article><strong>Menu</strong><p>The launcher is a 3x3 grid. Categories are Games, Apps, and Network when <code>ENABLE_NETWORK_APPS</code> is enabled.</p></article>
+                <article><strong>Apps</strong><p>App screens draw through a common <code>ActiveApp</code> interface with <code>draw</code>, <code>handleTouch</code>, <code>update</code>, and <code>hasActiveSession</code> hooks.</p></article>
+                <article><strong>Quit</strong><p>Long-running sessions use a confirmation dialog before returning to the menu.</p></article></div>
+            
+            
+          </section>
+
+          <section id="buttons" class="doc-section">
+            <p class="eyebrow">Input contract</p>
+            <h2>Buttons and Meanings</h2>
+            <p><span class="brand-word">PocketInk<sup>OS</sup></span> combines touch with two hardware buttons. Touch selects items and performs direct manipulation; the two buttons provide global navigation and app-specific shortcuts.</p>
+            
+            <div class="spec-list"><article><strong>Menu/SUN single press</strong><p>From home, opens the menu. From the menu, returns home. In keyboards, toggles caps. In active sessions, either delegates to the app or opens quit confirmation.</p></article>
+                <article><strong>Menu/SUN double press</strong><p>Delegates to the active app when supported. In keyboard screens, switches between T9 and QWERTY zoom input.</p></article>
+                <article><strong>Menu/SUN long press</strong><p>Delegates to the active app when supported, otherwise opens quit confirmation for active sessions.</p></article>
+                <article><strong>PWR single or long press</strong><p>From home, opens Contact Links. In Contact Links, returns home. In games/apps, this is a contextual action such as opening a keyboard, toggling a mode, clearing paint, or stepping an app state.</p></article>
+                <article><strong>Touch</strong><p>Touch selects menu cells, presses on-screen buttons, moves pieces, paints, scrolls feeds, and enters keyboard characters depending on the active screen.</p></article></div>
+            
+            
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

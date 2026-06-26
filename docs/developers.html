@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <meta name="robots" content="index, follow" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="For Developers - Pocket Ink OS" />
+    <meta property="og:description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <meta property="og:url" content="https://remixer-dec.github.io/PocketInkOS/developers.html" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="For Developers - Pocket Ink OS" />
+    <meta name="twitter:description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <link rel="canonical" href="https://remixer-dec.github.io/PocketInkOS/developers.html" />
+    <title>For Developers - Pocket Ink OS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quantico&family=Azeret+Mono:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Unbounded:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script type="importmap">
+      {
+        "imports": {
+          "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js",
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      @font-face {
+        font-family: "IconASCII";
+        src: url("./iconASCII.ttf") format("truetype");
+        font-display: block;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css?v=static" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"For Developers - Pocket Ink OS","description":"Build configuration, driver documentation, roadmap, and system notes for PocketInkOS.","isPartOf":{"@type":"TechArticle","name":"PocketInkOS Documentation"},"mainEntityOfPage":"https://remixer-dec.github.io/PocketInkOS/developers.html"}</script>
+    <script type="module" src="./hydrate.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="site-shell paper-theme heading-grotesk" data-static-docs>
+      <div class="theme-switch" aria-label="Theme switch">
+        <button type="button" class="active" data-theme-option="paper" aria-pressed="true">Paper</button>
+        <button type="button" data-theme-option="ink" aria-pressed="false">Ink</button>
+      </div>
+      <div class="page-frame">
+        <aside class="left-rail" aria-label="Documentation navigation">
+          <a class="brand-card" href="./index.html" aria-label="PocketInkOS documentation home">
+            <svg class="brand-mark" viewBox="0 0 40 72" aria-hidden="true" focusable="false">
+              <path class="feather-shape" d="M20 5C10 12 10 27 13 38c2 6 5 10 7 12 2-2 5-6 7-12 3-11 3-26-7-33Z" />
+              <path class="feather-spine" d="M20 8V58" />
+              <path class="feather-barb" d="M20 11q-1 1-2 2M20 11q1 1 2 2M20 14q-2 2-4 3M20 14q2 2 4 3M20 17q-3 2-6 4M20 17q3 2 6 4M20 20q-4 3-8 5M20 20q4 3 8 5M20 23q-4 3-8 5M20 23q4 3 8 5M20 26q-4 3-8 5M20 26q4 3 8 5M20 29q-4 3-7 5M20 29q4 3 7 5M20 32q-4 3-7 5M20 32q4 3 7 5M20 35q-3 3-6 5M20 35q3 3 6 5M20 38q-3 3-5 5M20 38q3 3 5 5M20 41q-2 2-4 4M20 41q2 2 4 4M20 44q-2 2-3 3M20 44q2 2 3 3" />
+              <path class="ink-jar" d="M10 60h20l-2 10H12l-2-10Z" />
+              <path class="ink-lip" d="M8 57h24v5H8Z" />
+              <path class="ink-fill" d="M13 66h14l-.5 2H13.5l-.5-2Z" />
+            </svg>
+            <span>
+              <strong class="brand-word">Pocket Ink <sup>OS</sup></strong>
+              <small>firmware docs</small>
+            </span>
+          </a>
+          <div class="page-register" aria-label="Documentation pages">
+            <p>Pages</p>
+            <nav class="register-screen"><a href="./index.html">Home</a>
+              <a href="./concepts.html">Concepts &amp; Design</a>
+              <a href="./developers.html" class="active">For Developers</a></nav>
+          </div>
+        </aside>
+
+        <main id="main" class="doc-main" tabindex="-1">
+          <section id="build" class="doc-section">
+            <p class="eyebrow">Build note</p>
+            <h2>Build Configuration</h2>
+            <p><span class="brand-word">PocketInk<sup>OS</sup></span> uses <code>arduino-cli</code> to install the ESP32 board core, install project libraries, and compile the sketch. Install Arduino CLI first using the <a class="inline-link" href="https://docs.arduino.cc/arduino-cli/installation/" target="_blank" rel="noreferrer">official Arduino installation guide</a>.</p>
+              <p>Firmware uploads are handled by <code>esptool</code> v5.x. Install esptool using the <a class="inline-link" href="https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html" target="_blank" rel="noreferrer">official Espressif installation guide</a>. Before building, find the connected serial port and update <code>PORT</code> in <code>bin/config.sh</code>.</p>
+              <p><code>bin/app.sh</code> generates compile wrappers for nested source files, builds <code>src/src.ino</code>, verifies that the app binary exists, and uploads it with <code>esptool</code>.</p>
+              <p>Network apps are enabled by default. Build with <code>ENABLE_NETWORK_APPS=0</code> when you want a local-only image without Wi-Fi, feeds, weather, or AI.</p>
+            <div class="command-list"><article><strong>Install Arduino core and libraries</strong><div class="command-row"><code class="command-value">bin/all_libs.sh</code></div><p>Installs the ESP32 Arduino core plus the project libraries used by the firmware.</p></article>
+                <article><strong>Find the connected port</strong><div class="command-tabs" role="tablist" aria-label="Find the connected port"><button type="button" class="active" role="tab" aria-selected="false">macOS</button><button type="button" class="" role="tab" aria-selected="false">Linux</button></div><div class="command-row"><code class="command-value">ls /dev/cu.usbmodem* /dev/cu.usbserial* 2&gt;/dev/null</code></div><p>Use the matching device path as <code>PORT</code> in <code>bin/config.sh</code>.</p></article>
+                <article><strong>Edit device target</strong><div class="command-row"><code class="command-value">$EDITOR bin/config.sh</code></div><p>Set <code>PORT</code> before compiling or uploading. Keep the ESP32-S3 <code>FQBN</code> unless the board target changes.</p></article>
+                <article><strong>Build and upload</strong><div class="command-row"><code class="command-value">bin/app.sh</code></div><p>Compiles the firmware for the configured ESP32-S3 board and uploads the app binary with <code>esptool</code>.</p></article>
+                <article><strong>Build and upload without network apps</strong><div class="command-row"><code class="command-value">ENABLE_NETWORK_APPS=0 bin/app.sh</code></div><p>Compiles without optional network app sources and without the Network menu category.</p></article></div>
+            <div class="spec-list"><article><strong>Arduino CLI</strong><p>Install <code>arduino-cli</code> before running project scripts. Arduino documents Homebrew, install-script, and binary-download paths for Linux and macOS.</p><a class="text-link" href="https://docs.arduino.cc/arduino-cli/installation/" target="_blank" rel="noreferrer">Arduino CLI installation</a></article>
+                <article><strong>esptool</strong><p>Install <code>esptool</code> v5.x before uploading firmware. Espressif documents pip, virtual environment, and binary-release installation paths.</p><a class="text-link" href="https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html" target="_blank" rel="noreferrer">esptool installation</a></article>
+                <article><strong>Device target</strong><p><code>bin/config.sh</code> sets <code>PORT</code>, <code>UPLOAD_SPEED</code>, <code>FQBN</code>, and <code>ESPTOOL</code>. On macOS the port usually appears under <code>/dev/cu.usbmodem*</code> or <code>/dev/cu.usbserial*</code>; on Linux it usually appears under <code>/dev/ttyACM*</code> or <code>/dev/ttyUSB*</code>.</p></article>
+                <article><strong>Credential setup</strong><p>Copy <code>.env.example</code> to <code>.env</code>, then edit <code>.env</code> with local values when network apps or contact metadata need runtime credentials.</p></article>
+                <article><strong>Wi-Fi</strong><p>Set <code>WIFI_SSID</code>, <code>WIFI_PASSWORD</code>, and <code>WIFI_DISPLAY_NAME</code> for the Wi-Fi app and time sync.</p></article>
+                <article><strong>Contact card</strong><p>Feel free to set all the contact details if you want to use the device as a business card.</p></article>
+                <article><strong>Weather</strong><p>Set <code>WEATHER_LATITUDE</code> and <code>WEATHER_LONGITUDE</code> for Weather app to link your location.</p></article>
+                <article><strong>AI</strong><p>Set <code>AI_API_BASE_URL</code>, <code>AI_API_KEY</code>, <code>AI_MODEL_PRIMARY</code>, and <code>AI_MODEL_SECONDARY</code> for the AI app.</p></article></div>
+            
+            
+          </section>
+
+          <section id="drivers" class="doc-section">
+            <p class="eyebrow">Hardware layer</p>
+            <h2>Drivers Included</h2>
+            <p>The firmware wraps hardware access behind small system modules. Application code draws through <code>AppDisplay</code>, reads touch through <code>TouchInput</code>, and receives button events through <code>SmartButton</code>.</p>
+            
+            <div class="spec-list"><article><strong>E-paper display</strong><p>200x200 monochrome e-paper driven over SPI2 through <code>epaper_driver_display</code>; supports full refresh, partial refresh, and a 5 KB framebuffer.</p></article>
+                <article><strong>Touch controller</strong><p>FT6336-compatible touch over I2C at address <code>0x38</code>; a 5 ms FreeRTOS poll task queues down, move, and up events.</p></article>
+                <article><strong>Buttons</strong><p><code>BOOT_BUTTON_PIN</code> on GPIO0 and <code>PWR_BUTTON_PIN</code> on GPIO18 are debounced through <code>SmartButton</code> with single, double, and long-press events.</p></article>
+                <article><strong>Environment</strong><p>SHTC3 ambient temperature/humidity on the shared I2C bus plus ESP chip temperature through the available ESP-IDF temperature sensor API.</p></article>
+                <article><strong>Clock</strong><p><code>DeviceClock</code> keeps local time in firmware. PCF85063 RTC support exists behind <code>ENABLE_RTC_CLOCK</code> and is disabled by default.</p></article>
+                <article><strong>Audio</strong><p>ES8311 codec setup and I2S PCM16 capture at 16 kHz are used by the AI voice path.</p></article></div>
+            
+            
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
