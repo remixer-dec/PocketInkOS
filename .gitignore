@@ -2,9 +2,13 @@
 build
 .env
 src/secrets_config.h
+src/__autogen_module_*.cpp
+src/__autogen_module_*.c
 
 .opencode-container-id
 /build/
 /reference-project/
 node_modules
 package.json
+fonts/to_convert
+tools/fontconvert

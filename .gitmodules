@@ -1,0 +1,3 @@
+[submodule "src/tts/InflectNanoTTS"]
+	path = src/tts/InflectNanoTTS
+	url = git@github.com:remixer-dec/InflectNanoTTS.cpp.git

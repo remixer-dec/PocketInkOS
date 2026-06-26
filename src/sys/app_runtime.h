@@ -10,6 +10,10 @@
 #define ENABLE_NETWORK_APPS 1
 #endif
 
+#ifndef ENABLE_TTS
+#define ENABLE_TTS 0
+#endif
+
 enum Screen {
   SCREEN_HOME,
   SCREEN_KEYBOARD,
@@ -30,6 +34,10 @@ enum Screen {
   SCREEN_FILES,
   SCREEN_PINK_EXECUTABLE,
   SCREEN_CONTACT_LINKS
+#if ENABLE_TTS
+  ,
+  SCREEN_TTS
+#endif
 #if ENABLE_NETWORK_APPS
   ,
   SCREEN_WIFI,

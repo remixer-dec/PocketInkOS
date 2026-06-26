@@ -15,6 +15,9 @@
 #include "sys/app_display.h"
 #include "sys/pink_executable.h"
 #include "sys/sd_storage.h"
+#if ENABLE_TTS
+#include "apps/tts_app.h"
+#endif
 #if ENABLE_NETWORK_APPS
 #include "netapps/ai_app.h"
 #include "netapps/hn_app.h"
@@ -39,6 +42,9 @@ DeghostApp deghostApp;
 GfxApp gfxApp;
 FilesApp filesApp;
 ContactLinksApp contactLinks;
+#if ENABLE_TTS
+TtsApp ttsApp;
+#endif
 #if ENABLE_NETWORK_APPS
 WifiApp wifiApp;
 RedditApp redditApp;
@@ -68,6 +74,9 @@ AppScreen<DeghostApp, true> deghostScreen(deghostApp);
 AppScreen<GfxApp, true> gfxScreen(gfxApp);
 AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
+#if ENABLE_TTS
+AppScreen<TtsApp, true> ttsScreen(ttsApp);
+#endif
 #if ENABLE_NETWORK_APPS
 AppScreen<WifiApp, true> wifiScreen(wifiApp);
 AppScreen<RedditApp, true> redditScreen(redditApp);
@@ -236,6 +245,18 @@ char wifiIconCharForState(WifiDisplayState state) {
 }
 #endif
 
+#if ENABLE_TTS
+void stopTtsAudio() { ttsApp.stopAudio(); }
+AppEventResult handleTtsMenu() { return dirtyIfHandled(ttsApp.handleMenuButton()); }
+AppEventResult handleTtsMenuDouble() {
+  return dirtyIfHandled(ttsApp.handleMenuDoubleButton());
+}
+AppEventResult handleTtsMenuLong() {
+  return dirtyIfHandled(ttsApp.handleMenuLongButton());
+}
+AppEventResult handleTtsPower() { return dirtyIfHandled(ttsApp.handlePowerButton()); }
+#endif
+
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
                          MenuCategory category, Screen screen,
                          ActiveApp *runtime) {
@@ -267,6 +288,17 @@ AppDefinition builtInAppWhen(const char *id, const char *label,
   AppDefinition app = builtInApp(id, label, icon, category, screen, runtime);
   app.visible = visible;
   app.reset = reset;
+  return app;
+}
+
+AppDefinition builtInAppWhen(const char *id, const char *label,
+                             const char *icon, MenuCategory category,
+                             Screen screen, ActiveApp *runtime,
+                             AppVisibleHandler visible, AppCallback reset,
+                             AppBehavior behavior) {
+  AppDefinition app =
+      builtInAppWhen(id, label, icon, category, screen, runtime, visible, reset);
+  app.behavior = behavior;
   return app;
 }
 
@@ -379,6 +411,18 @@ AppBehavior aiBehavior() {
 }
 #endif
 
+#if ENABLE_TTS
+AppBehavior ttsBehavior() {
+  AppBehavior behavior;
+  behavior.onExit = stopTtsAudio;
+  behavior.onMenu = handleTtsMenu;
+  behavior.onMenuDouble = handleTtsMenuDouble;
+  behavior.onMenuLong = handleTtsMenuLong;
+  behavior.onPower = handleTtsPower;
+  return behavior;
+}
+#endif
+
 const AppDefinition contactLinksApp =
     builtInApp("contact_links", "contact", "C", MENU_APPS,
                SCREEN_CONTACT_LINKS, &contactLinksScreen,
@@ -426,6 +470,12 @@ const AppDefinition builtInApps[] = {
                        &filesScreen, sdStorageMounted,
                        []() { filesApp.reset(); },
                        filesBehavior())
+#if ENABLE_TTS
+    ,
+    builtInAppWhen("tts", "tts", "S", MENU_APPS, SCREEN_TTS, &ttsScreen,
+                   sdStorageMounted, []() { ttsApp.reset(); },
+                   ttsBehavior())
+#endif
 #if ENABLE_NETWORK_APPS
     ,
     builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen),
