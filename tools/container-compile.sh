@@ -105,6 +105,7 @@ FILES=( \
   "$ROOT/src/sys/audio_power.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
+  "$ROOT/src/apps/calendar_app.cpp" \
   "$ROOT/src/apps/calculator_app.cpp" \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
@@ -136,6 +137,7 @@ FILES=( \
   "$ROOT/src/sys/shell_buttons.cpp" \
   "$ROOT/src/ui/components/keyboard_component.cpp" \
   "$ROOT/src/ui/components/audio_player_component.cpp" \
+  "$ROOT/src/ui/components/date_time_picker_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \
   "$ROOT/src/apps/paint_app.cpp" \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \

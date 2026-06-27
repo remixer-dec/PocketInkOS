@@ -1,4 +1,5 @@
 #include "sys/builtin_apps.h"
+#include "apps/calendar_app.h"
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
 #include "apps/deghost_app.h"
@@ -36,6 +37,7 @@ extern AppDisplay display;
 namespace {
 
 CalculatorApp calculator;
+CalendarApp calendar;
 QrApp qrApp;
 PaintApp paintApp;
 DeghostApp deghostApp;
@@ -68,6 +70,7 @@ AppScreen<SudokuApp> sudokuScreen(sudoku);
 AppScreen<WordleApp, true> wordleScreen(wordle);
 AppScreen<ChessApp, true> chessScreen(chess);
 AppScreen<CalculatorApp, true> calculatorScreen(calculator);
+AppScreen<CalendarApp, true> calendarScreen(calendar);
 AppScreen<QrApp, true> qrScreen(qrApp);
 TouchlessAppScreen<PaintApp> paintScreen(paintApp);
 AppScreen<DeghostApp, true> deghostScreen(deghostApp);
@@ -458,6 +461,8 @@ const AppDefinition builtInApps[] = {
                []() { gfxApp.reset(); }, gfxBehavior()),
     builtInApp("calculator", "calc", "=", MENU_APPS, SCREEN_CALCULATOR,
                &calculatorScreen, []() { calculator.reset(); }),
+    builtInApp("calendar", "calendar", "C", MENU_APPS, SCREEN_CALENDAR,
+               &calendarScreen, []() { calendar.reset(); }),
     builtInApp("qr", "qr", "Q", MENU_APPS, SCREEN_QR, &qrScreen,
                []() { qrApp.reset(); },
                contextBehavior(saveQrContext, restoreQrContext)),

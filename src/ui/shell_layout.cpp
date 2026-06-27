@@ -8,7 +8,9 @@ namespace {
 
 static const uint8_t MENU_COLUMNS = 3;
 static const uint8_t MENU_ROWS = 3;
-static const uint8_t MENU_PAGE_SIZE = MENU_COLUMNS * MENU_ROWS;
+static const uint8_t MENU_GRID_SIZE = MENU_COLUMNS * MENU_ROWS;
+static const uint8_t MENU_PAGE_SIZE = MENU_GRID_SIZE - 1;
+static const uint8_t MENU_NEXT_SLOT = MENU_GRID_SIZE - 1;
 static const int16_t MENU_X = 20;
 static const int16_t MENU_Y = 38;
 static const int16_t MENU_CELL_W = 60;
@@ -167,6 +169,9 @@ uint8_t pageCountForCategory(MenuCategory category) {
   if (count == 0) {
     return 1;
   }
+  if (count <= MENU_GRID_SIZE) {
+    return 1;
+  }
   return static_cast<uint8_t>((count + MENU_PAGE_SIZE - 1) / MENU_PAGE_SIZE);
 }
 
@@ -175,6 +180,10 @@ bool appAtVisibleSlot(const MenuState &state, uint8_t slot,
   const size_t targetIndex =
       static_cast<size_t>(state.page) * MENU_PAGE_SIZE + slot;
   return appCatalogAtVisibleIndex(state.category, targetIndex, out);
+}
+
+bool hasMenuNextPage(const MenuState &state) {
+  return state.page + 1 < pageCountForCategory(state.category);
 }
 
 void drawMenuTitle(AppDisplay &display, const MenuState &state) {
@@ -238,6 +247,36 @@ void drawMenuItem(AppDisplay &display, const AppDefinition &app, uint8_t slot,
   display.setCursor(x + (MENU_ICON_W - static_cast<int>(labelW)) / 2 - labelX,
                     y + 35);
   display.print(app.label);
+}
+
+void drawMenuNextPage(AppDisplay &display, uint8_t slot, bool selected) {
+  const uint8_t row = slot / MENU_COLUMNS;
+  const uint8_t col = slot % MENU_COLUMNS;
+  const int16_t x = MENU_X + col * MENU_CELL_W;
+  const int16_t y = MENU_Y + row * MENU_CELL_H;
+
+  display.drawRect(x, y, MENU_ICON_W, MENU_ICON_H, 1);
+  if (selected) {
+    display.fillRect(x + 1, y + 1, MENU_ICON_W - 2, MENU_ICON_H - 2, 1);
+  }
+
+  display.setTextColor(selected ? 0 : 1);
+  display.setTextSize(2);
+  int16_t arrowX;
+  int16_t arrowY;
+  uint16_t arrowW;
+  uint16_t arrowH;
+  display.getTextBounds(">", 0, 0, &arrowX, &arrowY, &arrowW, &arrowH);
+  display.setCursor(x + (MENU_ICON_W - static_cast<int16_t>(arrowW)) / 2 -
+                        arrowX,
+                    y + (MENU_ICON_H - static_cast<int16_t>(arrowH)) / 2 -
+                        arrowY);
+  display.print(">");
+
+  display.setTextColor(1);
+  display.setTextSize(1);
+  display.setCursor(x + 10, y + 35);
+  display.print("next");
 }
 
 } // namespace
@@ -404,7 +443,12 @@ void drawAppMenu(AppDisplay &display, const MenuState &state,
   display.print(">");
   drawMenuTitle(display, state);
 
-  for (uint8_t slot = 0; slot < MENU_PAGE_SIZE; slot++) {
+  for (uint8_t slot = 0; slot < MENU_GRID_SIZE; slot++) {
+    if (slot == MENU_NEXT_SLOT && hasMenuNextPage(state)) {
+      drawMenuNextPage(display, slot, pressedSlot == slot);
+      continue;
+    }
+
     AppCatalogEntry app;
     if (appAtVisibleSlot(state, slot, app)) {
       drawMenuItem(display, app.definition, slot, pressedSlot == slot);
@@ -443,6 +487,15 @@ bool hitTestAppMenu(const TouchPoint &point, MenuState &state,
     return false;
   }
   const uint8_t slot = row * MENU_COLUMNS + col;
+  if (slot == MENU_NEXT_SLOT && hasMenuNextPage(state)) {
+    state.page++;
+    stateChanged = true;
+    if (hitSlot != nullptr) {
+      *hitSlot = static_cast<int8_t>(slot);
+    }
+    return false;
+  }
+
   if (!appAtVisibleSlot(state, slot, selected)) {
     return false;
   }
