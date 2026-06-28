@@ -4,6 +4,7 @@
 #ifndef ENABLE_NETWORK_APPS
 #define ENABLE_NETWORK_APPS 1
 #endif
+#include "sys/config.h"
 #include "ui/components/menu_button_consumer.h"
 #include "sys/shell_buttons.h"
 #include "sys/touch_input.h"
@@ -165,6 +166,7 @@ void saveRetainedContextForSleep();
 void restoreRetainedContextAfterSleep();
 void enterSleepClockDeepSleep();
 bool handleSleepClockTimerWake();
+void launchMenuButtonApp();
 
 bool isSessionScreen() {
   return activeApp != nullptr && activeApp->hasActiveSession();
@@ -327,9 +329,7 @@ void handleMenuButton() {
     return;
   }
   if (screen == SCREEN_HOME) {
-    resetContactLinks();
-    switchTo(SCREEN_CONTACT_LINKS, contactLinksRuntime(),
-             contactLinksDefinition());
+    launchMenuButtonApp();
     return;
   }
   if (activeDefinition != nullptr &&
@@ -646,6 +646,23 @@ void launchApp(const AppDefinition &app) {
     app.launch();
   }
   switchTo(app.screen, app.runtime, &app);
+}
+
+bool launchAppById(const char *id) {
+  AppCatalogEntry app;
+  if (!findAppById(id, app)) {
+    return false;
+  }
+  launchApp(app.definition);
+  return true;
+}
+
+void launchMenuButtonApp() {
+  const char *target = systemConfig().home.sunBtnApp;
+  if (target != nullptr && target[0] != '\0' && launchAppById(target)) {
+    return;
+  }
+  launchAppById("contact_links");
 }
 
 void handleMenuTouch(const TouchPoint &point) {
@@ -1043,6 +1060,11 @@ void setup() {
   keepPowerLatchOn();
   releasePowerHolds();
   keepPowerLatchOn();
+  logSetupStage("sd");
+  sdStorageBegin();
+  logSetupStage("config");
+  configBegin();
+  shellLayoutConfigReload();
   logSetupStage("check sleep-clock wake");
   if (handleSleepClockTimerWake()) {
     return;
@@ -1070,8 +1092,6 @@ void setup() {
   }
   logSetupStage("environment");
   environmentMonitor.refresh();
-  logSetupStage("sd");
-  sdStorageBegin();
   pinkExecutableRefreshApps();
   refreshAppCatalog();
 

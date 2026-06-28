@@ -1,6 +1,7 @@
 #include "sys/pink_executable.h"
 #include "fs/file_provider.h"
 #include "sys/builtin_apps.h"
+#include "sys/config.h"
 #include "sys/global.h"
 #include "sys/inactivity_sleep_guard.h"
 #include "sys/sd_storage.h"
@@ -25,6 +26,10 @@ static const uint8_t kPinkLabelCapacity = 8;
 static const uint8_t kPinkIdCapacity = 16;
 static const size_t kPinkMemorySize = 4096;
 static const size_t kPinkMaxRelocations = 4096;
+
+bool hiddenByMenuButtonApp(const char *id) {
+  return id != nullptr && strcmp(id, systemConfig().home.sunBtnApp) == 0;
+}
 
 struct PinkExecutableEntry {
   char *id = nullptr;
@@ -486,6 +491,14 @@ void hostPsramFree(void *ptr) {
   }
 }
 
+bool hostConfigGet(const char *key, char *out, size_t outSize) {
+  return configGetForApp(activeAppId, key, out, outSize);
+}
+
+bool hostConfigSet(const char *key, const char *value) {
+  return configSetForApp(activeAppId, key, value);
+}
+
 PinkHost makeHost() {
   PinkHost host;
   host.abiVersion = PINK_EXECUTABLE_ABI_VERSION;
@@ -515,6 +528,8 @@ PinkHost makeHost() {
   host.fillScreen = hostFillScreen;
   host.psramAlloc = hostPsramAlloc;
   host.psramFree = hostPsramFree;
+  host.configGet = hostConfigGet;
+  host.configSet = hostConfigSet;
   return host;
 }
 
@@ -879,7 +894,8 @@ void pinkExecutableRefreshApps() {
 size_t pinkExecutableCount(MenuCategory category) {
   size_t count = 0;
   for (size_t i = 0; i < pinkAppCount; i++) {
-    if (pinkApps[i].category == category) {
+    if (pinkApps[i].category == category &&
+        !hiddenByMenuButtonApp(pinkApps[i].id)) {
       count++;
     }
   }
@@ -898,6 +914,9 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
   PinkExecutableEntry *entry = nullptr;
   for (size_t i = 0; i < pinkAppCount; i++) {
     if (pinkApps[i].category != category) {
+      continue;
+    }
+    if (hiddenByMenuButtonApp(pinkApps[i].id)) {
       continue;
     }
     if (visibleIndex == index) {

@@ -1,6 +1,8 @@
 #include "sys/device_controls.h"
+#include "sys/config.h"
 
 #include <Arduino.h>
+#include <stdio.h>
 
 namespace {
 
@@ -12,6 +14,15 @@ bool bluetoothEnabled = false;
 uint8_t cpuStep = 2;
 uint8_t volumeLevel = 60;
 bool muted = false;
+
+uint8_t cpuStepIndexForMhz(uint16_t mhz) {
+  for (uint8_t i = 0; i < CPU_STEP_COUNT; i++) {
+    if (CPU_STEPS[i] == mhz) {
+      return i;
+    }
+  }
+  return CPU_STEP_COUNT - 1;
+}
 
 void applyBluetoothState() {
 #if defined(ARDUINO_ARCH_ESP32)
@@ -40,6 +51,7 @@ uint16_t currentCpuMhz() {
 } // namespace
 
 void deviceControlsBegin() {
+  cpuStep = cpuStepIndexForMhz(systemConfig().cpu.mhz);
   applyBluetoothState();
   applyCpuFrequency();
 }
@@ -60,6 +72,10 @@ void toggleBluetooth() {
 
 void cycleCpuFrequency() {
   cpuStep = (cpuStep + 1) % CPU_STEP_COUNT;
+  char mhzText[8];
+  snprintf(mhzText, sizeof(mhzText), "%u",
+           static_cast<unsigned>(CPU_STEPS[cpuStep]));
+  configSet("cpu.mhz", mhzText);
   applyCpuFrequency();
 }
 

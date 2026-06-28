@@ -1,4 +1,5 @@
 #include "sys/environment_monitor.h"
+#include "sys/config.h"
 #include "sys/global.h"
 #include "sys/touch_input.h"
 
@@ -80,7 +81,8 @@ static bool shtc3Read(EnvironmentSnapshot &data) {
 
   uint16_t rawTemp = (static_cast<uint16_t>(raw[0]) << 8) | raw[1];
   uint16_t rawHumidity = (static_cast<uint16_t>(raw[3]) << 8) | raw[4];
-  data.ambientTemperatureC = -45.0f + 175.0f * rawTemp / 65536.0f;
+  data.ambientTemperatureC = -45.0f + 175.0f * rawTemp / 65536.0f +
+                             systemConfig().sensors.temperatureOffsetC;
   data.ambientHumidityPct = 100.0f * rawHumidity / 65536.0f;
   data.ambientTemperatureValid = !isnan(data.ambientTemperatureC);
   data.ambientHumidityValid = !isnan(data.ambientHumidityPct);

@@ -109,6 +109,7 @@ FILES=( \
   "$ROOT/src/apps/calculator_app.cpp" \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
+  "$ROOT/src/sys/config.cpp" \
   "$ROOT/src/apps/deghost_app.cpp" \
   "$ROOT/src/fs/file_provider.cpp" \
   "$ROOT/src/fs/file_viewer_registry.cpp" \

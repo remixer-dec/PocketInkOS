@@ -5,27 +5,33 @@
 #if ENABLE_NETWORK_APPS
 
 #include "netapps/wifi_app.h"
+#include "sys/config.h"
 #include "sys/device_clock.h"
 #include "sys/pcf85063_clock.h"
-#include "secrets_config.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <WiFiUdp.h>
 #include <HTTPClient.h>
 #include <Stream.h>
+#include <ctype.h>
 #include <cstring>
 
-const char *WifiApp::SSID = SECRET_WIFI_SSID;
-const char *WifiApp::PASSWORD = SECRET_WIFI_PASSWORD;
-// Keep this ASCII; the actual SSID may contain UTF-8 that the font cannot draw.
-const char *WifiApp::DISPLAY_NAME = SECRET_WIFI_DISPLAY_NAME;
-
-static const char *TIME_URL = "https://time.now/developer/api/ip";
 static const UiRect CONNECT_BUTTON = {20, 126, 76, 28};
 static const UiRect DISCONNECT_BUTTON = {104, 126, 76, 28};
 static const int MAX_TIME_RESPONSE = 512;
+static const int NTP_PACKET_SIZE = 48;
+static const uint16_t NTP_PORT = 123;
+static const uint16_t NTP_LOCAL_PORT = 2390;
+static const uint32_t NTP_TO_UNIX_SECONDS = 2208988800UL;
+static const char *DEFAULT_NTP_SERVER = "pool.ntp.org";
+
+static bool hasHttpScheme(const char *value) {
+  return value != nullptr &&
+         (strncmp(value, "https://", 8) == 0 || strncmp(value, "http://", 7) == 0);
+}
 
 void WifiApp::reset() {
   if (WiFi.status() == WL_CONNECTED) {
@@ -36,6 +42,10 @@ void WifiApp::reset() {
   timeState = TIME_IDLE;
   datetime[0] = '\0';
   timeStatus[0] = '\0';
+  if (state == STATE_IDLE && systemConfig().wifi.autoConnect &&
+      systemConfig().wifi.ssid[0] != '\0') {
+    connect();
+  }
 }
 
 void WifiApp::connect() {
@@ -46,7 +56,7 @@ void WifiApp::connect() {
   startedAt = millis();
   lastTimeAttemptAt = 0;
   WiFi.mode(WIFI_STA);
-  WiFi.begin(SSID, PASSWORD);
+  WiFi.begin(systemConfig().wifi.ssid, systemConfig().wifi.password);
 }
 
 void WifiApp::disconnect() {
@@ -104,10 +114,10 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
   gfx.setCursor((200 - static_cast<int>(statusW)) / 2 - statusX, 90);
   gfx.print(status);
 
-  gfx.getTextBounds(DISPLAY_NAME, 0, 0, &statusX, &statusY, &statusW,
-                    &statusH);
+  const char *displayName = systemConfig().wifi.displayName;
+  gfx.getTextBounds(displayName, 0, 0, &statusX, &statusY, &statusW, &statusH);
   gfx.setCursor((200 - static_cast<int>(statusW)) / 2 - statusX, 106);
-  gfx.print(DISPLAY_NAME);
+  gfx.print(displayName);
 
   const char *timeText = timeStatus;
   if (timeState == TIME_READY) {
@@ -192,12 +202,22 @@ bool WifiApp::fetchCurrentTime() {
     return false;
   }
 
+  datetime[0] = '\0';
+  setTimeStatus("");
+
+  if (systemConfig().time.syncProtocol == CONFIG_TIME_SYNC_NTP) {
+    return fetchNtpTime();
+  }
+  return fetchHttpsTime();
+}
+
+bool WifiApp::fetchHttpsTime() {
   WiFiClientSecure client;
   client.setInsecure();
 
   HTTPClient http;
   http.setTimeout(TIME_TIMEOUT_MS);
-  if (!http.begin(client, TIME_URL)) {
+  if (!http.begin(client, systemConfig().time.syncServer)) {
     setTimeStatus("HTTP setup fail");
     return false;
   }
@@ -218,6 +238,11 @@ bool WifiApp::fetchCurrentTime() {
 
   char response[MAX_TIME_RESPONSE + 1] = {};
   Stream *stream = http.getStreamPtr();
+  if (stream == nullptr) {
+    setTimeStatus("HTTP no stream");
+    http.end();
+    return false;
+  }
   unsigned long readStartedAt = millis();
   int count = 0;
   while (millis() - readStartedAt < TIME_TIMEOUT_MS &&
@@ -260,6 +285,98 @@ bool WifiApp::fetchCurrentTime() {
 #endif
   setTimeStatus("Time synced");
   return true;
+}
+
+bool WifiApp::fetchNtpTime() {
+  const char *server = configuredNtpServer();
+  if (server == nullptr || server[0] == '\0') {
+    setTimeStatus("No NTP host");
+    return false;
+  }
+
+  uint8_t packet[NTP_PACKET_SIZE] = {};
+  packet[0] = 0x1B; // LI=0, VN=3, mode=client.
+
+  WiFiUDP udp;
+  if (!udp.begin(NTP_LOCAL_PORT)) {
+    setTimeStatus("NTP setup fail");
+    return false;
+  }
+  if (!udp.beginPacket(server, NTP_PORT)) {
+    udp.stop();
+    setTimeStatus("NTP host fail");
+    return false;
+  }
+  if (udp.write(packet, sizeof(packet)) != sizeof(packet) || !udp.endPacket()) {
+    udp.stop();
+    setTimeStatus("NTP send fail");
+    return false;
+  }
+
+  const unsigned long startedAt = millis();
+  while (millis() - startedAt < TIME_TIMEOUT_MS) {
+    const int size = udp.parsePacket();
+    if (size > 0 && size < NTP_PACKET_SIZE) {
+      udp.read(packet, static_cast<size_t>(size));
+      udp.stop();
+      setTimeStatus("NTP short reply");
+      return false;
+    }
+    if (size >= NTP_PACKET_SIZE) {
+      if (udp.read(packet, sizeof(packet)) != sizeof(packet)) {
+        udp.stop();
+        setTimeStatus("NTP read fail");
+        return false;
+      }
+
+      const uint8_t mode = packet[0] & 0x07;
+      const uint8_t leap = packet[0] >> 6;
+      const uint8_t stratum = packet[1];
+      if ((mode != 4 && mode != 5) || leap == 3 || stratum == 0) {
+        udp.stop();
+        setTimeStatus("NTP invalid");
+        return false;
+      }
+
+      const uint32_t secondsSince1900 =
+          (static_cast<uint32_t>(packet[40]) << 24) |
+          (static_cast<uint32_t>(packet[41]) << 16) |
+          (static_cast<uint32_t>(packet[42]) << 8) |
+          static_cast<uint32_t>(packet[43]);
+      if (secondsSince1900 < NTP_TO_UNIX_SECONDS) {
+        udp.stop();
+        setTimeStatus("NTP bad time");
+        return false;
+      }
+
+      unixTime = static_cast<int64_t>(secondsSince1900 - NTP_TO_UNIX_SECONDS);
+      if (!parseConfiguredUtcOffset(utcOffsetSeconds)) {
+        utcOffsetSeconds = 0;
+      }
+      deviceClock.set(unixTime, utcOffsetSeconds);
+#if ENABLE_RTC_CLOCK
+      rtcClock.writeFromUnix(unixTime, utcOffsetSeconds);
+#endif
+      strncpy(datetime, "NTP synced", DATETIME_SIZE - 1);
+      datetime[DATETIME_SIZE - 1] = '\0';
+      setTimeStatus("Time synced");
+      udp.stop();
+      return true;
+    }
+    delay(10);
+  }
+
+  udp.stop();
+  setTimeStatus("NTP timeout");
+  return false;
+}
+
+const char *WifiApp::configuredNtpServer() const {
+  const char *server = systemConfig().time.syncServer;
+  if (server == nullptr || server[0] == '\0') {
+    return server;
+  }
+  return hasHttpScheme(server) ? DEFAULT_NTP_SERVER : server;
 }
 
 bool WifiApp::parseTimePayload(const char *json) {
@@ -335,6 +452,54 @@ bool WifiApp::parseUtcOffset(const char *json, int32_t &out) const {
   }
   int hours = (cursor[0] - '0') * 10 + (cursor[1] - '0');
   int minutes = (cursor[3] - '0') * 10 + (cursor[4] - '0');
+  if (hours > 23 || minutes > 59) {
+    return false;
+  }
+  out = sign * (hours * 3600 + minutes * 60);
+  return true;
+}
+
+bool WifiApp::parseConfiguredUtcOffset(int32_t &out) const {
+  const char *cursor = systemConfig().time.timezone;
+  if (cursor == nullptr || cursor[0] == '\0' ||
+      strcasecmp(cursor, "auto") == 0 || strcasecmp(cursor, "utc") == 0 ||
+      strcasecmp(cursor, "z") == 0) {
+    out = 0;
+    return true;
+  }
+  if ((cursor[0] == 'U' || cursor[0] == 'u') &&
+      (cursor[1] == 'T' || cursor[1] == 't') &&
+      (cursor[2] == 'C' || cursor[2] == 'c')) {
+    cursor += 3;
+  }
+
+  const int sign = *cursor == '-' ? -1 : 1;
+  if (*cursor != '+' && *cursor != '-') {
+    return false;
+  }
+  cursor++;
+  if (!isdigit(static_cast<unsigned char>(cursor[0]))) {
+    return false;
+  }
+
+  int hours = cursor[0] - '0';
+  cursor++;
+  if (isdigit(static_cast<unsigned char>(*cursor))) {
+    hours = hours * 10 + (*cursor - '0');
+    cursor++;
+  }
+
+  int minutes = 0;
+  if (*cursor == ':') {
+    cursor++;
+  }
+  if (isdigit(static_cast<unsigned char>(cursor[0])) &&
+      isdigit(static_cast<unsigned char>(cursor[1]))) {
+    minutes = (cursor[0] - '0') * 10 + (cursor[1] - '0');
+  } else if (*cursor != '\0') {
+    return false;
+  }
+
   if (hours > 23 || minutes > 59) {
     return false;
   }

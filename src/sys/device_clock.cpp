@@ -1,4 +1,5 @@
 #include "sys/device_clock.h"
+#include "sys/config.h"
 
 #include <Arduino.h>
 #include <stdio.h>
@@ -52,8 +53,18 @@ void DeviceClock::formatTime(char *out, size_t outSize) const {
   }
   int64_t seconds = nowLocalUnix();
   int daySecond = static_cast<int>((seconds % 86400 + 86400) % 86400);
-  snprintf(out, outSize, "%02d:%02d", daySecond / 3600,
-           (daySecond / 60) % 60);
+  int hour = daySecond / 3600;
+  const int minute = (daySecond / 60) % 60;
+  if (systemConfig().time.timeFormat == CONFIG_TIME_12H) {
+    const bool pm = hour >= 12;
+    hour %= 12;
+    if (hour == 0) {
+      hour = 12;
+    }
+    snprintf(out, outSize, "%d:%02d%s", hour, minute, pm ? "p" : "a");
+    return;
+  }
+  snprintf(out, outSize, "%02d:%02d", hour, minute);
 }
 
 void DeviceClock::formatDate(char *out, size_t outSize) const {
@@ -76,7 +87,31 @@ void DeviceClock::formatDate(char *out, size_t outSize) const {
   unsigned day = doy - (153 * mp + 2) / 5 + 1;
   unsigned month = mp + (mp < 10 ? 3 : -9);
   year += month <= 2;
-  snprintf(out, outSize, "%04d-%02u-%02u", year, month, day);
+  switch (systemConfig().time.dateFormat) {
+  case CONFIG_DATE_WEEKDAY: {
+    static const char *WEEKDAYS[] = {"Sun", "Mon", "Tue", "Wed",
+                                     "Thu", "Fri", "Sat"};
+    static const char *MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const int weekday = static_cast<int>((days + 4) % 7 + 7) % 7;
+    snprintf(out, outSize, "%s, %s %u", WEEKDAYS[weekday], MONTHS[month - 1],
+             day);
+    break;
+  }
+  case CONFIG_DATE_MDY:
+    snprintf(out, outSize, "%02u/%02u/%04d", month, day, year);
+    break;
+  case CONFIG_DATE_DMY:
+    snprintf(out, outSize, "%02u/%02u/%04d", day, month, year);
+    break;
+  case CONFIG_DATE_DMY_DOT:
+    snprintf(out, outSize, "%02u.%02u.%04d", day, month, year);
+    break;
+  case CONFIG_DATE_ISO:
+  default:
+    snprintf(out, outSize, "%04d-%02u-%02u", year, month, day);
+    break;
+  }
 }
 
 int64_t DeviceClock::nowLocalUnix() const {

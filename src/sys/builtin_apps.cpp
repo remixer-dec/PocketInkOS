@@ -1,4 +1,5 @@
 #include "sys/builtin_apps.h"
+#include "sys/config.h"
 #include "apps/calendar_app.h"
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
@@ -502,6 +503,10 @@ ActiveApp *contactLinksRuntime() { return &contactLinksScreen; }
 const AppDefinition *contactLinksDefinition() { return &contactLinksApp; }
 
 bool appVisible(const AppDefinition &app) {
+  if (app.id != nullptr &&
+      strcmp(app.id, systemConfig().home.sunBtnApp) == 0) {
+    return false;
+  }
   return app.visible == nullptr || app.visible();
 }
 

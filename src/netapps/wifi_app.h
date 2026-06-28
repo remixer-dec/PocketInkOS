@@ -31,9 +31,6 @@ private:
     TIME_FAILED,
   };
 
-  static const char *SSID;
-  static const char *PASSWORD;
-  static const char *DISPLAY_NAME;
   static const unsigned long CONNECT_TIMEOUT_MS = 15000;
   static const unsigned long TIME_TIMEOUT_MS = 6000;
   static const unsigned long TIME_RETRY_MS = 60000;
@@ -50,9 +47,13 @@ private:
   int32_t utcOffsetSeconds = 0;
 
   bool fetchCurrentTime();
+  bool fetchHttpsTime();
+  bool fetchNtpTime();
+  const char *configuredNtpServer() const;
   bool parseTimePayload(const char *json);
   bool parseInt64Field(const char *json, const char *key, int64_t &out) const;
   bool parseUtcOffset(const char *json, int32_t &out) const;
+  bool parseConfiguredUtcOffset(int32_t &out) const;
   void setTimeStatus(const char *status);
   void drawWifiIcon(Adafruit_GFX &gfx, int16_t x, int16_t y) const;
 };
