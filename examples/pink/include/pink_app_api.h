@@ -6,6 +6,7 @@
 
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL;
 static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 8;
+static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
 static const size_t PINK_EXECUTABLE_MAX_IMAGE_BYTES = 64U * 1024U;
 
@@ -44,6 +45,8 @@ struct PinkEvent {
   uint8_t *data = nullptr;
   size_t dataLength = 0;
   size_t dataCapacity = 0;
+  size_t eventSize = 0;
+  uint32_t featureFlags = 0;
 };
 
 struct PinkHost {
@@ -77,6 +80,9 @@ struct PinkHost {
   void (*psramFree)(void *ptr);
   bool (*configGet)(const char *key, char *out, size_t outSize);
   bool (*configSet)(const char *key, const char *value);
+  size_t hostSize;
+  uint32_t featureFlags;
+  uint32_t reserved2;
 };
 
 #endif
