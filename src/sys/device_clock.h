@@ -4,16 +4,25 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/// Monotonic-millis backed local clock used after network or RTC time sync.
 class DeviceClock {
 public:
+  /// Sets the clock from Unix time and UTC offset.
   void set(int64_t unixTime, int32_t utcOffsetSeconds);
+  /// Returns true after the clock has been set from a trusted source.
   bool isSet() const;
+  /// Captures current local Unix time in seconds.
   bool snapshotLocalUnix(int64_t &localUnix) const;
+  /// Captures current local Unix time and milliseconds into the current second.
   bool snapshotLocalUnixMillis(int64_t &localUnix,
                                uint16_t &millisIntoSecond) const;
+  /// Restores local Unix time after deep sleep without a fresh network sync.
   void restoreLocalUnix(int64_t localUnix);
+  /// Returns the current local minute index for minute-granularity UI refresh.
   int64_t localMinuteIndex() const;
+  /// Formats local time according to system config.
   void formatTime(char *out, size_t outSize) const;
+  /// Formats local date according to system config.
   void formatDate(char *out, size_t outSize) const;
 
 private:
@@ -25,6 +34,7 @@ private:
   int64_t nowLocalUnix() const;
 };
 
+/// Process-wide device clock instance.
 extern DeviceClock deviceClock;
 
 #endif

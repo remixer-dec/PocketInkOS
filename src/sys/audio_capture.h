@@ -4,20 +4,30 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/// Owned PCM recording buffer returned by AudioCapture.
 struct AudioCaptureResult {
+  /// Heap buffer containing signed 16-bit PCM bytes.
   uint8_t *data = nullptr;
+  /// Number of valid bytes in data.
   size_t length = 0;
+  /// Recording sample rate in Hertz.
   uint32_t sampleRate = 16000;
 };
 
+/// Captures microphone audio as signed 16-bit PCM.
 class AudioCapture {
 public:
+  /// Starts a bounded PCM recording session.
   bool beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
                   char *error, int errorSize);
+  /// Pulls another PCM chunk into the active result buffer.
   bool pumpPcm16(AudioCaptureResult &out, char *error, int errorSize);
+  /// Finalizes an active PCM recording without freeing its result.
   void finishPcm16(AudioCaptureResult &out);
+  /// Records a complete fixed-duration PCM clip.
   bool recordPcm16(AudioCaptureResult &out, uint32_t durationMs,
                    char *error, int errorSize);
+  /// Releases the heap buffer owned by result.
   void release(AudioCaptureResult &result);
 
 private:

@@ -3,13 +3,20 @@
 
 #include <stdint.h>
 
+/// Network time synchronizer that updates DeviceClock and exposes UI status text.
 class TimeSyncService {
 public:
+  /// Resets synchronization state and retry timers.
   void reset();
+  /// Advances time sync work; wifiConnected gates network requests.
   bool update(bool wifiConnected);
+  /// Returns true while a foreground sync request is active.
   bool hasActiveSession() const;
+  /// Short status string for Wi-Fi/time UI.
   const char *statusText() const { return status; }
+  /// Last formatted date/time string received from sync.
   const char *datetimeText() const { return datetime; }
+  /// Replaces the visible status text.
   void setStatus(const char *value);
 
 private:
@@ -42,6 +49,7 @@ private:
   bool parseConfiguredUtcOffset(int32_t &out) const;
 };
 
+/// Process-wide time synchronization service.
 extern TimeSyncService timeSync;
 
 #endif

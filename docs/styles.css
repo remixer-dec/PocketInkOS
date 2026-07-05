@@ -27,7 +27,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.1) 1px, transparent 0) 0 0 / 18px 18px,
+    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.1) 1px, transparent 0) 0
+      0 / 18px 18px,
     var(--paper);
   color: var(--ink);
   font-family: var(--mono);
@@ -36,7 +37,8 @@ body {
 
 html[data-theme="ink"] body {
   background:
-    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.1) 1px, transparent 0) 0 0 / 18px 18px,
+    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.1) 1px, transparent 0) 0
+      0 / 18px 18px,
     var(--paper);
   color: var(--ink);
 }
@@ -222,7 +224,8 @@ a {
   gap: 22px;
   justify-content: center;
   min-width: 0;
-  padding: var(--page-top-offset) var(--page-side-offset) var(--page-bottom-offset);
+  padding: var(--page-top-offset) var(--page-side-offset)
+    var(--page-bottom-offset);
 }
 
 .left-rail {
@@ -257,7 +260,8 @@ a {
   border: 1px solid var(--line);
   border-radius: 4px;
   background:
-    radial-gradient(circle at 2px 2px, rgba(0, 0, 0, 0.14) 1px, transparent 0) 0 0 / 5px 5px,
+    radial-gradient(circle at 2px 2px, rgba(0, 0, 0, 0.14) 1px, transparent 0) 0
+      0 / 5px 5px,
     linear-gradient(135deg, rgba(0, 0, 0, 0.055), transparent 42%),
     var(--paper);
   min-width: 0;
@@ -337,8 +341,10 @@ a {
   border-color: var(--paper-strong);
   color: var(--paper-strong);
   background:
-    linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 / 3px 3px,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 / 3px 14px,
+    linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 /
+      3px 3px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 /
+      3px 14px,
     #101010;
 }
 
@@ -581,6 +587,13 @@ code {
   text-align: center;
 }
 
+.paper-theme .api-group-header {
+  background: #000;
+  color: #fff;
+  position: sticky;
+  top: 0;
+}
+
 .api-group-header strong {
   display: block;
   font-size: 0.92rem;
@@ -592,6 +605,11 @@ code {
 .api-group-header code {
   margin: 0 auto;
   width: fit-content;
+}
+
+.paper-theme .api-group-header code {
+  background: #fff;
+  color: #000;
 }
 
 .api-group > p {
@@ -1075,8 +1093,10 @@ code {
   border-color: var(--paper-strong);
   color: var(--paper-strong);
   background:
-    linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 / 3px 3px,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 / 3px 14px,
+    linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 /
+      3px 3px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 /
+      3px 14px,
     #050505;
 }
 
@@ -1250,7 +1270,8 @@ code {
   }
 
   .page-frame {
-    padding: var(--page-top-offset) var(--page-side-offset) var(--page-bottom-offset);
+    padding: var(--page-top-offset) var(--page-side-offset)
+      var(--page-bottom-offset);
     padding-top: 0 !important;
   }
 
@@ -1349,7 +1370,12 @@ code {
 
 .doc-section.post-panel-ink .download-card {
   border-color: var(--paper-strong);
-  background: linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 / 3px 3px, linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 / 3px 14px, #101010;
+  background:
+    linear-gradient(1deg, rgba(255, 255, 255, 0.09) 45%, transparent 0) 0 0 /
+      3px 3px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px) 0 0 /
+      3px 14px,
+    #101010;
   color: var(--paper-strong);
 }
 

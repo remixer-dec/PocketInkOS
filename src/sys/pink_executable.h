@@ -5,23 +5,40 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL; // "PINK"
+/// ABI version emitted by the current .pink build tooling.
 static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 8;
+/// Oldest .pink ABI version this firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
+/// Size in bytes of PinkExecutableHeader.
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
+/// Maximum code plus rodata image size loaded for one .pink app.
 static const size_t PINK_EXECUTABLE_MAX_IMAGE_BYTES = 64U * 1024U;
+/// Maximum number of discovered .pink apps exposed to the launcher.
 static const size_t PINK_EXECUTABLE_MAX_APPS = 255;
+/// Relocation flag indicating a pointer into the rodata segment.
 static const uint32_t PINK_RELOCATION_RODATA = 0x80000000UL;
+/// Mask for the relocation offset bits.
 static const uint32_t PINK_RELOCATION_OFFSET_MASK = 0x7fffffffUL;
 
+/// On-disk header for a .pink executable image.
 struct PinkExecutableHeader {
+  /// Must equal PINK_EXECUTABLE_MAGIC.
   uint32_t magic;
+  /// ABI version required by the app image.
   uint16_t abiVersion;
+  /// Header size written by the toolchain.
   uint16_t headerSize;
+  /// Executable code segment size in bytes.
   uint32_t codeSize;
+  /// Read-only data segment size in bytes.
   uint32_t rodataSize;
+  /// Entry-point offset inside the code segment.
   uint32_t entryOffset;
+  /// Number of relocation records following the image.
   uint32_t relocationCount;
+  /// Reserved for future header fields.
   uint32_t reserved;
 };
 
@@ -102,17 +119,24 @@ struct PinkHost {
 
 typedef void (*PinkEntryPoint)(const PinkHost *host, PinkEvent *event);
 
+/// Returns the runtime adapter used when a .pink app is active.
 ActiveApp *pinkExecutableRuntime();
+/// Re-scans storage for available .pink apps.
 void pinkExecutableRefreshApps();
+/// Counts visible .pink apps in one launcher category.
 size_t pinkExecutableCount(MenuCategory category);
+/// Copies one visible .pink app definition into caller-provided buffers.
 bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
                                 AppDefinition *out, char *id, size_t idSize,
                                 char *label, size_t labelSize, char *icon,
                                 size_t iconSize);
+/// Launches a discovered .pink app by stable id.
 bool pinkExecutableLaunchById(const char *id);
+/// Launches a .pink executable at an explicit filesystem path.
 bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
                               size_t idSize, char *label, size_t labelSize,
                               char *icon, size_t iconSize);
+/// Stops the active .pink app and releases its loaded image.
 void pinkExecutableStop();
 
 #endif
