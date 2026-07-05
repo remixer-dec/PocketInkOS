@@ -67,7 +67,9 @@ static const uint8_t NETWORK_ROW_COUNT = 4;
 static const int16_t NETWORK_ROW_Y = 20;
 static const int16_t NETWORK_ROW_H = 36;
 static const int16_t NETWORK_LIST_H = NETWORK_ROW_COUNT * NETWORK_ROW_H;
-static const int16_t NETWORK_LIST_SPLIT_X = 148;
+static const int16_t NETWORK_LIST_SPLIT_X = 194;
+static const int16_t NETWORK_SCROLLBAR_X = 198;
+static const int16_t NETWORK_SCROLLBAR_ARROW_X = 194;
 static const int16_t NETWORK_ROW_X = 4;
 static const int16_t TAB_Y = 4;
 static const int16_t TAB_H = 28;
@@ -269,7 +271,7 @@ static void drawListScrollbar(Adafruit_GFX &gfx, int16_t x, int16_t y,
   if (itemCount <= visibleCount || visibleCount == 0) {
     return;
   }
-  const int16_t trackX = x + 17;
+  const int16_t trackX = x;
   const int16_t trackY = y + 7;
   const int16_t trackH = h - 14;
   gfx.drawLine(trackX, trackY, trackX, trackY + trackH, 1);
@@ -289,7 +291,7 @@ static void drawListScrollbar(Adafruit_GFX &gfx, int16_t x, int16_t y,
       trackY + (maxOffset > 0 ? (static_cast<int32_t>(offset) * travel) /
                                     maxOffset
                               : 0);
-  gfx.fillRect(trackX - 2, thumbY, 5, thumbH, 1);
+  gfx.fillRect(trackX, thumbY, 2, thumbH, 1);
 }
 
 static void drawCenteredPopupTitle(Adafruit_GFX &gfx, const char *text) {
@@ -940,10 +942,10 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   const uint8_t savedCount = savedNetworkCount();
   const uint16_t total = savedCount + visibleScanNetworkCount();
   uiListClampOffset(listOffset, total, NETWORK_ROW_COUNT);
-  drawListScrollbar(gfx, NETWORK_LIST_SPLIT_X, NETWORK_ROW_Y, NETWORK_LIST_H,
+  drawListScrollbar(gfx, NETWORK_SCROLLBAR_X, NETWORK_ROW_Y, NETWORK_LIST_H,
                     listOffset, total, NETWORK_ROW_COUNT);
   if (listOffset > 0) {
-    gfx.setCursor(186, 18);
+    gfx.setCursor(NETWORK_SCROLLBAR_ARROW_X, 18);
     gfx.print("^");
   }
   uint8_t row = 0;
@@ -970,7 +972,7 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
     }
   }
   if (listOffset + NETWORK_ROW_COUNT < total) {
-    gfx.setCursor(186, 164);
+    gfx.setCursor(NETWORK_SCROLLBAR_ARROW_X, 164);
     gfx.print("v");
   }
   if (total == 0) {

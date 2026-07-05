@@ -79,7 +79,7 @@
             <p><span class="brand-word">PocketInk<sup>OS</sup></span> was inspired by old PDAs. The OS favors deliberate entry points, monochrome UI, and pleasant UX as much as a small screen can deliver.</p>
               <p>The design is shaped by a 200x200 e-ink display with 2 colors and limited refresh rate, leading to careful design approach, to tighten the UI elements to capture every touch accurately.</p>
             <div class="rule-list"><article><strong>Finite surfaces</strong><p>Every screen should expose a small number of choices so the user can focus on what's on the screen without any distractions. Status bar only appears where you want to see it.</p></article>
-                <article><strong>Application concept</strong><p>Everyone is familiar with applications and icons on all modern operating systems, here it is exactly the same. Taking inspiration from old PDAs and phones, the UI suggests a grid-based app menu system. Each application is independent and self-sustained.</p></article></div>
+                <article><strong>Application concept</strong><p>The system exposes features through an application-oriented interface inspired by monochrome mobile devices. Applications are displayed in a grid-based menu and function as self-contained UI modules within the shared embedded runtime. Unlike a general-purpose operating system, the platform does not implement process isolation, user accounts, or a Unix-like model.</p></article></div>
           </section>
 
           <section id="ux" class="doc-section">
@@ -90,8 +90,8 @@
             <div class="rule-list"><article><strong>Large touch targets</strong><p>Interactive touch elements should be large enough to select confidently on the physical display. If a control cannot be made large enough, the screen should use selection plus confirmation instead of immediate action.</p></article>
                 <article><strong>PWR confirms risky input</strong><p>When touch cannot be made reliable, use the PWR button as a deliberate confirmation step. This applies to destructive actions, dense grids, and screens where a wrong tap would be hard to recover from.</p></article>
                 <article><strong>Visible state</strong><p>Show the current mode, selected cell, or pending action before committing. The user should understand what PWR or the next tap will do without remembering hidden state.</p></article>
-                <article><strong>Monochrome first</strong><p>Design in black and white, visible elements, distinhuisible components, readable text.</p></article>
-                <article><strong>Refresh discipline</strong><p>Prefer static layouts and partial redraws where possible. Animation is allowed only for progress bars.</p></article>
+                <article><strong>Monochrome first</strong><p>Design in black and white before adding texture. If a screen fails without gradients or dither, the structure is not strong enough.</p></article>
+                <article><strong>Refresh discipline</strong><p>Prefer static layouts and partial redraws where possible. Animation is allowed for demos and active tools, not as ambient noise.</p></article>
                 <article><strong>Network is optional</strong><p>The OS should remain useful without network apps. Online features live in a separate menu category and can be compiled out.</p></article></div>
           </section>
 
@@ -104,17 +104,18 @@
                 <article><strong>Home</strong><p>Home shows the Pocket Ink mark, date/time when available, Wi-Fi status when network apps are enabled, and ambient/chip readings.</p></article>
                 <article><strong>Menu</strong><p>The launcher is a 3x3 grid. Categories are Games, Apps, and Network when <code>ENABLE_NETWORK_APPS</code> is enabled.</p></article>
                 <article><strong>Apps</strong><p>App screens draw through a common <code>ActiveApp</code> interface with <code>draw</code>, <code>handleTouch</code>, <code>update</code>, and <code>hasActiveSession</code> hooks.</p></article>
-                <article><strong>Quit</strong><p>Long-running sessions use a confirmation dialog before returning to the menu.</p></article></div>
+                <article><strong>Quit</strong><p>After app state changes, apps must use a confirmation dialog before returning to the menu.</p></article></div>
           </section>
 
           <section id="buttons" class="doc-section">
             <p class="eyebrow">Input contract</p>
             <h2>Buttons and Meanings</h2>
             <p><span class="brand-word">PocketInk<sup>OS</sup></span> combines touch with two hardware buttons. Touch selects items and performs direct manipulation; the two buttons provide global navigation and app-specific shortcuts.</p>
-            <div class="spec-list"><article><strong>Menu/SUN single press</strong><p>From home, opens the menu. From the menu, returns home. In keyboards, toggles caps. In active sessions, either delegates to the app or opens quit confirmation.</p></article>
-                <article><strong>Menu/SUN double press</strong><p>Delegates to the active app when supported. In keyboard screens, switches between T9 and QWERTY zoom input.</p></article>
-                <article><strong>Menu/SUN long press</strong><p>Delegates to the active app when supported, otherwise opens quit confirmation for active sessions.</p></article>
-                <article><strong>PWR single or long press</strong><p>From home, opens Contact Links. In Contact Links, returns home. In games/apps, this is a contextual action such as opening a keyboard, toggling a mode, clearing paint, or stepping an app state.</p></article>
+            <div class="spec-list"><article><strong>SUN single press</strong><p>Acts as back navigation. In screens that use SUN as a quit action, a single press opens the quit dialog.</p></article>
+                <article><strong>SUN long press</strong><p>Some apps may redefine SUN, but that is not recommended. In that case, long press opens the quit dialog.</p></article>
+                <article><strong>PWR single press</strong><p>Opens the menu or performs app-specific actions.</p></article>
+                <article><strong>PWR double press</strong><p>Puts the device into deep sleep mode.</p></article>
+                <article><strong>PWR long press</strong><p>Opens the quick settings menu.</p></article>
                 <article><strong>Touch</strong><p>Touch selects menu cells, presses on-screen buttons, moves pieces, paints, scrolls feeds, and enters keyboard characters depending on the active screen.</p></article></div>
           </section>
         </main>

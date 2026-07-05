@@ -438,10 +438,11 @@ h2 {
 
 code {
   border: 1px solid currentColor;
+  white-space: nowrap;
   background: rgba(0, 0, 0, 0.055);
   padding: 0.08em 0.28em;
   font-family: var(--mono);
-  font-size: 0.86em;
+  font-size: 0.78em;
 }
 
 .section-index-list {
