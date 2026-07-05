@@ -305,7 +305,6 @@ static void drawCenteredPopupTitle(Adafruit_GFX &gfx, const char *text) {
 }
 
 void WifiApp::open() {
-  reset();
   loadSavedNetworks();
 }
 

@@ -526,7 +526,7 @@ const AppDefinition builtInApps[] = {
 #if ENABLE_NETWORK_APPS
     ,
     builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen,
-               nullptr, wifiBehavior()),
+               []() { wifiApp.reset(); }, wifiBehavior()),
     builtInApp("reddit", "reddit", "R", MENU_NETWORK, SCREEN_REDDIT,
                &redditScreen, []() { redditApp.reset(); }, redditBehavior()),
     builtInApp("hn", "hn", "H", MENU_NETWORK, SCREEN_HN, &hnScreen,
@@ -645,7 +645,6 @@ void resetApps() {
   resetContactLinks();
 #if ENABLE_NETWORK_APPS
   wifiManager.reset();
-  wifiApp.reset();
 #endif
 }
 

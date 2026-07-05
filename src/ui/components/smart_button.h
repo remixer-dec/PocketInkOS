@@ -5,6 +5,7 @@
 #include <Bounce2.h>
 #include <functional>
 
+/// Debounces one hardware button and emits click and long-press callbacks.
 class SmartButton {
 public:
   // Constructor

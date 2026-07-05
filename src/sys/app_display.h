@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+/// Adafruit_GFX-backed display wrapper for full and partial e-paper updates.
 class AppDisplay : public Adafruit_GFX {
 public:
   AppDisplay();

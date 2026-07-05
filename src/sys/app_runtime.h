@@ -14,6 +14,7 @@
 #define ENABLE_TTS 0
 #endif
 
+/// Enumerates the built-in screens the runtime can switch to.
 enum Screen {
   SCREEN_HOME,
   SCREEN_KEYBOARD,
@@ -50,6 +51,7 @@ enum Screen {
 #endif
 };
 
+/// Groups launcher entries into menu pages.
 enum MenuCategory {
   MENU_GAMES,
   MENU_APPS
@@ -59,6 +61,7 @@ enum MenuCategory {
 #endif
 };
 
+/// Normalized outcome for app hooks and runtime button handlers.
 enum class AppEventResult : uint8_t {
   Unhandled,
   Handled,
@@ -69,6 +72,7 @@ enum class AppEventResult : uint8_t {
   Reboot,
 };
 
+/// Common runtime interface used to draw apps and dispatch touch input.
 class ActiveApp {
 public:
   virtual void draw(Adafruit_GFX &gfx) = 0;
@@ -96,6 +100,7 @@ bool consumeDirtyRegion(T &, int16_t *, int16_t *, int16_t *, int16_t *, ...) {
 
 } // namespace app_runtime_detail
 
+/// Adapts an app object with touch support to the ActiveApp runtime contract.
 template <typename T, bool SupportsUpdate = false>
 class AppScreen : public ActiveApp {
 public:
@@ -121,6 +126,7 @@ private:
   T &app;
 };
 
+/// Adapts an app object that only draws and manages its own session state.
 template <typename T>
 class TouchlessAppScreen : public ActiveApp {
 public:
@@ -134,13 +140,22 @@ private:
   T &app;
 };
 
+/// Runs a parameterless app hook such as onEnter, onExit, launch, or reset.
 typedef void (*AppCallback)();
+/// Reports whether an app should appear in the launcher.
 typedef bool (*AppVisibleHandler)();
+/// Handles a button event such as onMenu or onPowerLong and returns an AppEventResult like GoHome or Reboot.
 typedef AppEventResult (*AppEventHandler)();
+/// Receives raw touch events before higher-level app dispatch.
 typedef void (*AppRawTouchHandler)(const TouchEvent &event);
+/// Saves app-owned state into a caller-provided buffer.
 typedef size_t (*AppSaveContextHandler)(uint8_t *buffer, size_t capacity);
+/// Restores app-owned state from a previously saved buffer.
 typedef void (*AppRestoreContextHandler)(const uint8_t *buffer, size_t length);
 
+/// Bundles runtime callbacks for one app, including lifecycle hooks like onEnter,
+/// onExit, and onRelease, button handlers such as onMenu and onPowerLong, raw touch
+/// handling, and state save/restore.
 struct AppBehavior {
   AppCallback onEnter = nullptr;
   AppCallback onExit = nullptr;
@@ -156,6 +171,9 @@ struct AppBehavior {
   AppCallback onRelease = nullptr;
 };
 
+/// Declares one app entry together with launcher metadata, the per-launch reset/launch
+/// hooks that run before switchTo(), and the AppBehavior callback bundle used after
+/// the app becomes active.
 struct AppDefinition {
   const char *id;
   const char *label;
@@ -171,6 +189,7 @@ struct AppDefinition {
   uint32_t inactivityDeepSleepMs = 0;
 };
 
+/// Stores the current launcher category and page for returning to the menu.
 struct MenuState {
   MenuCategory category;
   uint8_t page;

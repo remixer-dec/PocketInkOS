@@ -4,12 +4,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL;
+/// ABI version emitted by the current .pink build tooling.
 static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 8;
+/// Oldest .pink ABI version the current firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
 static const size_t PINK_EXECUTABLE_MAX_IMAGE_BYTES = 64U * 1024U;
 
+/// Events that the firmware can deliver to an external .pink app.
 enum PinkEventType : uint8_t {
   PINK_EVENT_START = 1,
   PINK_EVENT_STOP = 2,
@@ -29,12 +33,14 @@ enum PinkEventType : uint8_t {
   PINK_EVENT_RESTORE_STATE = 16,
 };
 
+/// Fonts exposed by the firmware drawing host.
 enum PinkFont : uint8_t {
   PINK_FONT_DEFAULT = 0,
   PINK_FONT_ICON_8 = 1,
   PINK_FONT_ICON_12 = 2,
 };
 
+/// Shared event payload exchanged between the firmware and a .pink app.
 struct PinkEvent {
   uint8_t type = 0;
   uint8_t handled = 0;
@@ -49,6 +55,7 @@ struct PinkEvent {
   uint32_t featureFlags = 0;
 };
 
+/// Function table and runtime context passed to a .pink app instance.
 struct PinkHost {
   uint16_t abiVersion;
   uint16_t screenWidth;

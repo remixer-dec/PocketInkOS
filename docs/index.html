@@ -65,11 +65,14 @@
             <p>Pages</p>
             <nav class="register-screen"><a href="./index.html" class="active">Home</a>
               <a href="./concepts.html">Concepts &amp; Design</a>
-              <a href="./developers.html">For Developers</a></nav>
+              <a href="./developers.html">For Developers</a>
+              <a href="./reference.html">Reference</a></nav>
           </div>
+          
         </aside>
 
         <main id="main" class="doc-main" tabindex="-1">
+          
           <section id="overview" class="hero-panel">
             <div class="hero-copy">
               <p class="eyebrow">Pocket Ink OS documentation</p>
@@ -92,7 +95,6 @@
             <p class="eyebrow">Local tools</p>
             <h2>Built-in offline Apps</h2>
             <p>Built-in apps are local-first utilities. They should launch quickly, expose a limited surface area, and avoid requiring connectivity.</p>
-            
             <div class="spec-list"><article><strong>File Viewer</strong><p>Opens and renders e-books, images, and plays music files from external storage. All decoders built from scratch and designed for low-power e-ink hardware.</p><svg viewBox="0 0 400 240" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;max-width:400px;margin:14px auto 0;color:inherit">
   <path d="M 350.4 145.3 A 160 160 0 0 0 49.6 145.3" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35"/>
   <line x1="200" y1="200" x2="49.6" y2="145.3" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="73.1" y2="102.6" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="108.2" y2="68.9" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="151.9" y2="47.4" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="200.0" y2="40.0" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="248.1" y2="47.4" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="291.8" y2="68.9" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="326.9" y2="102.6" stroke="currentColor" stroke-width="1" opacity="0.25"/><line x1="200" y1="200" x2="350.4" y2="145.3" stroke="currentColor" stroke-width="1" opacity="0.25"/>
@@ -140,71 +142,54 @@
                 <article><strong>Contact Links</strong><p>Share your links quickly at networking events via QR and text.</p></article>
                 <article><strong>Calculator</strong><p>Touch calculator with expression entry, result display, delete, clear, and decimal handling.</p></article>
                 <article><strong>Other apps</strong><p>Calendar, TODO, Shaders, Paint, Deghost.</p></article></div>
-            
-            
           </section>
 
           <section id="games" class="doc-section">
             <p class="eyebrow">Offline games</p>
             <h2>Built-in offline Games</h2>
             <p>Every game is fully immersive, designed to be comfortably played with touch input, game state is saved before going into deep sleep and restored after waking up.</p>
-            
             <div class="spec-list"><article><strong>Chess</strong><p>3 levels of difficulty, pvp option, touch auto-adjustment, fully feature complete.</p></article>
                 <article><strong>Sudoku</strong><p>Prodecurally generated 9x9 puzzles with various difficulty modes.</p></article>
                 <article><strong>Minesweeper</strong><p>5x5 board where you can reveal or flag mines; Switch the mode using the PWR button.</p></article>
                 <article><strong>Pocket Wordle</strong><p>Six-guess word puzzle with keyboard input and local multiplayer support.</p></article>
                 <article><strong>Hangman</strong><p>Word guessing game where you have to guess one letter at a time, has local multiplayer support.</p></article>
                 <article><strong>Tic Tac Toe</strong><p>3x3 board with CPU and player-vs-player modes.</p></article></div>
-            
-            
           </section>
 
           <section id="network" class="doc-section">
             <p class="eyebrow">Compile-time option</p>
             <h2>Optional Network Apps</h2>
             <p>Network apps are compiled when <code>ENABLE_NETWORK_APPS</code> is enabled. They add a Network menu category and provide a section of apps for interacting with the Internet.</p>
-            
             <div class="spec-list"><article><strong>Wi-Fi configurator</strong><p>Connects to the configured network, displays connection state, and syncs device time.</p></article>
                 <article><strong>Weather</strong><p>Uses Open-Meteo API with configured latitude/longitude, presents current weather, next 24 hours, and weekly summaries with a focus on unsafe UV hours.</p></article>
                 <article><strong>AI Chat</strong><p>General purpose AI Chat Interface compatible with most Chat Completions providers with support for Audio Input</p></article>
                 <article><strong>YCombinator Hacker News</strong><p>Fetches Headlines of the top stories and displays them through the post feed UI.</p></article>
                 <article><strong>Reddit</strong><p>Fetches a compact post feed from preconfigured list of subreddits various sorting modes. May not work due to Reddit's network policy.</p></article></div>
-            
-            
           </section>
 
           <section id="features" class="doc-section">
             <p class="eyebrow">Highlights</p>
             <h2>Features</h2>
             <p>These are the main featues of the <span class="brand-word">PocketInk<sup>OS</sup></span> shell.</p>
-            
-            
             <div class="rule-list"><article><strong>Intuitive navigation</strong><p>Having only two buttons and a touch screen, the input choices are limited, but are very intuitive in nature, since these buttons are in most cases used for the same purpose. For exceptions, overrides can be defined.</p></article>
                 <article><strong>Status-bar</strong><p>Only appears on the main screen and when you want to quit the app. Shows current time and battery status.</p></article>
                 <article><strong>Deep-sleep clock</strong><p>By default the device goes to into deep sleep after 2 minutes of inactivity. During deep sleep it shows current time, every minute it wakes up for a second to seamlessly update the displayed time.</p></article>
                 <article><strong>External apps</strong><p>The firmware supports running external separately compiled apps from the SD card and showing them in menu. Demo 'Tetris' app is provided.</p></article>
                 <article><strong>Quick Settings control panel</strong><p>Can be shown from anywhere via a long press on the PWR button. It allows to reboot/shutdown the device, toggle wifi, bluetooth, cpu clock speed, adjust volume levels and more.</p></article>
                 <article><strong>Partial Screen Refresh</strong><p>The screen of the target device does support partial refreshes and <span class="brand-word">PocketInk<sup>OS</sup></span> takes full advantage of it, providing faster response time and pleasent hover effects.</p></article></div>
-            
           </section>
 
           <section id="limitations" class="doc-section">
             <p class="eyebrow">Unsupported</p>
             <h2>Limitations</h2>
             <p>These features are not yet supported and may not work.</p>
-            
-            
             <div class="rule-list"><article><strong>UTF-8 Text Rendering</strong><p>Currently all displayed text is limited to ASCII and ASCII-based icon fonts.</p></article></div>
-            
           </section>
 
           <section id="download" class="doc-section">
             <p class="eyebrow">Release</p>
             <h2>Download</h2>
             <p>Download the latest firmware and documentation archive below.</p>
-            
-            
-            
             <div class="download-list"><a class="download-card" href="https://github.com/remixer-dec/pocketInkOS/releases" target="_blank" rel="noreferrer"><strong>Firmware Releases</strong><p>Pre-built firmware releases and supporting files for the ESP32-S3 e-ink device.</p></a></div>
           </section>
         </main>

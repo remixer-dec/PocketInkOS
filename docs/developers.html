@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <meta name="description" content="Setup, build, configuration, and extension notes for PocketInkOS." />
     <meta name="robots" content="index, follow" />
     <meta property="og:type" content="article" />
     <meta property="og:title" content="For Developers - Pocket Ink OS" />
-    <meta property="og:description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <meta property="og:description" content="Setup, build, configuration, and extension notes for PocketInkOS." />
     <meta property="og:url" content="https://remixer-dec.github.io/PocketInkOS/developers.html" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="For Developers - Pocket Ink OS" />
-    <meta name="twitter:description" content="Build configuration, driver documentation, roadmap, and system notes for PocketInkOS." />
+    <meta name="twitter:description" content="Setup, build, configuration, and extension notes for PocketInkOS." />
     <link rel="canonical" href="https://remixer-dec.github.io/PocketInkOS/developers.html" />
     <title>For Developers - Pocket Ink OS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -34,7 +34,7 @@
       }
     </style>
     <link rel="stylesheet" href="./styles.css?v=static" />
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"For Developers - Pocket Ink OS","description":"Build configuration, driver documentation, roadmap, and system notes for PocketInkOS.","isPartOf":{"@type":"TechArticle","name":"PocketInkOS Documentation"},"mainEntityOfPage":"https://remixer-dec.github.io/PocketInkOS/developers.html"}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"For Developers - Pocket Ink OS","description":"Setup, build, configuration, and extension notes for PocketInkOS.","isPartOf":{"@type":"TechArticle","name":"PocketInkOS Documentation"},"mainEntityOfPage":"https://remixer-dec.github.io/PocketInkOS/developers.html"}</script>
     <script type="module" src="./hydrate.js"></script>
   </head>
   <body>
@@ -65,48 +65,79 @@
             <p>Pages</p>
             <nav class="register-screen"><a href="./index.html">Home</a>
               <a href="./concepts.html">Concepts &amp; Design</a>
-              <a href="./developers.html" class="active">For Developers</a></nav>
+              <a href="./developers.html" class="active">For Developers</a>
+              <a href="./reference.html">Reference</a></nav>
           </div>
+          
         </aside>
 
         <main id="main" class="doc-main" tabindex="-1">
-          <section id="build" class="doc-section">
-            <p class="eyebrow">Build note</p>
-            <h2>Build Configuration</h2>
-            <p><span class="brand-word">PocketInk<sup>OS</sup></span> uses <code>arduino-cli</code> to install the ESP32 board core, install project libraries, and compile the sketch. Install Arduino CLI first using the <a class="inline-link" href="https://docs.arduino.cc/arduino-cli/installation/" target="_blank" rel="noreferrer">official Arduino installation guide</a>.</p>
-              <p>Firmware uploads are handled by <code>esptool</code> v5.x. Install esptool using the <a class="inline-link" href="https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html" target="_blank" rel="noreferrer">official Espressif installation guide</a>. Before building, find the connected serial port and update <code>PORT</code> in <code>bin/config.sh</code>.</p>
-              <p><code>bin/app.sh</code> generates compile wrappers for nested source files, builds <code>src/src.ino</code>, verifies that the app binary exists, and uploads it with <code>esptool</code>.</p>
-              <p>Network apps are enabled by default. Build with <code>ENABLE_NETWORK_APPS=0</code> when you want a local-only image without Wi-Fi, feeds, weather, or AI.</p>
-            <div class="command-list"><article><strong>Install Arduino core and libraries</strong><div class="command-row"><code class="command-value">bin/all_libs.sh</code></div><p>Installs the ESP32 Arduino core plus the project libraries used by the firmware.</p></article>
-                <article><strong>Find the connected port</strong><div class="command-tabs" role="tablist" aria-label="Find the connected port"><button type="button" class="active" role="tab" aria-selected="false">macOS</button><button type="button" class="" role="tab" aria-selected="false">Linux</button></div><div class="command-row"><code class="command-value">ls /dev/cu.usbmodem* /dev/cu.usbserial* 2&gt;/dev/null</code></div><p>Use the matching device path as <code>PORT</code> in <code>bin/config.sh</code>.</p></article>
-                <article><strong>Edit device target</strong><div class="command-row"><code class="command-value">$EDITOR bin/config.sh</code></div><p>Set <code>PORT</code> before compiling or uploading. Keep the ESP32-S3 <code>FQBN</code> unless the board target changes.</p></article>
-                <article><strong>Build and upload</strong><div class="command-row"><code class="command-value">bin/app.sh</code></div><p>Compiles the firmware for the configured ESP32-S3 board and uploads the app binary with <code>esptool</code>.</p></article>
-                <article><strong>Build and upload without network apps</strong><div class="command-row"><code class="command-value">ENABLE_NETWORK_APPS=0 bin/app.sh</code></div><p>Compiles without optional network app sources and without the Network menu category.</p></article></div>
-            <div class="spec-list"><article><strong>Arduino CLI</strong><p>Install <code>arduino-cli</code> before running project scripts. Arduino documents Homebrew, install-script, and binary-download paths for Linux and macOS.</p><a class="text-link" href="https://docs.arduino.cc/arduino-cli/installation/" target="_blank" rel="noreferrer">Arduino CLI installation</a></article>
-                <article><strong>esptool</strong><p>Install <code>esptool</code> v5.x before uploading firmware. Espressif documents pip, virtual environment, and binary-release installation paths.</p><a class="text-link" href="https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html" target="_blank" rel="noreferrer">esptool installation</a></article>
-                <article><strong>Device target</strong><p><code>bin/config.sh</code> sets <code>PORT</code>, <code>UPLOAD_SPEED</code>, <code>FQBN</code>, and <code>ESPTOOL</code>. On macOS the port usually appears under <code>/dev/cu.usbmodem*</code> or <code>/dev/cu.usbserial*</code>; on Linux it usually appears under <code>/dev/ttyACM*</code> or <code>/dev/ttyUSB*</code>.</p></article>
-                <article><strong>Credential setup</strong><p>Copy <code>.env.example</code> to <code>.env</code>, then edit <code>.env</code> with local values when network apps or contact metadata need runtime credentials.</p></article>
-                <article><strong>Wi-Fi</strong><p>Set <code>WIFI_SSID</code>, <code>WIFI_PASSWORD</code>, and <code>WIFI_DISPLAY_NAME</code> for the Wi-Fi app and time sync.</p></article>
-                <article><strong>Contact card</strong><p>Feel free to set all the contact details if you want to use the device as a business card.</p></article>
-                <article><strong>Weather</strong><p>Set <code>WEATHER_LATITUDE</code> and <code>WEATHER_LONGITUDE</code> for Weather app to link your location.</p></article>
-                <article><strong>AI</strong><p>Set <code>AI_API_BASE_URL</code>, <code>AI_API_KEY</code>, <code>AI_MODEL_PRIMARY</code>, and <code>AI_MODEL_SECONDARY</code> for the AI app.</p></article></div>
-            
-            
+          
+          <section id="getting-started" class="doc-section">
+            <p class="eyebrow">Setup</p>
+            <h2>Getting Started</h2>
+            <p>Install <code>arduino-cli</code> and <code>esptool</code> first. After <code>arduino-cli</code> is available, run <code>bin/all_libs.sh</code> to install the ESP32 Arduino core and the libraries used by the firmware.</p>
+              <p>Before flashing hardware, find the serial port and set <code>PORT</code> in <code>bin/config.sh</code>.</p>
+            <div class="spec-list"><article><strong>Arduino CLI</strong><p>Install <code>arduino-cli</code> before running the project scripts.</p><a class="text-link" href="https://docs.arduino.cc/arduino-cli/installation/" target="_blank" rel="noreferrer">Arduino CLI installation</a></article>
+                <article><strong>esptool</strong><p>Install <code>esptool</code> before uploading firmware.</p><a class="text-link" href="https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html" target="_blank" rel="noreferrer">esptool installation</a></article></div>
+            <div class="command-list"><article><strong>Install Arduino core and libraries</strong><div class="command-row"><code class="command-value">bin/all_libs.sh</code></div><p>Runs the project toolchain setup after <code>arduino-cli</code> is installed.</p></article>
+                <article><strong>Find the connected port</strong><div class="command-tabs" role="tablist" aria-label="Find the connected port"><button type="button" class="active" role="tab" aria-selected="true" data-command-tab-value="ls /dev/cu.usbmodem* /dev/cu.usbserial* 2&gt;/dev/null">macOS</button><button type="button" class="" role="tab" aria-selected="false" data-command-tab-value="ls /dev/ttyACM* /dev/ttyUSB* 2&gt;/dev/null">Linux</button></div><div class="command-row"><code class="command-value">ls /dev/cu.usbmodem* /dev/cu.usbserial* 2&gt;/dev/null</code></div><p>Use the matching device path as <code>PORT</code> in <code>bin/config.sh</code>.</p></article>
+                <article><strong>Edit device target</strong><div class="command-row"><code class="command-value">$EDITOR bin/config.sh</code></div><p>Set <code>PORT</code>, <code>UPLOAD_SPEED</code>, and <code>ESPTOOL</code> for your machine. Keep the ESP32-S3 <code>FQBN</code> unless the board target changes.</p></article></div>
           </section>
 
-          <section id="drivers" class="doc-section">
+          <section id="build" class="doc-section">
+            <p class="eyebrow">Build note</p>
+            <h2>Build and Flash</h2>
+            <p><code>tools/container-compile.sh</code> exists mainly as a fast syntax check for agentic development. It is useful when you want a quick compile sanity pass without flashing hardware.</p>
+              <p><code>bin/app.sh</code> generates wrapper files for nested sources, builds <code>src/src.ino</code>, checks the binary size and partition layout, then uploads with <code>esptool</code>.</p>
+            <div class="command-list"><article><strong>Quick syntax check</strong><div class="command-row"><code class="command-value">tools/container-compile.sh</code></div><p>Fast syntax-only validation. Useful for quick checks; it is not the normal hardware flashing path.</p></article>
+                <article><strong>Build and upload</strong><div class="command-row"><code class="command-value">bin/app.sh</code></div><p>Supports <code>ENABLE_NETWORK_APPS=0</code> for a local-only build, <code>ENABLE_TTS=1</code> or <code>WITH_TTS=1</code> to include TTS, <code>NODEBUG=1</code> for a smaller release-oriented build, and <code>VERBOSE=1</code> for verbose tool output.</p></article></div>
+            <div class="spec-list"><article><strong>Flashing tools</strong><p><code>bin/app.sh</code> uses <code>arduino-cli</code> for the build and <code>esptool</code> for the upload.</p></article>
+                <article><strong>Generated secrets header</strong><p><code>tools/generate-secrets-header.sh</code> creates <code>src/secrets_config.h</code> from <code>.env</code> when present, otherwise from <code>.env.example</code>.</p></article></div>
+          </section>
+
+          <section id="config-state" class="doc-section">
+            <p class="eyebrow">Runtime</p>
+            <h2>Configuration and State</h2>
+            <p>Firmware defaults are compiled in first, then <code>configReload()</code> overlays <code>/cfg/system.cfg</code> from the SD card when the file exists.</p>
+              <p>Per-app settings are stored under <code>/cfg/app-&lt;id&gt;.cfg</code>. Active apps can also serialize session state before deep sleep and restore it after wake.</p>
+            <div class="spec-list"><article><strong>System config</strong><p>The currently supported system keys cover Wi-Fi, CPU governor and frequency, time format and sync settings, <code>sensor.tempOffsetC</code>, and <code>home.sunBtnApp</code>.</p></article>
+                <article><strong>Sleep and restore</strong><p>The sleep clock keeps a small wake snapshot in RTC memory, and app runtimes can use save/restore hooks to preserve active session bytes across deep sleep.</p></article></div>
+          </section>
+
+          <section id="internal-apps" class="doc-section">
+            <p class="eyebrow">Runtime</p>
+            <h2>Internal App Lifecycle</h2>
+            <p>Built-in apps are registered as <code>AppDefinition</code> entries with a screen id, runtime object, optional <code>launch</code> and <code>reset</code> hooks, and an <code>AppBehavior</code> table.</p>
+              <p><code>launchApp()</code> runs <code>reset()</code>, then <code>launch()</code>, then calls <code>switchTo()</code> with the app runtime. When app ownership changes, <code>switchTo()</code> calls the previous app's <code>onRelease()</code> hook, and calls <code>onExit()</code> unless the app is only being paused for the quit dialog, before calling the next app's <code>onEnter()</code> hook.</p>
+            <div class="spec-list"><article><strong>Button routing</strong><p>Menu and power button single, double, and long presses are dispatched through <code>AppBehavior</code> and return <code>AppEventResult</code> values such as <code>Dirty</code>, <code>GoHome</code>, <code>GoMenu</code>, or <code>QuitRequested</code>.</p></article>
+                <article><strong>Touch routing</strong><p>Apps normally receive press coordinates through <code>ActiveApp::handleTouch()</code>. Apps that need down, move, and up events can attach <code>onRawTouch</code>; the shell then drains <code>TouchInput::readEvent()</code> directly for that app.</p></article>
+                <article><strong>Sleep persistence</strong><p>Before deep sleep, the shell stores the active app id, menu state, Wi-Fi state, local clock snapshot, and up to 4096 bytes from <code>onSaveContext()</code>. After wake, it relaunches the app and passes those bytes to <code>onRestoreContext()</code>.</p></article>
+                <article><strong>Per-app sleep timeout</strong><p>Each app can override the default inactivity deep-sleep timeout through <code>AppDefinition::inactivityDeepSleepMs</code>.</p></article></div>
+          </section>
+
+          <section id="hardware" class="doc-section">
             <p class="eyebrow">Hardware layer</p>
-            <h2>Drivers Included</h2>
-            <p>The firmware wraps hardware access behind small system modules. Application code draws through <code>AppDisplay</code>, reads touch through <code>TouchInput</code>, and receives button events through <code>SmartButton</code>.</p>
-            
-            <div class="spec-list"><article><strong>E-paper display</strong><p>200x200 monochrome e-paper driven over SPI2 through <code>epaper_driver_display</code>; supports full refresh, partial refresh, and a 5 KB framebuffer.</p></article>
-                <article><strong>Touch controller</strong><p>FT6336-compatible touch over I2C at address <code>0x38</code>; a 5 ms FreeRTOS poll task queues down, move, and up events.</p></article>
-                <article><strong>Buttons</strong><p><code>BOOT_BUTTON_PIN</code> on GPIO0 and <code>PWR_BUTTON_PIN</code> on GPIO18 are debounced through <code>SmartButton</code> with single, double, and long-press events.</p></article>
-                <article><strong>Environment</strong><p>SHTC3 ambient temperature/humidity on the shared I2C bus plus ESP chip temperature through the available ESP-IDF temperature sensor API.</p></article>
-                <article><strong>Clock</strong><p><code>DeviceClock</code> keeps local time in firmware. PCF85063 RTC support exists behind <code>ENABLE_RTC_CLOCK</code> and is disabled by default.</p></article>
-                <article><strong>Audio</strong><p>ES8311 codec setup and I2S PCM16 capture at 16 kHz are used by the AI voice path.</p></article></div>
-            
-            
+            <h2>Hardware Notes</h2>
+            <div class="spec-list"><article><strong>E-paper display</strong><p>200x200 monochrome panel on SPI2 with a 5000-byte framebuffer. The board wiring is <code>EPD_CS_PIN=11</code>, <code>EPD_DC_PIN=10</code>, <code>EPD_RST_PIN=9</code>, <code>EPD_BUSY_PIN=8</code>, <code>EPD_SCK_PIN=12</code>, <code>EPD_MOSI_PIN=13</code>, and <code>EPD_PWR_PIN=6</code>.</p></article>
+                <article><strong>Touch controller</strong><p>FT6336-compatible touch controller on I2C0 address <code>0x38</code> with <code>ESP32_I2C_SDA=47</code>, <code>ESP32_I2C_SCL=48</code>, <code>EPD_TP_RST_PIN=7</code>, and <code>EPD_TP_INT_PIN=21</code>. A 5 ms FreeRTOS task polls and queues down, move, and up events.</p></article>
+                <article><strong>Buttons</strong><p><code>BOOT_BUTTON_PIN</code> is GPIO0 and <code>PWR_BUTTON_PIN</code> is GPIO18.</p></article>
+                <article><strong>RTC clock</strong><p>The optional PCF85063 RTC uses the same I2C bus at address <code>0x51</code>. Deep sleep wake uses the power button on GPIO18, and the firmware can keep the display rail retained for the sleep-clock path.</p></article>
+                <article><strong>Ambient sensor</strong><p>SHTC3 temperature and humidity sensor on I2C address <code>0x70</code>.</p></article>
+                <article><strong>Chip temperature</strong><p>ESP chip temperature is read through the ESP-IDF temperature sensor API when available.</p></article>
+                <article><strong>Battery and power</strong><p>Battery sampling uses <code>BAT_ADC_PIN=4</code>. <code>BAT_CTRL_PIN=17</code> keeps the board power latch alive for normal operation and sleep entry.</p></article>
+                <article><strong>Audio</strong><p>ES8311 codec on I2C address <code>0x18</code> with I2S0 on <code>MCLK=14</code>, <code>BCLK=15</code>, <code>DIN=16</code>, <code>WS=38</code>, and <code>DOUT=45</code>. <code>AUDIO_PWR_PIN=42</code> controls codec power and <code>PA_CTRL_PIN=46</code> controls the speaker amp.</p></article>
+                <article><strong>SD card</strong><p>The board uses 1-bit <code>SD_MMC</code> wiring on <code>CLK=39</code>, <code>D0=40</code>, and <code>CMD=41</code>.</p></article></div>
+          </section>
+
+          <section id="external-apps" class="doc-section">
+            <p class="eyebrow">Extension path</p>
+            <h2>External Apps</h2>
+            <p>External <code>.pink</code> apps are scanned from <code>/bin/games</code>, <code>/bin/apps</code>, and <code>/bin/network</code> when the network category is compiled in.</p>
+            <div class="command-list"><article><strong>Build the Tetris demo</strong><div class="command-row"><code class="command-value">tools/build-pink-app.sh examples/pink/tetris/tetris.cpp build/pink/tetris.pink</code></div><p>Builds the sample external app.</p></article></div>
+            <div class="spec-list"><article><strong>ABI compatibility</strong><p>The runtime currently accepts <code>.pink</code> ABI versions 7 through 8. <code>tools/build-pink-app.sh</code> emits ABI version 8, so rebuild external apps after ABI changes.</p></article>
+                <article><strong>Writable state</strong><p>Writable data and BSS are not relocated in the current <code>.pink</code> format. Keep mutable app state in the runtime memory block instead of global or static writable objects.</p></article>
+                <article><strong>API surface</strong><p>External apps include <code>examples/pink/include/pink_app_api.h</code> and use the helpers in <code>examples/pink/include/pink_runtime.cpp</code>.</p></article></div>
           </section>
         </main>
       </div>
