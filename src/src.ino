@@ -30,6 +30,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+extern "C" bool setCpuFrequencyMhz(uint32_t cpu_freq_mhz);
+
 #if __has_include(<esp_rom_sys.h>)
 #include <esp_rom_sys.h>
 #define POCKETINK_HAS_ROM_PRINTF 1
@@ -61,10 +63,12 @@ static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
 static const unsigned long BATTERY_REFRESH_INTERVAL_MS = 30000;
 static const unsigned long DEFAULT_INACTIVITY_DEEP_SLEEP_MS = 120000;
 static const uint32_t INACTIVITY_SLEEP_GUARD_GRACE_MS = 3000;
+static const uint16_t SLEEP_CLOCK_WAKE_CPU_MHZ = 80;
 static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
 
 bool batteryShutdownStarted = false;
 bool inactivitySleepStarted = false;
+bool lowPowerSleepClockWake = false;
 unsigned long lastBatteryRefreshAt = 0;
 unsigned long lastUserActivityAt = 0;
 
@@ -847,7 +851,11 @@ void renderSleepClockScreen(bool partialUpdate) {
   display.unlock();
 }
 
-void prepareForPowerTransition() { sdStorageEnd(); }
+void prepareForPowerTransition() {
+  wifiTurnOff();
+  disableWirelessForSleep();
+  sdStorageEnd();
+}
 
 uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix) {
   if (!clockSet) {
@@ -871,7 +879,9 @@ bool syncDeviceClockFromRtc() {
   delay(5);
   touchI2cBegin();
   rtcClock.begin();
-  return rtcClock.readToDeviceClock();
+  const bool updated = rtcClock.readToDeviceClock();
+  digitalWrite(EPD_TP_RST_PIN, LOW);
+  return updated;
 #else
   return false;
 #endif
@@ -942,6 +952,9 @@ bool handleSleepClockTimerWake() {
     return false;
   }
 
+  setCpuFrequencyMhz(SLEEP_CLOCK_WAKE_CPU_MHZ);
+  disableWirelessForSleep();
+
   if (SLEEP_CLOCK_RETAIN_EPD_POWER) {
     display.beginRetainedPartial();
   } else {
@@ -949,11 +962,15 @@ bool handleSleepClockTimerWake() {
     seedSleepClockPreviousFrame(sleepClock);
   }
 
-  if (!syncDeviceClockFromRtc() && sleepClock.clockSet) {
+  bool clockSet = syncDeviceClockFromRtc();
+  if (!clockSet && sleepClock.clockSet) {
     deviceClock.restoreLocalUnix(sleepClock.localUnix +
                                  sleepClock.wakeIntervalSeconds);
+    clockSet = true;
   }
-  waitForRtcMinuteChangeIfNeeded();
+  if (waitForRtcMinuteChangeIfNeeded()) {
+    clockSet = true;
+  }
 
   refreshBatteryAndCheckCutoff();
   if (batteryShutdownStarted) {
@@ -961,16 +978,10 @@ bool handleSleepClockTimerWake() {
   }
 
   renderSleepClockScreen(true);
-  if (syncDeviceClockFromRtc() && waitForRtcMinuteChangeIfNeeded()) {
-    renderSleepClockScreen(true);
-  }
 
   int64_t localUnix = 0;
-  bool clockSet = syncDeviceClockFromRtc();
-  if (!clockSet) {
-    clockSet = deviceClock.snapshotLocalUnix(localUnix);
-  } else {
-    clockSet = deviceClock.snapshotLocalUnix(localUnix);
+  if (!deviceClock.snapshotLocalUnix(localUnix)) {
+    clockSet = false;
   }
   const uint16_t wakeIntervalSeconds =
       sleepClockWakeIntervalSeconds(clockSet, localUnix);
@@ -1065,6 +1076,19 @@ void logSetupStage(const char *stage) {
 }
 
 void setup() {
+  lowPowerSleepClockWake = deepSleepWokeFromTimer();
+  if (lowPowerSleepClockWake) {
+    setCpuFrequencyMhz(SLEEP_CLOCK_WAKE_CPU_MHZ);
+    keepPowerLatchOn();
+    releasePowerHolds();
+    prepareWakePowerDefaults();
+    keepPowerLatchOn();
+    configLoadDefaults();
+    if (handleSleepClockTimerWake()) {
+      return;
+    }
+  }
+
   Serial.begin(115200);
   waitForSerialDebugWindow();
   logSetupStage("start");
@@ -1073,6 +1097,7 @@ void setup() {
   logSetupStage("power latch");
   keepPowerLatchOn();
   releasePowerHolds();
+  prepareWakePowerDefaults();
   keepPowerLatchOn();
   heapMark("after-power-latch");
 

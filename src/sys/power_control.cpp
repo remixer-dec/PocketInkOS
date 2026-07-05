@@ -3,6 +3,13 @@
 
 #include <Arduino.h>
 
+#if __has_include(<WiFi.h>)
+#include <WiFi.h>
+#define POCKET_INK_HAS_WIFI 1
+#else
+#define POCKET_INK_HAS_WIFI 0
+#endif
+
 #if __has_include(<esp_sleep.h>)
 #include <esp_sleep.h>
 #define POCKET_INK_HAS_ESP_SLEEP 1
@@ -62,11 +69,30 @@ void holdRtcOutput(int pin, int level) {
 #endif
 }
 
+void parkPoweredDownPeripheralPins(bool keepEpdPowerOn) {
+  if (!keepEpdPowerOn) {
+    pinMode(EPD_CS_PIN, INPUT);
+    pinMode(EPD_DC_PIN, INPUT);
+    pinMode(EPD_RST_PIN, INPUT);
+    pinMode(EPD_BUSY_PIN, INPUT);
+    pinMode(EPD_SCK_PIN, INPUT);
+    pinMode(EPD_MOSI_PIN, INPUT);
+  }
+
+  pinMode(EPD_TP_INT_PIN, INPUT);
+  pinMode(ESP32_I2C_SDA, INPUT);
+  pinMode(ESP32_I2C_SCL, INPUT);
+  pinMode(SD_MMC_CLK_PIN, INPUT);
+  pinMode(SD_MMC_D0_PIN, INPUT);
+  pinMode(SD_MMC_CMD_PIN, INPUT);
+}
+
 void holdSleepRails(bool keepEpdPowerOn) {
   holdRtcOutput(EPD_PWR_PIN, keepEpdPowerOn ? LOW : HIGH);
   holdRtcOutput(EPD_TP_RST_PIN, LOW);
   holdDigitalOutput(PA_CTRL_PIN, LOW);
   holdDigitalOutput(AUDIO_PWR_PIN, HIGH);
+  parkPoweredDownPeripheralPins(keepEpdPowerOn);
 #if POCKET_INK_HAS_ESP_SLEEP && POCKET_INK_HAS_GPIO_DRIVER
   gpio_deep_sleep_hold_en();
 #endif
@@ -109,14 +135,37 @@ void releasePowerHolds() {
   releaseDigitalHold(AUDIO_PWR_PIN);
 }
 
+void prepareWakePowerDefaults() {
+  pinMode(EPD_PWR_PIN, OUTPUT);
+  digitalWrite(EPD_PWR_PIN, HIGH);
+  pinMode(EPD_TP_RST_PIN, OUTPUT);
+  digitalWrite(EPD_TP_RST_PIN, LOW);
+  pinMode(PA_CTRL_PIN, OUTPUT);
+  digitalWrite(PA_CTRL_PIN, LOW);
+  pinMode(AUDIO_PWR_PIN, OUTPUT);
+  digitalWrite(AUDIO_PWR_PIN, HIGH);
+}
+
 void keepPowerLatchOn() {
   pinMode(BAT_CTRL_PIN, OUTPUT);
   digitalWrite(BAT_CTRL_PIN, HIGH);
 }
 
+void disableWirelessForSleep() {
+#if POCKET_INK_HAS_WIFI
+  WiFi.scanDelete();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+#endif
+#if defined(ARDUINO_ARCH_ESP32)
+  btStop();
+#endif
+}
+
 void rebootDevice() { ESP.restart(); }
 
 void powerOffDevice() {
+  disableWirelessForSleep();
   holdSleepRails(false);
   releasePowerLatch();
   delay(250);
@@ -124,6 +173,7 @@ void powerOffDevice() {
 }
 
 void enterDeepSleep(uint64_t timerWakeupUs, bool keepEpdPowerOn) {
+  disableWirelessForSleep();
   keepPowerLatchOn();
   holdSleepRails(keepEpdPowerOn);
   holdDeepSleepPowerLatch();
