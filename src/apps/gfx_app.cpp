@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <cmath>
 #include <cstring>
+#include <esp_heap_caps.h>
 
 namespace {
 uint8_t resolveShaderSlot(uint8_t slot) {
@@ -28,7 +29,6 @@ struct Point2D {
 
 static const float kPi = 3.14159265f;
 static const int kShader3LineCount = 72;
-static uint8_t shader3Accum[EPD_WIDTH * EPD_HEIGHT];
 
 inline float clamp01(float v) {
   if (v < 0.0f) {
@@ -338,8 +338,12 @@ inline void drawBlackPixel(Adafruit_GFX &gfx, AppDisplay *fastDisplay,
   }
 }
 
-void drawShader3Fast(Adafruit_GFX &gfx, AppDisplay *fastDisplay, float t) {
-  std::memset(shader3Accum, 0, sizeof(shader3Accum));
+void drawShader3Fast(Adafruit_GFX &gfx, AppDisplay *fastDisplay, float t,
+                     uint8_t *shader3Accum) {
+  if (shader3Accum == nullptr) {
+    return;
+  }
+  std::memset(shader3Accum, 0, EPD_WIDTH * EPD_HEIGHT);
 
   const float invWidth = 1.0f / static_cast<float>(EPD_WIDTH);
   const float invHeight = 1.0f / static_cast<float>(EPD_HEIGHT);
@@ -425,7 +429,20 @@ void GfxApp::start(AppDisplay &targetDisplay) {
   lastFrameAt = millis();
   timeSec = 0.0f;
   frame = 0;
+  if (shader3Accum == nullptr) {
+    shader3Accum = static_cast<uint8_t *>(
+        heap_caps_malloc(EPD_WIDTH * EPD_HEIGHT,
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  }
   display->requestFullRefresh();
+}
+
+void GfxApp::release() {
+  if (shader3Accum != nullptr) {
+    heap_caps_free(shader3Accum);
+    shader3Accum = nullptr;
+  }
+  running = false;
 }
 
 bool GfxApp::hasActiveSession() const { return running; }
@@ -521,7 +538,7 @@ void GfxApp::drawShader(Adafruit_GFX &gfx) {
           : nullptr;
 
   if (shader == 2) {
-    drawShader3Fast(gfx, fastDisplay, timeSec);
+    drawShader3Fast(gfx, fastDisplay, timeSec, shader3Accum);
     return;
   }
 

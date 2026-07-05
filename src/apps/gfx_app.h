@@ -10,6 +10,7 @@ class GfxApp {
 public:
   void reset();
   void start(AppDisplay &display);
+  void release();
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);
@@ -25,6 +26,7 @@ private:
   unsigned long lastFrameAt = 0;
   float timeSec = 0.0f;
   uint32_t frame = 0;
+  uint8_t *shader3Accum = nullptr;
 
   uint16_t frameIntervalMs() const;
   void drawShader(Adafruit_GFX &gfx);
