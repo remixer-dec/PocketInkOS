@@ -21,13 +21,5 @@ void refreshAppCatalog();
 bool consumeFilesPinkLaunch(char *path, size_t pathSize);
 void resetApps();
 void resetContactLinks();
-char wifiStatusIcon();
-bool wifiIsOn();
-bool wifiIsConnected();
-void wifiTurnOn();
-void wifiTurnOff();
-void wifiToggle();
-bool wifiUpdate();
-void restoreWifiOn(bool enabled);
 
 #endif

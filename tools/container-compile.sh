@@ -146,6 +146,7 @@ FILES=( \
   "$ROOT/src/apps/gfx_app.cpp" \
   "$ROOT/src/ui/shell_layout.cpp" \
   "$ROOT/src/ui/components/smart_button.cpp" \
+  "$ROOT/src/ui/components/touch_button.cpp" \
   "$ROOT/src/ui/status_bar.cpp" \
   "$ROOT/src/games/sudoku_app.cpp" \
   "$ROOT/src/ui/components/t9_keyboard_component.cpp" \

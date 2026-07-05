@@ -1,29 +1,22 @@
 #include "ui/components/audio_player_component.h"
 
 #include "sys/touch_input.h"
-#include "ui/icon_ascii_font.h"
+#include "ui/components/touch_button.h"
 
 #include <cstdio>
 #include <cstring>
 
 namespace {
 
-struct Rect {
-  int16_t x;
-  int16_t y;
-  int16_t w;
-  int16_t h;
-};
-
 struct AudioPlayerLayout {
-  Rect title;
-  Rect subtitle;
-  Rect detail;
-  Rect playButton;
-  Rect volumeDown;
-  Rect volumeUp;
-  Rect bar;
-  Rect time;
+  UiRect title;
+  UiRect subtitle;
+  UiRect detail;
+  UiRect playButton;
+  UiRect volumeDown;
+  UiRect volumeUp;
+  UiRect bar;
+  UiRect time;
 };
 
 AudioPlayerLayout makeLayout(bool fullscreen) {
@@ -37,17 +30,19 @@ AudioPlayerLayout makeLayout(bool fullscreen) {
           {8, 78, 184, 18},   {8, 62, 184, 10}};
 }
 
-bool contains(const Rect &rect, const TouchPoint &point) {
-  return point.x >= rect.x && point.x < rect.x + rect.w && point.y >= rect.y &&
-         point.y < rect.y + rect.h;
+bool contains(const UiRect &rect, const TouchPoint &point) {
+  return TouchButton(rect).contains(point);
 }
 
-bool containsPadded(const Rect &rect, const TouchPoint &point, int16_t pad) {
-  return point.x >= rect.x - pad && point.x < rect.x + rect.w + pad &&
-         point.y >= rect.y - pad && point.y < rect.y + rect.h + pad;
+bool containsPadded(const UiRect &rect, const TouchPoint &point, int16_t pad) {
+  UiRect padded = {static_cast<int16_t>(rect.x - pad),
+                   static_cast<int16_t>(rect.y - pad),
+                   static_cast<int16_t>(rect.w + pad * 2),
+                   static_cast<int16_t>(rect.h + pad * 2)};
+  return TouchButton(padded).contains(point);
 }
 
-void drawTextClipped(Adafruit_GFX &gfx, const Rect &rect, const char *text) {
+void drawTextClipped(Adafruit_GFX &gfx, const UiRect &rect, const char *text) {
   if (text == nullptr || text[0] == '\0') {
     return;
   }
@@ -77,20 +72,13 @@ void drawTextClipped(Adafruit_GFX &gfx, const Rect &rect, const char *text) {
   gfx.print(buffer);
 }
 
-void drawIconButton(Adafruit_GFX &gfx, const Rect &rect, char glyph) {
-  gfx.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
-  gfx.setFont(&iconASCII12pt7b);
-  gfx.setTextSize(1);
-  char text[2] = {glyph, '\0'};
-  int16_t textX = 0;
-  int16_t textY = 0;
-  uint16_t textW = 0;
-  uint16_t textH = 0;
-  gfx.getTextBounds(text, 0, 0, &textX, &textY, &textW, &textH);
-  gfx.setCursor(rect.x + (rect.w - static_cast<int16_t>(textW)) / 2 - textX,
-                rect.y + (rect.h - static_cast<int16_t>(textH)) / 2 - textY);
-  gfx.print(text);
-  gfx.setFont();
+void drawIconButton(Adafruit_GFX &gfx, const UiRect &rect, char glyph,
+                    bool pressed) {
+  char icon[2] = {glyph, '\0'};
+  TouchButtonContent content;
+  content.icon = icon;
+  content.iconPlacement = TouchButtonIconPlacement::Only;
+  TouchButton(rect, content).draw(gfx, pressed);
 }
 
 void formatClock(uint32_t ms, char *out, size_t outSize) {
@@ -127,9 +115,12 @@ void AudioPlayerComponent::draw(Adafruit_GFX &gfx, const AudioPlayerState &state
     }
   }
 
-  drawIconButton(gfx, layout.playButton, state.playing ? '+' : '&');
-  drawIconButton(gfx, layout.volumeDown, 'b');
-  drawIconButton(gfx, layout.volumeUp, 'X');
+  drawIconButton(gfx, layout.playButton, state.playing ? '+' : '&',
+                 state.pressedAction == AudioPlayerAction::TogglePlayPause);
+  drawIconButton(gfx, layout.volumeDown, 'b',
+                 state.pressedAction == AudioPlayerAction::VolumeDown);
+  drawIconButton(gfx, layout.volumeUp, 'X',
+                 state.pressedAction == AudioPlayerAction::VolumeUp);
 
   char detail[48];
   char left[12];

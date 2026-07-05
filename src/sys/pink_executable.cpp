@@ -1,6 +1,6 @@
 #include "sys/pink_executable.h"
+#include "shell/connectivity.h"
 #include "fs/file_provider.h"
-#include "sys/builtin_apps.h"
 #include "sys/system_config.h"
 #include "sys/global.h"
 #include "sys/inactivity_sleep_guard.h"
@@ -942,7 +942,6 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
   out->label = label;
   out->icon = icon;
   out->category = category;
-  out->screen = SCREEN_PINK_EXECUTABLE;
   out->runtime = pinkExecutableRuntime();
   out->visible = visiblePinkApp;
   out->behavior = pinkBehavior();
@@ -974,7 +973,6 @@ bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
   out->label = label;
   out->icon = icon;
   out->category = MENU_APPS;
-  out->screen = SCREEN_PINK_EXECUTABLE;
   out->runtime = pinkExecutableRuntime();
   out->visible = visiblePinkApp;
   out->behavior = pinkBehavior();

@@ -33,6 +33,9 @@ public:
   void getTextBounds(const char *text, int16_t x, int16_t y, int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h) { if (x1) *x1 = x; if (y1) *y1 = y; if (w) *w = text ? strlen(text) * 12 : 0; if (h) *h = 16; }
   void drawRect(int16_t, int16_t, int16_t, int16_t, uint16_t) {}
   void fillRect(int16_t, int16_t, int16_t, int16_t, uint16_t) {}
+  void drawRoundRect(int16_t, int16_t, int16_t, int16_t, int16_t, uint16_t) {}
+  void fillRoundRect(int16_t, int16_t, int16_t, int16_t, int16_t, uint16_t) {}
   void drawLine(int16_t, int16_t, int16_t, int16_t, uint16_t) {}
   void drawCircle(int16_t, int16_t, int16_t, uint16_t) {}
+  void fillCircle(int16_t, int16_t, int16_t, uint16_t) {}
 };

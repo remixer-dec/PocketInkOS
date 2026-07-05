@@ -64,10 +64,10 @@ ChessApp chess;
 
 constexpr uint32_t CHESS_INACTIVITY_DEEP_SLEEP_MS = 5UL * 60UL * 1000UL;
 
-AppScreen<TicTacToeApp> ticTacToeScreen(ticTacToe);
+AppScreen<TicTacToeApp, true> ticTacToeScreen(ticTacToe);
 AppScreen<MinesweeperApp> minesweeperScreen(minesweeper);
 AppScreen<HangmanApp, true> hangmanScreen(hangman);
-AppScreen<SudokuApp> sudokuScreen(sudoku);
+AppScreen<SudokuApp, true> sudokuScreen(sudoku);
 AppScreen<WordleApp, true> wordleScreen(wordle);
 AppScreen<ChessApp, true> chessScreen(chess);
 AppScreen<CalculatorApp, true> calculatorScreen(calculator);
@@ -244,15 +244,6 @@ void stopAiAudio() { aiApp.stopAudio(); }
 void releaseAi() { aiApp.release(); }
 void releaseWeather() { weatherApp.release(); }
 
-char wifiIconCharForState(WifiDisplayState state) {
-  if (state == WIFI_DISPLAY_CONNECTED) {
-    return 'g';
-  }
-  if (state == WIFI_DISPLAY_ON) {
-    return 'f';
-  }
-  return '\0';
-}
 #endif
 
 #if ENABLE_TTS
@@ -268,34 +259,31 @@ AppEventResult handleTtsPower() { return dirtyIfHandled(ttsApp.handlePowerButton
 #endif
 
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
-                         MenuCategory category, Screen screen,
-                         ActiveApp *runtime) {
-  return {id, label, icon, category, screen, runtime};
+                         MenuCategory category, ActiveApp *runtime) {
+  return {id, label, icon, category, runtime};
 }
 
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
-                         MenuCategory category, Screen screen,
-                         ActiveApp *runtime, AppCallback reset) {
-  AppDefinition app = builtInApp(id, label, icon, category, screen, runtime);
+                         MenuCategory category, ActiveApp *runtime,
+                         AppCallback reset) {
+  AppDefinition app = builtInApp(id, label, icon, category, runtime);
   app.reset = reset;
   return app;
 }
 
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
-                         MenuCategory category, Screen screen,
-                         ActiveApp *runtime, AppCallback reset,
-                         AppBehavior behavior) {
-  AppDefinition app = builtInApp(id, label, icon, category, screen, runtime,
-                                reset);
+                         MenuCategory category, ActiveApp *runtime,
+                         AppCallback reset, AppBehavior behavior) {
+  AppDefinition app = builtInApp(id, label, icon, category, runtime, reset);
   app.behavior = behavior;
   return app;
 }
 
 AppDefinition builtInAppWhen(const char *id, const char *label,
                              const char *icon, MenuCategory category,
-                             Screen screen, ActiveApp *runtime,
-                             AppVisibleHandler visible, AppCallback reset) {
-  AppDefinition app = builtInApp(id, label, icon, category, screen, runtime);
+                             ActiveApp *runtime, AppVisibleHandler visible,
+                             AppCallback reset) {
+  AppDefinition app = builtInApp(id, label, icon, category, runtime);
   app.visible = visible;
   app.reset = reset;
   return app;
@@ -303,23 +291,21 @@ AppDefinition builtInAppWhen(const char *id, const char *label,
 
 AppDefinition builtInAppWhen(const char *id, const char *label,
                              const char *icon, MenuCategory category,
-                             Screen screen, ActiveApp *runtime,
-                             AppVisibleHandler visible, AppCallback reset,
-                             AppBehavior behavior) {
+                             ActiveApp *runtime, AppVisibleHandler visible,
+                             AppCallback reset, AppBehavior behavior) {
   AppDefinition app =
-      builtInAppWhen(id, label, icon, category, screen, runtime, visible, reset);
+      builtInAppWhen(id, label, icon, category, runtime, visible, reset);
   app.behavior = behavior;
   return app;
 }
 
 AppDefinition builtInIconAppWhen(const char *id, const char *label,
                                  const char *icon, MenuCategory category,
-                                 Screen screen, ActiveApp *runtime,
-                                 AppVisibleHandler visible,
+                                 ActiveApp *runtime, AppVisibleHandler visible,
                                  AppCallback reset,
                                  AppBehavior behavior = AppBehavior{}) {
   AppDefinition app =
-      builtInAppWhen(id, label, icon, category, screen, runtime, visible, reset);
+      builtInAppWhen(id, label, icon, category, runtime, visible, reset);
   app.iconFont = true;
   app.behavior = behavior;
   return app;
@@ -405,6 +391,12 @@ AppBehavior settingsBehavior() {
   return behavior;
 }
 
+AppBehavior contactLinksBehavior() {
+  AppBehavior behavior;
+  behavior.onPower = []() { return AppEventResult::GoHome; };
+  return behavior;
+}
+
 #if ENABLE_NETWORK_APPS
 AppBehavior redditBehavior() {
   AppBehavior behavior;
@@ -465,76 +457,75 @@ AppBehavior ttsBehavior() {
 #endif
 
 const AppDefinition contactLinksApp =
-    builtInApp("contact_links", "contact", "C", MENU_APPS,
-               SCREEN_CONTACT_LINKS, &contactLinksScreen,
-               []() { contactLinks.reset(); });
+    builtInApp("contact_links", "contact", "C", MENU_APPS, &contactLinksScreen,
+               []() { contactLinks.reset(); }, contactLinksBehavior());
 
 } // namespace
 
 const AppDefinition builtInApps[] = {
-    builtInApp("tictactoe", "tictac", "T", MENU_GAMES, SCREEN_TICTACTOE,
-               &ticTacToeScreen, []() { ticTacToe.reset(); },
+    builtInApp("tictactoe", "tictac", "T", MENU_GAMES, &ticTacToeScreen,
+               []() { ticTacToe.reset(); },
                contextBehavior(saveTicTacToeContext, restoreTicTacToeContext)),
-    builtInApp("minesweeper", "mines", "M", MENU_GAMES, SCREEN_MINESWEEPER,
-               &minesweeperScreen, []() { minesweeper.reset(); },
+    builtInApp("minesweeper", "mines", "M", MENU_GAMES, &minesweeperScreen,
+               []() { minesweeper.reset(); },
                powerContextBehavior(handleMinesweeperPower,
                                     saveMinesweeperContext,
                                     restoreMinesweeperContext)),
-    builtInApp("hangman", "hangman", "H", MENU_GAMES, SCREEN_HANGMAN,
-               &hangmanScreen, []() { hangman.reset(); },
+    builtInApp("hangman", "hangman", "H", MENU_GAMES, &hangmanScreen,
+               []() { hangman.reset(); },
                powerContextBehavior(handleHangmanPower, saveHangmanContext,
                                     restoreHangmanContext)),
-    builtInApp("sudoku", "sudoku", "S", MENU_GAMES, SCREEN_SUDOKU,
-               &sudokuScreen, []() { sudoku.reset(); },
+    builtInApp("sudoku", "sudoku", "S", MENU_GAMES, &sudokuScreen,
+               []() { sudoku.reset(); },
                contextBehavior(saveSudokuContext, restoreSudokuContext)),
-    builtInApp("wordle", "wordle", "W", MENU_GAMES, SCREEN_WORDLE,
-               &wordleScreen, []() { wordle.reset(); },
+    builtInApp("wordle", "wordle", "W", MENU_GAMES, &wordleScreen,
+               []() { wordle.reset(); },
                powerContextBehavior(handleWordlePower, saveWordleContext,
                                     restoreWordleContext)),
     withInactivityDeepSleep(
-        builtInApp("chess", "chess", "C", MENU_GAMES, SCREEN_CHESS,
-                   &chessScreen, []() { chess.reset(); }, chessBehavior()),
+        builtInApp("chess", "chess", "C", MENU_GAMES, &chessScreen,
+                   []() { chess.reset(); }, chessBehavior()),
         CHESS_INACTIVITY_DEEP_SLEEP_MS),
-    builtInApp("gfx", "gfx", "G", MENU_APPS, SCREEN_GFX, &gfxScreen,
+    builtInApp("gfx", "gfx", "G", MENU_APPS, &gfxScreen,
                []() { gfxApp.reset(); }, gfxBehavior()),
-    builtInApp("calculator", "calc", "=", MENU_APPS, SCREEN_CALCULATOR,
-               &calculatorScreen, []() { calculator.reset(); }),
-    builtInApp("calendar", "calendar", "C", MENU_APPS, SCREEN_CALENDAR,
-               &calendarScreen, []() { calendar.reset(); }),
-    builtInApp("qr", "qr", "Q", MENU_APPS, SCREEN_QR, &qrScreen,
+    builtInApp("calculator", "calc", "=", MENU_APPS, &calculatorScreen,
+               []() { calculator.reset(); }),
+    builtInApp("calendar", "calendar", "C", MENU_APPS, &calendarScreen,
+               []() { calendar.reset(); }),
+    builtInApp("qr", "qr", "Q", MENU_APPS, &qrScreen,
                []() { qrApp.reset(); },
                contextBehavior(saveQrContext, restoreQrContext)),
-    builtInApp("paint", "paint", "P", MENU_APPS, SCREEN_PAINT, &paintScreen,
+    builtInApp("paint", "paint", "P", MENU_APPS, &paintScreen,
                []() { paintApp.reset(); }, paintBehavior()),
-    builtInApp("deghost", "deghost", "D", MENU_APPS, SCREEN_DEGHOST,
-               &deghostScreen, []() { deghostApp.reset(); },
+    builtInApp("deghost", "deghost", "D", MENU_APPS, &deghostScreen,
+               []() { deghostApp.reset(); },
                deghostBehavior()),
-    builtInIconAppWhen("files", "files", "N", MENU_APPS, SCREEN_FILES,
-                       &filesScreen, sdStorageMounted,
+    builtInIconAppWhen("files", "files", "N", MENU_APPS, &filesScreen,
+                       sdStorageMounted,
                        []() { filesApp.reset(); },
                        filesBehavior()),
-    builtInAppWhen("settings", "settings", "S", MENU_APPS, SCREEN_SETTINGS,
-                   &settingsScreen, sdStorageMounted,
+    builtInAppWhen("settings", "settings", "S", MENU_APPS, &settingsScreen,
+                   sdStorageMounted,
                    []() { settingsApp.reset(); },
                    settingsBehavior())
 #if ENABLE_TTS
     ,
-    builtInAppWhen("tts", "tts", "S", MENU_APPS, SCREEN_TTS, &ttsScreen,
-                   sdStorageMounted, []() { ttsApp.reset(); },
+    builtInAppWhen("tts", "tts", "S", MENU_APPS, &ttsScreen, sdStorageMounted,
+                   []() { ttsApp.reset(); },
                    ttsBehavior())
 #endif
 #if ENABLE_NETWORK_APPS
     ,
-    builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen,
+    builtInApp("wifi", "wifi", "W", MENU_NETWORK, &wifiScreen,
                []() { wifiApp.reset(); }, wifiBehavior()),
-    builtInApp("reddit", "reddit", "R", MENU_NETWORK, SCREEN_REDDIT,
-               &redditScreen, []() { redditApp.reset(); }, redditBehavior()),
-    builtInApp("hn", "hn", "H", MENU_NETWORK, SCREEN_HN, &hnScreen,
+    builtInApp("reddit", "reddit", "R", MENU_NETWORK, &redditScreen,
+               []() { redditApp.reset(); }, redditBehavior()),
+    builtInApp("hn", "hn", "H", MENU_NETWORK, &hnScreen,
                []() { hnApp.reset(); }, hnBehavior()),
-    builtInApp("ai", "ai", "A", MENU_NETWORK, SCREEN_AI, &aiScreen,
+    builtInApp("ai", "ai", "A", MENU_NETWORK, &aiScreen,
                []() { aiApp.reset(); }, aiBehavior()),
-    builtInApp("weather", "weather", "C", MENU_NETWORK, SCREEN_WEATHER,
-               &weatherScreen, []() { weatherApp.reset(); },
+    builtInApp("weather", "weather", "C", MENU_NETWORK, &weatherScreen,
+               []() { weatherApp.reset(); },
                weatherBehavior())
 #endif
 };
@@ -645,63 +636,5 @@ void resetApps() {
   resetContactLinks();
 #if ENABLE_NETWORK_APPS
   wifiManager.reset();
-#endif
-}
-
-char wifiStatusIcon() {
-#if ENABLE_NETWORK_APPS
-  return wifiIconCharForState(wifiManager.displayState());
-#else
-  return '\0';
-#endif
-}
-
-bool wifiIsOn() {
-#if ENABLE_NETWORK_APPS
-  return wifiManager.isOn();
-#else
-  return false;
-#endif
-}
-
-bool wifiIsConnected() {
-#if ENABLE_NETWORK_APPS
-  return wifiManager.isConnected();
-#else
-  return false;
-#endif
-}
-
-void wifiTurnOn() {
-#if ENABLE_NETWORK_APPS
-  wifiManager.connect();
-#endif
-}
-
-void wifiTurnOff() {
-#if ENABLE_NETWORK_APPS
-  wifiManager.disconnect();
-#endif
-}
-
-void wifiToggle() {
-#if ENABLE_NETWORK_APPS
-  wifiManager.toggle();
-#endif
-}
-
-bool wifiUpdate() {
-#if ENABLE_NETWORK_APPS
-  return wifiManager.update();
-#else
-  return false;
-#endif
-}
-
-void restoreWifiOn(bool enabled) {
-#if ENABLE_NETWORK_APPS
-  wifiManager.restoreOn(enabled);
-#else
-  (void)enabled;
 #endif
 }

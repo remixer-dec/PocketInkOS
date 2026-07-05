@@ -247,54 +247,33 @@ void drawIconGlyph(AppDisplay &display, const UiRect &rect, char icon,
 
 void drawIconButton(AppDisplay &display, const UiRect &rect, char icon,
                     bool selected = false) {
-  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
-  if (selected && rect.w > 2 && rect.h > 2) {
-    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
-  }
-  drawIconGlyph(display, rect, icon, selected);
-}
-
-void drawCenteredButtonText(AppDisplay &display, const UiRect &rect,
-                            const char *text, int16_t yOffset,
-                            uint8_t textSize = 1) {
-  int16_t textX;
-  int16_t textY;
-  uint16_t textW;
-  uint16_t textH;
-  display.setFont();
-  display.setTextSize(textSize);
-  display.getTextBounds(text, 0, 0, &textX, &textY, &textW, &textH);
-  display.setCursor(rect.x + (rect.w - static_cast<int16_t>(textW)) / 2 -
-                        textX,
-                    rect.y + yOffset);
-  display.print(text);
+  char iconText[2] = {icon, '\0'};
+  TouchButtonContent content;
+  content.icon = iconText;
+  content.iconPlacement = TouchButtonIconPlacement::Only;
+  TouchButton(rect, content).draw(display, selected);
 }
 
 void drawIconStateButton(AppDisplay &display, const UiRect &rect, char icon,
                          const char *state, bool selected = false) {
-  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
-  if (selected && rect.w > 2 && rect.h > 2) {
-    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
-  }
-  UiRect iconRect = {rect.x, static_cast<int16_t>(rect.y + 1), rect.w, 26};
-  drawIconGlyph(display, iconRect, icon, selected, -1);
-  display.setTextColor(selected ? 0 : 1);
-  drawCenteredButtonText(display, rect, state, 33);
-  display.setTextColor(1);
+  char iconText[2] = {icon, '\0'};
+  TouchButtonContent content;
+  content.text = state;
+  content.icon = iconText;
+  content.iconPlacement = TouchButtonIconPlacement::AboveText;
+  content.iconOffsetY = -1;
+  content.textOffsetY = 1;
+  TouchButton(rect, content).draw(display, selected);
 }
 
 void drawTextStateButton(AppDisplay &display, const UiRect &rect,
                          const char *text, const char *state,
                          bool selected = false) {
-  display.drawRect(rect.x, rect.y, rect.w, rect.h, 1);
-  if (selected && rect.w > 2 && rect.h > 2) {
-    display.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 1);
-  }
-  display.setTextColor(selected ? 0 : 1);
-  drawCenteredButtonText(display, rect, text, 9, 2);
-  drawCenteredButtonText(display, rect, state, 33);
-  display.setTextColor(1);
-  display.setTextSize(1);
+  char label[18];
+  snprintf(label, sizeof(label), "%s\n%s", text, state);
+  TouchButtonContent content;
+  content.text = label;
+  TouchButton(rect, content).draw(display, selected);
 }
 
 void drawPowerDialogFrame(AppDisplay &display, const char *title) {
@@ -388,10 +367,8 @@ void drawMenuItem(AppDisplay &display, const AppDefinition &app, uint8_t slot,
   const int16_t x = MENU_X + col * MENU_CELL_W;
   const int16_t y = MENU_Y + row * MENU_CELL_H;
 
-  if (selected) {
-    display.fillRect(x + 1, y + 1, MENU_ICON_W - 2, MENU_ICON_H - 2, 1);
-  }
-  display.drawRect(x, y, MENU_ICON_W, MENU_ICON_H, 1);
+  UiRect iconRect = {x, y, MENU_ICON_W, MENU_ICON_H};
+  TouchButton(iconRect).draw(display, selected);
   display.setTextColor(selected ? 0 : 1);
   if (app.iconFont && app.icon != nullptr && app.icon[0] != '\0') {
     display.setFont(&iconASCII12pt7b);
@@ -431,11 +408,8 @@ void drawMenuNextPage(AppDisplay &display, uint8_t slot, bool selected) {
   const int16_t x = MENU_X + col * MENU_CELL_W;
   const int16_t y = MENU_Y + row * MENU_CELL_H;
 
-  display.drawRect(x, y, MENU_ICON_W, MENU_ICON_H, 1);
-  if (selected) {
-    display.fillRect(x + 1, y + 1, MENU_ICON_W - 2, MENU_ICON_H - 2, 1);
-  }
-
+  UiRect iconRect = {x, y, MENU_ICON_W, MENU_ICON_H};
+  TouchButton(iconRect).draw(display, selected);
   display.setTextColor(selected ? 0 : 1);
   display.setTextSize(2);
   int16_t arrowX;

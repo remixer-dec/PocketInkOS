@@ -6,8 +6,8 @@
 
 #include "netapps/ai_app.h"
 #include "netapps/lightweight_json_parser.h"
+#include "shell/connectivity.h"
 #include "secrets_config.h"
-#include "sys/builtin_apps.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>

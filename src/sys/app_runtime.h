@@ -14,41 +14,14 @@
 #define ENABLE_TTS 0
 #endif
 
-/// Enumerates the built-in screens the runtime can switch to.
+/// Enumerates shell screens. Apps use SCREEN_APP plus AppDefinition metadata.
 enum Screen {
   SCREEN_HOME,
   SCREEN_KEYBOARD,
   SCREEN_T9_KEYBOARD,
   SCREEN_QWERTY_ZOOM_KEYBOARD,
   SCREEN_MENU,
-  SCREEN_TICTACTOE,
-  SCREEN_MINESWEEPER,
-  SCREEN_HANGMAN,
-  SCREEN_SUDOKU,
-  SCREEN_WORDLE,
-  SCREEN_CHESS,
-  SCREEN_CALCULATOR,
-  SCREEN_QR,
-  SCREEN_PAINT,
-  SCREEN_DEGHOST,
-  SCREEN_GFX,
-  SCREEN_CALENDAR,
-  SCREEN_FILES,
-  SCREEN_SETTINGS,
-  SCREEN_PINK_EXECUTABLE,
-  SCREEN_CONTACT_LINKS
-#if ENABLE_TTS
-  ,
-  SCREEN_TTS
-#endif
-#if ENABLE_NETWORK_APPS
-  ,
-  SCREEN_WIFI,
-  SCREEN_REDDIT,
-  SCREEN_HN,
-  SCREEN_AI,
-  SCREEN_WEATHER
-#endif
+  SCREEN_APP
 };
 
 /// Groups launcher entries into menu pages.
@@ -179,7 +152,6 @@ struct AppDefinition {
   const char *label;
   const char *icon;
   MenuCategory category;
-  Screen screen;
   ActiveApp *runtime;
   AppVisibleHandler visible = nullptr;
   bool iconFont = false;

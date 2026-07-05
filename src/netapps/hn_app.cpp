@@ -6,7 +6,7 @@
 
 #include "netapps/hn_app.h"
 #include "netapps/lightweight_json_parser.h"
-#include "sys/builtin_apps.h"
+#include "shell/connectivity.h"
 
 #include <Arduino.h>
 #include <HTTPClient.h>

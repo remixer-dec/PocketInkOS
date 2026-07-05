@@ -1,5 +1,6 @@
 #include "ui/components/date_time_picker_component.h"
 #include "sys/global.h"
+#include "ui/ui_helpers.h"
 
 #include <Arduino.h>
 #include <cstdio>
@@ -187,23 +188,27 @@ bool DateTimePickerComponent::handleTouch(const TouchPoint &point) {
     }
   }
 
-  if (showTimePicker && y >= TIME_BUTTON_Y && y < TIME_BUTTON_Y + 17) {
-    if (x >= 16 && x < 40) {
+  if (showTimePicker) {
+    const UiRect hourDown = {16, TIME_BUTTON_Y, 24, 17};
+    const UiRect hourUp = {46, TIME_BUTTON_Y, 24, 17};
+    const UiRect minuteDown = {130, TIME_BUTTON_Y, 24, 17};
+    const UiRect minuteUp = {160, TIME_BUTTON_Y, 24, 17};
+    if (uiTouchContains(hourDown, point)) {
       pressControl(CONTROL_HOUR_DOWN);
       adjustHour(-1);
       return true;
     }
-    if (x >= 46 && x < 70) {
+    if (uiTouchContains(hourUp, point)) {
       pressControl(CONTROL_HOUR_UP);
       adjustHour(1);
       return true;
     }
-    if (x >= 130 && x < 154) {
+    if (uiTouchContains(minuteDown, point)) {
       pressControl(CONTROL_MINUTE_DOWN);
       adjustMinute(-1);
       return true;
     }
-    if (x >= 160 && x < 184) {
+    if (uiTouchContains(minuteUp, point)) {
       pressControl(CONTROL_MINUTE_UP);
       adjustMinute(1);
       return true;
@@ -429,18 +434,6 @@ void DateTimePickerComponent::drawCenteredText(Adafruit_GFX &gfx,
 void DateTimePickerComponent::drawButton(Adafruit_GFX &gfx, int16_t x,
                                          int16_t y, int16_t w, int16_t h,
                                          const char *label, bool pressed) {
-  gfx.drawRect(x, y, w, h, 1);
-  if (pressed) {
-    gfx.fillRect(x + 1, y + 1, w - 2, h - 2, 1);
-  }
-  gfx.setTextColor(pressed ? 0 : 1);
-  int16_t textX;
-  int16_t textY;
-  uint16_t textW;
-  uint16_t textH;
-  gfx.getTextBounds(label, 0, 0, &textX, &textY, &textW, &textH);
-  gfx.setCursor(x + (w - static_cast<int16_t>(textW)) / 2 - textX,
-                y + (h - static_cast<int16_t>(textH)) / 2 - textY);
-  gfx.print(label);
-  gfx.setTextColor(1);
+  UiRect rect = {x, y, w, h};
+  uiDrawButton(gfx, rect, label, pressed);
 }
