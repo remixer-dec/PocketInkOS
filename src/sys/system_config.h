@@ -1,10 +1,11 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef SYSTEM_CONFIG_H
+#define SYSTEM_CONFIG_H
 
 #include <stddef.h>
 #include <stdint.h>
 
 static const uint16_t CONFIG_VALUE_MAX = 96;
+static const uint8_t CONFIG_WIFI_SAVED_MAX = 3;
 
 enum ConfigCpuGovernor : uint8_t {
   CONFIG_CPU_FIXED,
@@ -29,12 +30,19 @@ enum ConfigTimeSyncProtocol : uint8_t {
   CONFIG_TIME_SYNC_NTP,
 };
 
+struct ConfigWifiSavedNetwork {
+  char ssid[33];
+  char password[64];
+  char bssid[18];
+};
+
 struct SystemConfig {
   struct {
     char ssid[64];
     char password[64];
     char displayName[24];
     bool autoConnect;
+    ConfigWifiSavedNetwork saved[CONFIG_WIFI_SAVED_MAX];
   } wifi;
 
   struct {
@@ -61,11 +69,13 @@ struct SystemConfig {
 };
 
 void configBegin();
+void configLoadDefaults();
 void configReload();
 const SystemConfig &systemConfig();
 
 bool configGet(const char *key, char *out, size_t outSize);
 bool configSet(const char *key, const char *value);
+bool configRemove(const char *key);
 bool configGetForApp(const char *appId, const char *key, char *out,
                      size_t outSize);
 bool configSetForApp(const char *appId, const char *key, const char *value);

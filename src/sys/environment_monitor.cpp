@@ -1,5 +1,5 @@
 #include "sys/environment_monitor.h"
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "sys/global.h"
 #include "sys/touch_input.h"
 

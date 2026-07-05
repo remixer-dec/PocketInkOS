@@ -1,5 +1,5 @@
 #include "ui/shell_layout.h"
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "sys/global.h"
 #include "ui/icon_ascii_font.h"
 #include "ui/ui_helpers.h"
@@ -29,6 +29,8 @@ static const UiRect POWER_NEXT_PAGE_BUTTON = {132, 56, 54, 44};
 static const UiRect POWER_LEFT_BUTTON = {20, 100, 46, 44};
 static const UiRect POWER_MIDDLE_BUTTON = {77, 100, 46, 44};
 static const UiRect POWER_RIGHT_BUTTON = {134, 100, 46, 44};
+static const int16_t DIALOG_BACKDROP_TOP_Y = 20;
+static const int16_t DIALOG_HATCH_STEP = 6;
 
 static const uint16_t SHELL_WIDGETS_DEFAULT =
     SHELL_WIDGET_TEMP | SHELL_WIDGET_HUM | SHELL_WIDGET_CPU_TEMP |
@@ -69,6 +71,28 @@ void copyValue(char *dest, size_t destSize, const char *source) {
   const char *text = source != nullptr ? source : "";
   strncpy(dest, text, destSize - 1);
   dest[destSize - 1] = '\0';
+}
+
+void drawDialogBackdropHatch(AppDisplay &display) {
+  for (int16_t x = -EPD_HEIGHT; x < EPD_WIDTH; x += DIALOG_HATCH_STEP) {
+    const int16_t diagonal = x + EPD_HEIGHT - 1;
+    int16_t x0 = x;
+    int16_t y0 = EPD_HEIGHT - 1;
+    int16_t x1 = diagonal - DIALOG_BACKDROP_TOP_Y;
+    int16_t y1 = DIALOG_BACKDROP_TOP_Y;
+    if (x0 < 0) {
+      y0 = diagonal;
+      x0 = 0;
+    }
+    if (x1 >= EPD_WIDTH) {
+      x1 = EPD_WIDTH - 1;
+      y1 = diagonal - x1;
+    }
+    if (y0 >= DIALOG_BACKDROP_TOP_Y && y1 >= DIALOG_BACKDROP_TOP_Y &&
+        y0 < EPD_HEIGHT && y1 < EPD_HEIGHT) {
+      display.drawLine(x0, y0, x1, y1, 1);
+    }
+  }
 }
 
 char *trim(char *text) {
@@ -590,7 +614,7 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   if (shellHomeWidgetEnabled(SHELL_WIDGET_SD)) {
     char sdText[24];
     if (data.sd != nullptr && data.sd->mounted) {
-      snprintf(sdText, sizeof(sdText), "[SD] %lu/%luGB free",
+      snprintf(sdText, sizeof(sdText), "SD %lu/%luGB free",
                static_cast<unsigned long>(data.sd->freeGb),
                static_cast<unsigned long>(data.sd->totalGb));
     } else {
@@ -619,11 +643,12 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
     snprintf(humidityText, sizeof(humidityText), "--%%");
   }
   if (env != nullptr && env->chipTemperatureValid) {
-    snprintf(chipText, sizeof(chipText), "C %.1f%c",
+    snprintf(chipText, sizeof(chipText), "CPU %.1f%c",
              displayTemperature(env->chipTemperatureC),
              displayTemperatureSuffix());
   } else {
-    snprintf(chipText, sizeof(chipText), "C --%c", displayTemperatureSuffix());
+    snprintf(chipText, sizeof(chipText), "CPU --%c",
+             displayTemperatureSuffix());
   }
   if (shellHomeWidgetEnabled(SHELL_WIDGET_TEMP)) {
     drawRightAlignedText(display, ambientText, 22);
@@ -716,6 +741,8 @@ bool hitTestAppMenu(const TouchPoint &point, MenuState &state,
 void drawQuitDialog(AppDisplay &display, const StatusBarSnapshot &status) {
   drawStatusBar(display, status);
 
+  drawDialogBackdropHatch(display);
+
   display.fillRect(24, 62, 152, 86, 0);
   display.drawRect(24, 62, 152, 86, 1);
   display.drawLine(24, 148, 175, 148, 1);
@@ -741,6 +768,7 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
                      const PowerDialogSnapshot &snapshot,
                      PowerDialogAction pressed) {
   drawStatusBar(display, status);
+  drawDialogBackdropHatch(display);
 
   drawPowerDialogFrame(display, powerPageTitle(snapshot.page));
   if (snapshot.page == PowerDialogPage::Power) {
@@ -759,7 +787,7 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
         snapshot.wifiConnected ? "OK" : (snapshot.wifiOn ? "ON" : "OFF");
     drawIconStateButton(display, POWER_LEFT_BUTTON, wifiIcon, wifiState,
                         pressed == PowerDialogAction::WifiToggle);
-    drawTextStateButton(display, POWER_MIDDLE_BUTTON, "BT",
+    drawIconStateButton(display, POWER_MIDDLE_BUTTON, '0',
                         snapshot.bluetoothOn ? "ON" : "OFF",
                         pressed == PowerDialogAction::BluetoothToggle);
     char cpuText[8];

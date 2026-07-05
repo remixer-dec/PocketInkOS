@@ -1,7 +1,7 @@
 #include "sys/pink_executable.h"
 #include "fs/file_provider.h"
 #include "sys/builtin_apps.h"
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "sys/global.h"
 #include "sys/inactivity_sleep_guard.h"
 #include "sys/sd_storage.h"
@@ -530,6 +530,9 @@ PinkHost makeHost() {
   host.psramFree = hostPsramFree;
   host.configGet = hostConfigGet;
   host.configSet = hostConfigSet;
+  host.hostSize = sizeof(PinkHost);
+  host.featureFlags = 0;
+  host.reserved2 = 0;
   return host;
 }
 
@@ -691,7 +694,8 @@ private:
     const size_t totalImageSize =
         static_cast<size_t>(header.codeSize) + header.rodataSize;
     if (header.magic != PINK_EXECUTABLE_MAGIC ||
-        header.abiVersion != PINK_EXECUTABLE_ABI_VERSION ||
+        header.abiVersion < PINK_EXECUTABLE_MIN_ABI_VERSION ||
+        header.abiVersion > PINK_EXECUTABLE_ABI_VERSION ||
         header.headerSize < sizeof(PinkExecutableHeader) || header.codeSize == 0 ||
         header.codeSize > PINK_EXECUTABLE_MAX_IMAGE_BYTES ||
         header.rodataSize > PINK_EXECUTABLE_MAX_IMAGE_BYTES ||
@@ -797,6 +801,8 @@ private:
                     reinterpret_cast<void *>(entry));
     }
     pinkDrawTarget = gfx;
+    event.eventSize = sizeof(PinkEvent);
+    event.featureFlags = 0;
     PinkHost host = makeHost();
     entry(&host, &event);
     pinkDrawTarget = nullptr;

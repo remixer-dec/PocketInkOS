@@ -10,26 +10,44 @@ public:
 
   void draw(Adafruit_GFX &gfx, const String &text);
   void draw(Adafruit_GFX &gfx, const String &text, int maxLength);
+  void draw(Adafruit_GFX &gfx, const char *text, int maxLength);
   KeyboardEvent hitTest(const TouchPoint &point, String &text);
   KeyboardEvent hitTest(const TouchPoint &point, String &text, int maxLength);
+  KeyboardEvent hitTest(const TouchPoint &point, char *text, int capacity);
   void setLayout(Layout nextLayout);
   bool update();
   void toggleCaps();
 
 private:
+  struct TextBuffer {
+    String *stringText;
+    char *charText;
+    int length;
+    int limit;
+
+    void backspace();
+    bool append(char value);
+  };
+
   int pendingKey = -1;
   int pendingIndex = 0;
   unsigned long pendingAt = 0;
   bool caps = false;
   Layout layout = Layout::Text;
 
-  void drawInput(Adafruit_GFX &gfx, const String &text, int maxLength);
+  void drawInput(Adafruit_GFX &gfx, const char *text, int maxLength);
+  void drawKeyboard(Adafruit_GFX &gfx, int currentLength, int maxLength);
   void drawKey(Adafruit_GFX &gfx, int key, int x, int y, int w, int h,
                bool disabled);
+  bool keyAt(const TouchPoint &point, int &key) const;
+  KeyboardEvent handleKey(int key, TextBuffer &text);
   bool isPendingActive() const;
   void clearPending();
   bool expirePending();
   char currentChar() const;
+
+  static TextBuffer stringBuffer(String &text, int maxLength);
+  static TextBuffer charBuffer(char *text, int capacity);
 };
 
 #endif

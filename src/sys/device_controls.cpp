@@ -1,5 +1,5 @@
 #include "sys/device_controls.h"
-#include "sys/config.h"
+#include "sys/system_config.h"
 
 #include <Arduino.h>
 #include <stdio.h>

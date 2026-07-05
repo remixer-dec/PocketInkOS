@@ -1,4 +1,4 @@
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "sys/sd_storage.h"
 #include "secrets_config.h"
 
@@ -42,6 +42,21 @@ void copyValue(char *dest, size_t destSize, const char *source) {
   const char *text = source != nullptr ? source : "";
   strncpy(dest, text, destSize - 1);
   dest[destSize - 1] = '\0';
+}
+
+bool wifiSavedKey(const char *key, uint8_t &index, const char *&field) {
+  static const char *prefix = "wifi.saved.";
+  const size_t prefixLen = strlen(prefix);
+  if (strncmp(key, prefix, prefixLen) != 0) {
+    return false;
+  }
+  const char *cursor = key + prefixLen;
+  if (cursor[0] < '0' || cursor[0] > '2' || cursor[1] != '.') {
+    return false;
+  }
+  index = static_cast<uint8_t>(cursor[0] - '0');
+  field = cursor + 2;
+  return index < CONFIG_WIFI_SAVED_MAX;
 }
 
 char *trim(char *text) {
@@ -135,7 +150,18 @@ void resetSystemDefaults() {
 }
 
 void applySystemKey(const char *key, const char *value) {
-  if (strcmp(key, "wifi.ssid") == 0) {
+  uint8_t savedIndex = 0;
+  const char *savedField = nullptr;
+  if (wifiSavedKey(key, savedIndex, savedField)) {
+    ConfigWifiSavedNetwork &saved = currentConfig.wifi.saved[savedIndex];
+    if (strcmp(savedField, "ssid") == 0) {
+      copyValue(saved.ssid, sizeof(saved.ssid), value);
+    } else if (strcmp(savedField, "password") == 0) {
+      copyValue(saved.password, sizeof(saved.password), value);
+    } else if (strcmp(savedField, "bssid") == 0) {
+      copyValue(saved.bssid, sizeof(saved.bssid), value);
+    }
+  } else if (strcmp(key, "wifi.ssid") == 0) {
     copyValue(currentConfig.wifi.ssid, sizeof(currentConfig.wifi.ssid), value);
   } else if (strcmp(key, "wifi.password") == 0) {
     copyValue(currentConfig.wifi.password, sizeof(currentConfig.wifi.password),
@@ -164,8 +190,7 @@ void applySystemKey(const char *key, const char *value) {
       currentConfig.time.dateFormat = CONFIG_DATE_DMY;
     } else if (asciiEqualIgnoreCase(value, "dmy-dot")) {
       currentConfig.time.dateFormat = CONFIG_DATE_DMY_DOT;
-    } else if (asciiEqualIgnoreCase(value, "weekday") ||
-               asciiEqualIgnoreCase(value, "readable")) {
+    } else if (asciiEqualIgnoreCase(value, "weekday")) {
       currentConfig.time.dateFormat = CONFIG_DATE_WEEKDAY;
     } else {
       currentConfig.time.dateFormat = CONFIG_DATE_ISO;
@@ -186,18 +211,18 @@ void applySystemKey(const char *key, const char *value) {
   }
 }
 
-void visitConfigFile(const char *path, ConfigVisitHandler handler,
+bool visitConfigFile(const char *path, ConfigVisitHandler handler,
                      void *context) {
   if (path == nullptr || handler == nullptr || !sdStorageMounted()) {
-    return;
+    return false;
   }
 
   File file = SD_MMC.open(path);
   if (!file) {
-    return;
+    return false;
   }
 
-  char line[160];
+  char line[128];
   size_t length = 0;
   while (file.available() > 0) {
     const int raw = file.read();
@@ -245,6 +270,7 @@ void visitConfigFile(const char *path, ConfigVisitHandler handler,
       }
     }
   }
+  return true;
 }
 
 void applySystemVisitor(const char *key, const char *value, void *) {
@@ -267,43 +293,65 @@ void lookupVisitor(const char *key, const char *value, void *context) {
   lookup->found = true;
 }
 
-bool systemDefaultValue(const char *key, char *out, size_t outSize) {
+bool systemCurrentValue(const char *key, char *out, size_t outSize) {
   if (key == nullptr || out == nullptr || outSize == 0) {
     return false;
   }
 
-  SystemConfig defaults;
-  SystemConfig saved = currentConfig;
-  resetSystemDefaults();
-  defaults = currentConfig;
-  currentConfig = saved;
-
-  if (strcmp(key, "wifi.ssid") == 0) {
-    copyValue(out, outSize, defaults.wifi.ssid);
+  uint8_t savedIndex = 0;
+  const char *savedField = nullptr;
+  if (wifiSavedKey(key, savedIndex, savedField)) {
+    const ConfigWifiSavedNetwork &saved = currentConfig.wifi.saved[savedIndex];
+    if (strcmp(savedField, "ssid") == 0) {
+      copyValue(out, outSize, saved.ssid);
+    } else if (strcmp(savedField, "password") == 0) {
+      copyValue(out, outSize, saved.password);
+    } else if (strcmp(savedField, "bssid") == 0) {
+      copyValue(out, outSize, saved.bssid);
+    } else {
+      return false;
+    }
+  } else if (strcmp(key, "wifi.ssid") == 0) {
+    copyValue(out, outSize, currentConfig.wifi.ssid);
   } else if (strcmp(key, "wifi.password") == 0) {
-    copyValue(out, outSize, defaults.wifi.password);
+    copyValue(out, outSize, currentConfig.wifi.password);
   } else if (strcmp(key, "wifi.displayName") == 0) {
-    copyValue(out, outSize, defaults.wifi.displayName);
+    copyValue(out, outSize, currentConfig.wifi.displayName);
   } else if (strcmp(key, "wifi.autoConnect") == 0) {
-    copyValue(out, outSize, defaults.wifi.autoConnect ? "true" : "false");
+    copyValue(out, outSize, currentConfig.wifi.autoConnect ? "true" : "false");
   } else if (strcmp(key, "home.sunBtnApp") == 0) {
-    copyValue(out, outSize, defaults.home.sunBtnApp);
+    copyValue(out, outSize, currentConfig.home.sunBtnApp);
   } else if (strcmp(key, "cpu.mhz") == 0) {
-    snprintf(out, outSize, "%u", static_cast<unsigned>(defaults.cpu.mhz));
+    snprintf(out, outSize, "%u", static_cast<unsigned>(currentConfig.cpu.mhz));
   } else if (strcmp(key, "cpu.governor") == 0) {
-    copyValue(out, outSize, "fixed");
+    copyValue(out, outSize,
+              currentConfig.cpu.governor == CONFIG_CPU_BALANCED ? "balanced"
+                                                                : "fixed");
   } else if (strcmp(key, "time.format") == 0) {
-    copyValue(out, outSize, "24h");
+    copyValue(out, outSize,
+              currentConfig.time.timeFormat == CONFIG_TIME_12H ? "12h" : "24h");
   } else if (strcmp(key, "date.format") == 0) {
-    copyValue(out, outSize, "iso");
+    const char *value = "iso";
+    if (currentConfig.time.dateFormat == CONFIG_DATE_MDY) {
+      value = "mdy";
+    } else if (currentConfig.time.dateFormat == CONFIG_DATE_DMY) {
+      value = "dmy";
+    } else if (currentConfig.time.dateFormat == CONFIG_DATE_DMY_DOT) {
+      value = "dmy-dot";
+    } else if (currentConfig.time.dateFormat == CONFIG_DATE_WEEKDAY) {
+      value = "weekday";
+    }
+    copyValue(out, outSize, value);
   } else if (strcmp(key, "time.syncProtocol") == 0) {
-    copyValue(out, outSize, "https");
+    copyValue(out, outSize,
+              currentConfig.time.syncProtocol == CONFIG_TIME_SYNC_NTP ? "ntp"
+                                                                      : "https");
   } else if (strcmp(key, "timezone") == 0) {
-    copyValue(out, outSize, defaults.time.timezone);
+    copyValue(out, outSize, currentConfig.time.timezone);
   } else if (strcmp(key, "time.syncServer") == 0) {
-    copyValue(out, outSize, defaults.time.syncServer);
+    copyValue(out, outSize, currentConfig.time.syncServer);
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
-    copyValue(out, outSize, "0");
+    snprintf(out, outSize, "%.2f", currentConfig.sensors.temperatureOffsetC);
   } else {
     return false;
   }
@@ -353,6 +401,8 @@ bool appConfigPath(const char *appId, char *out, size_t outSize) {
 
 void configBegin() { configReload(); }
 
+void configLoadDefaults() { resetSystemDefaults(); }
+
 void configReload() {
   resetSystemDefaults();
   visitConfigFile(kSystemConfigPath, applySystemVisitor, nullptr);
@@ -365,17 +415,95 @@ bool configGet(const char *key, char *out, size_t outSize) {
     return false;
   }
   out[0] = '\0';
-  LookupContext lookup = {key, out, outSize, false};
-  visitConfigFile(kSystemConfigPath, lookupVisitor, &lookup);
-  return lookup.found || systemDefaultValue(key, out, outSize);
+  return systemCurrentValue(key, out, outSize);
 }
 
-bool configSet(const char *key, const char *value) {
-  const bool ok = appendKeyValue(kSystemConfigPath, key, value);
+static bool rewriteConfigFile(const char *key, const char *value) {
+  if (!sdStorageMounted() || !validKey(key) ||
+      (value != nullptr && !validValue(value))) {
+    return false;
+  }
+
+  const size_t keyLen = strlen(key);
+  char lineBuf[128];
+  char *lines = nullptr;
+  size_t linesLen = 0;
+  size_t linesCap = 0;
+
+  File readFile = SD_MMC.open(kSystemConfigPath);
+  if (readFile) {
+    while (readFile.available() > 0) {
+      size_t len = 0;
+      while (readFile.available() > 0 && len + 1 < sizeof(lineBuf)) {
+        const int raw = readFile.read();
+        if (raw < 0) break;
+        const char c = static_cast<char>(raw);
+        if (c == '\n' || c == '\r') break;
+        lineBuf[len++] = c;
+      }
+      lineBuf[len] = '\0';
+
+      char *text = trim(lineBuf);
+      if (text[0] == '\0' || text[0] == '#' || text[0] == ';') {
+        continue;
+      }
+
+      if (strncmp(text, key, keyLen) == 0 && text[keyLen] == '=') {
+        continue;
+      }
+
+      if (linesLen + len + 2 > linesCap) {
+        linesCap = linesCap == 0 ? 256 : linesCap * 2;
+        char *bigger = static_cast<char *>(realloc(lines, linesCap));
+        if (bigger == nullptr) {
+          free(lines);
+          readFile.close();
+          return false;
+        }
+        lines = bigger;
+      }
+      memcpy(lines + linesLen, text, len);
+      linesLen += len;
+      lines[linesLen++] = '\n';
+    }
+    readFile.close();
+  }
+
+  SD_MMC.mkdir(kConfigDir);
+  File writeFile = SD_MMC.open(kSystemConfigPath, FILE_WRITE);
+  if (!writeFile) {
+    free(lines);
+    return false;
+  }
+
+  bool ok = true;
+  if (lines != nullptr && linesLen > 0) {
+    ok = writeFile.write(reinterpret_cast<const uint8_t *>(lines), linesLen) == linesLen;
+  }
+  free(lines);
+
+  if (value != nullptr) {
+    const size_t valueLen = strlen(value);
+    ok = ok &&
+         writeFile.write(reinterpret_cast<const uint8_t *>(key), keyLen) == keyLen &&
+         writeFile.write(reinterpret_cast<const uint8_t *>("="), 1) == 1 &&
+         writeFile.write(reinterpret_cast<const uint8_t *>(value), valueLen) == valueLen &&
+         writeFile.write(reinterpret_cast<const uint8_t *>("\n"), 1) == 1;
+  }
+
+  writeFile.close();
   if (ok) {
     configReload();
   }
   return ok;
+}
+
+bool configSet(const char *key, const char *value) {
+  return rewriteConfigFile(key, value);
+}
+
+bool configRemove(const char *key) {
+  return rewriteConfigFile(key, nullptr);
 }
 
 bool configGetForApp(const char *appId, const char *key, char *out,

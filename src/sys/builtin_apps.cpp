@@ -1,8 +1,9 @@
 #include "sys/builtin_apps.h"
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "apps/calendar_app.h"
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
+#include "apps/settings_app.h"
 #include "apps/deghost_app.h"
 #include "apps/files_app.h"
 #include "apps/gfx_app.h"
@@ -17,6 +18,7 @@
 #include "sys/app_display.h"
 #include "sys/pink_executable.h"
 #include "sys/sd_storage.h"
+#include "sys/wifi_manager.h"
 #if ENABLE_TTS
 #include "apps/tts_app.h"
 #endif
@@ -29,9 +31,6 @@
 #endif
 #include <cstring>
 #include <stdint.h>
-#if ENABLE_NETWORK_APPS
-#include <WiFi.h>
-#endif
 
 extern AppDisplay display;
 
@@ -45,6 +44,7 @@ DeghostApp deghostApp;
 GfxApp gfxApp;
 FilesApp filesApp;
 ContactLinksApp contactLinks;
+SettingsApp settingsApp;
 #if ENABLE_TTS
 TtsApp ttsApp;
 #endif
@@ -78,6 +78,7 @@ AppScreen<DeghostApp, true> deghostScreen(deghostApp);
 AppScreen<GfxApp, true> gfxScreen(gfxApp);
 AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
+AppScreen<SettingsApp> settingsScreen(settingsApp);
 #if ENABLE_TTS
 AppScreen<TtsApp, true> ttsScreen(ttsApp);
 #endif
@@ -104,6 +105,7 @@ void handlePaintRawTouch(const TouchEvent &event) {
 }
 void startDeghost() { deghostApp.start(display); }
 void startGfx() { gfxApp.start(display); }
+void stopGfx() { gfxApp.release(); }
 
 AppEventResult requestQuit() { return AppEventResult::QuitRequested; }
 size_t saveTicTacToeContext(uint8_t *buffer, size_t capacity) {
@@ -224,6 +226,7 @@ AppEventResult handleRedditMenu() {
 AppEventResult handleRedditPower() {
   return dirtyIfHandled(redditApp.handlePowerButton());
 }
+void releaseReddit() { redditApp.release(); }
 AppEventResult handleHnMenu() {
   if (hnApp.handleMenuButton()) {
     return AppEventResult::Dirty;
@@ -233,10 +236,13 @@ AppEventResult handleHnMenu() {
 AppEventResult handleHnPower() {
   return dirtyIfHandled(hnApp.handlePowerButton());
 }
+void releaseHn() { hnApp.release(); }
 AppEventResult handleAiPower() {
   return dirtyIfHandled(aiApp.handlePowerButton());
 }
 void stopAiAudio() { aiApp.stopAudio(); }
+void releaseAi() { aiApp.release(); }
+void releaseWeather() { weatherApp.release(); }
 
 char wifiIconCharForState(WifiDisplayState state) {
   if (state == WIFI_DISPLAY_CONNECTED) {
@@ -362,6 +368,7 @@ AppBehavior gfxBehavior() {
   AppBehavior behavior;
   behavior.onEnter = startGfx;
   behavior.onPower = handleGfxPower;
+  behavior.onRelease = stopGfx;
   return behavior;
 }
 
@@ -392,11 +399,18 @@ AppBehavior deghostBehavior() {
   return behavior;
 }
 
+AppBehavior settingsBehavior() {
+  AppBehavior behavior;
+  behavior.onMenu = requestQuit;
+  return behavior;
+}
+
 #if ENABLE_NETWORK_APPS
 AppBehavior redditBehavior() {
   AppBehavior behavior;
   behavior.onMenu = handleRedditMenu;
   behavior.onPower = handleRedditPower;
+  behavior.onRelease = releaseReddit;
   return behavior;
 }
 
@@ -404,6 +418,7 @@ AppBehavior hnBehavior() {
   AppBehavior behavior;
   behavior.onMenu = handleHnMenu;
   behavior.onPower = handleHnPower;
+  behavior.onRelease = releaseHn;
   return behavior;
 }
 
@@ -411,6 +426,28 @@ AppBehavior aiBehavior() {
   AppBehavior behavior;
   behavior.onExit = stopAiAudio;
   behavior.onPower = handleAiPower;
+  behavior.onRelease = releaseAi;
+  return behavior;
+}
+
+AppBehavior weatherBehavior() {
+  AppBehavior behavior;
+  behavior.onRelease = releaseWeather;
+  return behavior;
+}
+
+AppEventResult handleWifiMenu() {
+  return dirtyIfHandled(wifiApp.handleMenuButton());
+}
+
+void openWifi() { wifiApp.open(); }
+void releaseWifi() { wifiApp.release(); }
+
+AppBehavior wifiBehavior() {
+  AppBehavior behavior;
+  behavior.onEnter = openWifi;
+  behavior.onMenu = handleWifiMenu;
+  behavior.onRelease = releaseWifi;
   return behavior;
 }
 #endif
@@ -475,7 +512,11 @@ const AppDefinition builtInApps[] = {
     builtInIconAppWhen("files", "files", "N", MENU_APPS, SCREEN_FILES,
                        &filesScreen, sdStorageMounted,
                        []() { filesApp.reset(); },
-                       filesBehavior())
+                       filesBehavior()),
+    builtInAppWhen("settings", "settings", "S", MENU_APPS, SCREEN_SETTINGS,
+                   &settingsScreen, sdStorageMounted,
+                   []() { settingsApp.reset(); },
+                   settingsBehavior())
 #if ENABLE_TTS
     ,
     builtInAppWhen("tts", "tts", "S", MENU_APPS, SCREEN_TTS, &ttsScreen,
@@ -484,7 +525,8 @@ const AppDefinition builtInApps[] = {
 #endif
 #if ENABLE_NETWORK_APPS
     ,
-    builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen),
+    builtInApp("wifi", "wifi", "W", MENU_NETWORK, SCREEN_WIFI, &wifiScreen,
+               nullptr, wifiBehavior()),
     builtInApp("reddit", "reddit", "R", MENU_NETWORK, SCREEN_REDDIT,
                &redditScreen, []() { redditApp.reset(); }, redditBehavior()),
     builtInApp("hn", "hn", "H", MENU_NETWORK, SCREEN_HN, &hnScreen,
@@ -492,7 +534,8 @@ const AppDefinition builtInApps[] = {
     builtInApp("ai", "ai", "A", MENU_NETWORK, SCREEN_AI, &aiScreen,
                []() { aiApp.reset(); }, aiBehavior()),
     builtInApp("weather", "weather", "C", MENU_NETWORK, SCREEN_WEATHER,
-               &weatherScreen, []() { weatherApp.reset(); })
+               &weatherScreen, []() { weatherApp.reset(); },
+               weatherBehavior())
 #endif
 };
 
@@ -601,13 +644,14 @@ void resetApps() {
   }
   resetContactLinks();
 #if ENABLE_NETWORK_APPS
+  wifiManager.reset();
   wifiApp.reset();
 #endif
 }
 
 char wifiStatusIcon() {
 #if ENABLE_NETWORK_APPS
-  return wifiIconCharForState(wifiApp.displayState());
+  return wifiIconCharForState(wifiManager.displayState());
 #else
   return '\0';
 #endif
@@ -615,7 +659,7 @@ char wifiStatusIcon() {
 
 bool wifiIsOn() {
 #if ENABLE_NETWORK_APPS
-  return wifiApp.displayState() != WIFI_DISPLAY_OFF;
+  return wifiManager.isOn();
 #else
   return false;
 #endif
@@ -623,7 +667,7 @@ bool wifiIsOn() {
 
 bool wifiIsConnected() {
 #if ENABLE_NETWORK_APPS
-  return WiFi.status() == WL_CONNECTED;
+  return wifiManager.isConnected();
 #else
   return false;
 #endif
@@ -631,31 +675,25 @@ bool wifiIsConnected() {
 
 void wifiTurnOn() {
 #if ENABLE_NETWORK_APPS
-  if (wifiApp.displayState() == WIFI_DISPLAY_OFF) {
-    wifiApp.connect();
-  }
+  wifiManager.connect();
 #endif
 }
 
 void wifiTurnOff() {
 #if ENABLE_NETWORK_APPS
-  wifiApp.disconnect();
+  wifiManager.disconnect();
 #endif
 }
 
 void wifiToggle() {
 #if ENABLE_NETWORK_APPS
-  if (wifiApp.displayState() == WIFI_DISPLAY_OFF) {
-    wifiApp.connect();
-  } else {
-    wifiApp.disconnect();
-  }
+  wifiManager.toggle();
 #endif
 }
 
 bool wifiUpdate() {
 #if ENABLE_NETWORK_APPS
-  return wifiApp.update();
+  return wifiManager.update();
 #else
   return false;
 #endif
@@ -663,9 +701,7 @@ bool wifiUpdate() {
 
 void restoreWifiOn(bool enabled) {
 #if ENABLE_NETWORK_APPS
-  if (enabled) {
-    wifiTurnOn();
-  }
+  wifiManager.restoreOn(enabled);
 #else
   (void)enabled;
 #endif

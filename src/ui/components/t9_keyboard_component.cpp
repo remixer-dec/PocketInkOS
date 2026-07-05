@@ -14,6 +14,9 @@ static const int GRID_Y = 28;
 static const int KEY_W = 62;
 static const int KEY_H = 40;
 static const int KEY_GAP = 4;
+static const int VISIBLE_INPUT_CHARS = 30;
+static const int DEFAULT_TEXT_LIMIT = 64;
+static const int T9_KEYS[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
 
 static const char *sequenceForKey(int key) {
   switch (key) {
@@ -82,24 +85,31 @@ static void buildNumberLabel(char *out, size_t outSize, int key) {
   }
 }
 
-void T9KeyboardComponent::drawInput(Adafruit_GFX &gfx, const String &text,
+static void drawMaxLengthLabel(Adafruit_GFX &gfx, int maxLength) {
+  if (maxLength <= 0) {
+    return;
+  }
+
+  char label[10];
+  snprintf(label, sizeof(label), "Max:%d", maxLength);
+  gfx.setCursor(INPUT_X + INPUT_W - (int)strlen(label) * 6 - 4, INPUT_Y + 6);
+  gfx.print(label);
+}
+
+void T9KeyboardComponent::drawInput(Adafruit_GFX &gfx, const char *text,
                                     int maxLength) {
   gfx.fillRect(INPUT_X, INPUT_Y, INPUT_W, INPUT_H, 0);
   gfx.drawRect(INPUT_X, INPUT_Y, INPUT_W, INPUT_H, 1);
   gfx.setTextSize(1);
   gfx.setTextColor(1);
+  const char *shown = text != nullptr ? text : "";
+  const size_t length = strlen(shown);
+  if (length > VISIBLE_INPUT_CHARS) {
+    shown += length - VISIBLE_INPUT_CHARS;
+  }
   gfx.setCursor(INPUT_X + 5, INPUT_Y + 6);
-  String shown = text;
-  if (shown.length() > 30) {
-    shown = shown.substring(shown.length() - 30);
-  }
   gfx.print(shown);
-  if (maxLength > 0) {
-    char label[10];
-    snprintf(label, sizeof(label), "Max:%d", maxLength);
-    gfx.setCursor(INPUT_X + INPUT_W - (int)strlen(label) * 6 - 4, INPUT_Y + 6);
-    gfx.print(label);
-  }
+  drawMaxLengthLabel(gfx, maxLength);
 }
 
 void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
@@ -151,18 +161,28 @@ void T9KeyboardComponent::draw(Adafruit_GFX &gfx, const String &text) {
 
 void T9KeyboardComponent::draw(Adafruit_GFX &gfx, const String &text,
                                int maxLength) {
-  drawInput(gfx, text, maxLength);
+  drawInput(gfx, text.c_str(), maxLength);
+  drawKeyboard(gfx, static_cast<int>(text.length()), maxLength);
+}
 
-  const int keys[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
-  bool maxReached = maxLength > 0 && (int)text.length() >= maxLength;
-  bool pendingActive = isPendingActive();
+void T9KeyboardComponent::draw(Adafruit_GFX &gfx, const char *text,
+                               int maxLength) {
+  drawInput(gfx, text, maxLength);
+  drawKeyboard(gfx, text != nullptr ? static_cast<int>(strlen(text)) : 0,
+               maxLength);
+}
+
+void T9KeyboardComponent::drawKeyboard(Adafruit_GFX &gfx, int currentLength,
+                                       int maxLength) {
+  const bool maxReached = maxLength > 0 && currentLength >= maxLength;
+  const bool pendingActive = isPendingActive();
   for (int row = 0; row < 4; row++) {
     for (int col = 0; col < 3; col++) {
-      int x = GRID_X + col * (KEY_W + KEY_GAP);
-      int y = GRID_Y + row * (KEY_H + KEY_GAP);
-      int key = keys[row * 3 + col];
-      bool disabled = maxReached && key != 10 && key != 11 &&
-                      !(pendingActive && key == pendingKey);
+      const int x = GRID_X + col * (KEY_W + KEY_GAP);
+      const int y = GRID_Y + row * (KEY_H + KEY_GAP);
+      const int key = T9_KEYS[row * 3 + col];
+      const bool disabled = maxReached && key != 10 && key != 11 &&
+                            !(pendingActive && key == pendingKey);
       drawKey(gfx, key, x, y, KEY_W, KEY_H, disabled);
     }
   }
@@ -216,26 +236,52 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
 
 KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
                                            String &text, int maxLength) {
+  int key = 0;
+  if (!keyAt(point, key)) {
+    return {KEY_NONE, 0};
+  }
+
+  TextBuffer buffer = stringBuffer(text, maxLength);
+  return handleKey(key, buffer);
+}
+
+KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point, char *text,
+                                           int capacity) {
+  if (text == nullptr || capacity <= 1) {
+    return {KEY_NONE, 0};
+  }
+
+  int key = 0;
+  if (!keyAt(point, key)) {
+    return {KEY_NONE, 0};
+  }
+
+  TextBuffer buffer = charBuffer(text, capacity);
+  return handleKey(key, buffer);
+}
+
+bool T9KeyboardComponent::keyAt(const TouchPoint &point, int &key) const {
   if (point.x < GRID_X || point.x >= GRID_X + 3 * KEY_W + 2 * KEY_GAP ||
       point.y < GRID_Y || point.y >= GRID_Y + 4 * KEY_H + 3 * KEY_GAP) {
-    return {KEY_NONE, 0};
+    return false;
   }
 
-  int col = (point.x - GRID_X) / (KEY_W + KEY_GAP);
-  int row = (point.y - GRID_Y) / (KEY_H + KEY_GAP);
-  int keyX = GRID_X + col * (KEY_W + KEY_GAP);
-  int keyY = GRID_Y + row * (KEY_H + KEY_GAP);
+  const int col = (point.x - GRID_X) / (KEY_W + KEY_GAP);
+  const int row = (point.y - GRID_Y) / (KEY_H + KEY_GAP);
+  const int keyX = GRID_X + col * (KEY_W + KEY_GAP);
+  const int keyY = GRID_Y + row * (KEY_H + KEY_GAP);
   if (col < 0 || col > 2 || row < 0 || row > 3 ||
       point.x >= keyX + KEY_W || point.y >= keyY + KEY_H) {
-    return {KEY_NONE, 0};
+    return false;
   }
 
-  const int keys[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
-  int key = keys[row * 3 + col];
+  key = T9_KEYS[row * 3 + col];
+  return true;
+}
+
+KeyboardEvent T9KeyboardComponent::handleKey(int key, TextBuffer &text) {
   if (key == 10) {
-    if (text.length() > 0) {
-      text.remove(text.length() - 1);
-    }
+    text.backspace();
     clearPending();
     return {KEY_BACKSPACE, 0};
   }
@@ -245,27 +291,22 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
   }
 
   if (layout == Layout::Numbers) {
-    int limit = maxLength > 0 ? maxLength : 64;
-    if ((int)text.length() >= limit) {
+    const char value = static_cast<char>('0' + key);
+    if (!text.append(value)) {
       return {KEY_NONE, 0};
     }
-    char value = static_cast<char>('0' + key);
-    text += value;
     clearPending();
     return {KEY_CHAR, value};
   }
 
   const bool sameKey = pendingKey == key && isPendingActive();
-  int limit = maxLength > 0 ? maxLength : 64;
-  if ((int)text.length() >= limit && !sameKey) {
+  if (text.length >= text.limit && !sameKey) {
     return {KEY_NONE, 0};
   }
 
   if (sameKey) {
     pendingIndex = (pendingIndex + 1) % strlen(sequenceForKey(key));
-    if (text.length() > 0) {
-      text.remove(text.length() - 1);
-    }
+    text.backspace();
   } else {
     pendingKey = key;
     pendingIndex = 0;
@@ -273,8 +314,49 @@ KeyboardEvent T9KeyboardComponent::hitTest(const TouchPoint &point,
 
   pendingAt = millis();
   char value = currentChar();
-  if (value != 0 && (int)text.length() < limit) {
-    text += value;
+  if (value != 0) {
+    text.append(value);
   }
   return {KEY_CHAR, value};
+}
+
+void T9KeyboardComponent::TextBuffer::backspace() {
+  if (length <= 0) {
+    return;
+  }
+
+  if (stringText != nullptr) {
+    stringText->remove(length - 1);
+  } else if (charText != nullptr) {
+    charText[length - 1] = '\0';
+  }
+  length--;
+}
+
+bool T9KeyboardComponent::TextBuffer::append(char value) {
+  if (length >= limit) {
+    return false;
+  }
+
+  if (stringText != nullptr) {
+    *stringText += value;
+  } else if (charText != nullptr) {
+    charText[length] = value;
+    charText[length + 1] = '\0';
+  } else {
+    return false;
+  }
+  length++;
+  return true;
+}
+
+T9KeyboardComponent::TextBuffer
+T9KeyboardComponent::stringBuffer(String &text, int maxLength) {
+  return {&text, nullptr, static_cast<int>(text.length()),
+          maxLength > 0 ? maxLength : DEFAULT_TEXT_LIMIT};
+}
+
+T9KeyboardComponent::TextBuffer T9KeyboardComponent::charBuffer(char *text,
+                                                                int capacity) {
+  return {nullptr, text, static_cast<int>(strlen(text)), capacity - 1};
 }
