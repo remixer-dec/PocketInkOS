@@ -20,6 +20,9 @@ static const int CPU_WORD_COUNT = sizeof(CPU_WORDS) / sizeof(CPU_WORDS[0]);
 static const UiRect CPU_BUTTON = {18, 54, 74, 32};
 static const UiRect PVP_BUTTON = {108, 54, 74, 32};
 static const UiRect INPUT_BUTTON = {50, 176, 100, 22};
+static const int8_t CPU_BUTTON_ID = 0;
+static const int8_t PVP_BUTTON_ID = 1;
+static const int8_t INPUT_BUTTON_ID = 2;
 static const int WORD_LENGTH = 5;
 
 static const int BOARD_X = 25;
@@ -94,6 +97,8 @@ void WordleApp::reset() {
   keyboardOpen = false;
   clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
+  press.clear();
+  pendingAction = PENDING_NONE;
   for (int i = 0; i < 6; i++) {
     memset(guesses[i], 0, sizeof(guesses[i]));
     for (int j = 0; j < 5; j++) {
@@ -122,17 +127,36 @@ void WordleApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool WordleApp::update() {
-  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
+  if (pendingAction != PENDING_NONE && millis() >= press.until) {
+    const PendingAction action = pendingAction;
+    pendingAction = PENDING_NONE;
+    press.clear();
+    if (action == PENDING_CPU) {
+      startCpuGame();
+    } else if (action == PENDING_PLAYER) {
+      startPlayerGame();
+    } else if (action == PENDING_INPUT) {
+      openKeyboard();
+    }
+    return true;
+  }
+  bool dirty = press.update();
+  if (keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update()) {
+    dirty = true;
+  }
+  return dirty;
 }
 
 bool WordleApp::handleTouch(const TouchPoint &point) {
   if (state == STATE_INTRO) {
-    if (uiContains(CPU_BUTTON, point)) {
-      startCpuGame();
+    if (uiTouchContains(CPU_BUTTON, point)) {
+      press.press(CPU_BUTTON_ID);
+      pendingAction = PENDING_CPU;
       return true;
     }
-    if (uiContains(PVP_BUTTON, point)) {
-      startPlayerGame();
+    if (uiTouchContains(PVP_BUTTON, point)) {
+      press.press(PVP_BUTTON_ID);
+      pendingAction = PENDING_PLAYER;
       return true;
     }
     return false;
@@ -146,8 +170,9 @@ bool WordleApp::handleTouch(const TouchPoint &point) {
   if (keyboardOpen) {
     return handleKeyboardTouch(point);
   }
-  if (uiContains(INPUT_BUTTON, point)) {
-    openKeyboard();
+  if (uiTouchContains(INPUT_BUTTON, point)) {
+    press.press(INPUT_BUTTON_ID);
+    pendingAction = PENDING_INPUT;
     return true;
   }
   return false;
@@ -320,8 +345,8 @@ void WordleApp::drawIntro(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   drawCenteredText(gfx, "WORDLE", 20, 2);
   drawCenteredText(gfx, "Choose game mode", 44, 1);
-  uiDrawButton(gfx, CPU_BUTTON, "VS CPU");
-  uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER");
+  uiDrawButton(gfx, CPU_BUTTON, "VS CPU", press.isPressed(CPU_BUTTON_ID));
+  uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER", press.isPressed(PVP_BUTTON_ID));
 }
 
 void WordleApp::drawEntry(Adafruit_GFX &gfx) {
@@ -339,7 +364,7 @@ void WordleApp::drawEntry(Adafruit_GFX &gfx) {
   gfx.print("Player 1 enters 5 letters");
   gfx.setCursor(24, 78);
   gfx.print("Player 2 looks away");
-  uiDrawButton(gfx, INPUT_BUTTON, "WORD");
+  uiDrawButton(gfx, INPUT_BUTTON, "WORD", press.isPressed(INPUT_BUTTON_ID));
 }
 
 void WordleApp::drawGame(Adafruit_GFX &gfx) {
@@ -355,7 +380,7 @@ void WordleApp::drawGame(Adafruit_GFX &gfx) {
     drawCenteredText(gfx, label, 4, 1);
   }
   drawBoard(gfx);
-  uiDrawButton(gfx, INPUT_BUTTON, "INPUT");
+  uiDrawButton(gfx, INPUT_BUTTON, "INPUT", press.isPressed(INPUT_BUTTON_ID));
 }
 
 void WordleApp::drawBoard(Adafruit_GFX &gfx) {

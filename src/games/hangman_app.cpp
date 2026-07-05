@@ -14,6 +14,9 @@ static const int MAX_MISSES = 6;
 static const UiRect CPU_BUTTON = {18, 64, 74, 34};
 static const UiRect PVP_BUTTON = {108, 64, 74, 34};
 static const UiRect INPUT_BUTTON = {50, 176, 100, 22};
+static const int8_t CPU_BUTTON_ID = 0;
+static const int8_t PVP_BUTTON_ID = 1;
+static const int8_t INPUT_BUTTON_ID = 2;
 static const int SECRET_MAX = 12;
 static const int GUESS_MAX = 1;
 static const int SCREEN_WIDTH = 200;
@@ -53,6 +56,8 @@ void HangmanApp::reset() {
   keyboardOpen = false;
   clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
+  press.clear();
+  pendingAction = PENDING_NONE;
   misses = 0;
 }
 
@@ -73,17 +78,36 @@ void HangmanApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool HangmanApp::update() {
-  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
+  if (pendingAction != PENDING_NONE && millis() >= press.until) {
+    const PendingAction action = pendingAction;
+    pendingAction = PENDING_NONE;
+    press.clear();
+    if (action == PENDING_CPU) {
+      startCpuGame();
+    } else if (action == PENDING_PLAYER) {
+      startPlayerGame();
+    } else if (action == PENDING_INPUT) {
+      openKeyboard();
+    }
+    return true;
+  }
+  bool dirty = press.update();
+  if (keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update()) {
+    dirty = true;
+  }
+  return dirty;
 }
 
 bool HangmanApp::handleTouch(const TouchPoint &point) {
   if (state == STATE_INTRO) {
-    if (uiContains(CPU_BUTTON, point)) {
-      startCpuGame();
+    if (uiTouchContains(CPU_BUTTON, point)) {
+      press.press(CPU_BUTTON_ID);
+      pendingAction = PENDING_CPU;
       return true;
     }
-    if (uiContains(PVP_BUTTON, point)) {
-      startPlayerGame();
+    if (uiTouchContains(PVP_BUTTON, point)) {
+      press.press(PVP_BUTTON_ID);
+      pendingAction = PENDING_PLAYER;
       return true;
     }
     return false;
@@ -94,8 +118,9 @@ bool HangmanApp::handleTouch(const TouchPoint &point) {
   }
 
   if (state == STATE_ENTER_WORD) {
-    if (uiContains(INPUT_BUTTON, point)) {
-      openKeyboard();
+    if (uiTouchContains(INPUT_BUTTON, point)) {
+      press.press(INPUT_BUTTON_ID);
+      pendingAction = PENDING_INPUT;
       return true;
     }
     return false;
@@ -106,8 +131,9 @@ bool HangmanApp::handleTouch(const TouchPoint &point) {
     return true;
   }
 
-  if (uiContains(INPUT_BUTTON, point)) {
-    openKeyboard();
+  if (uiTouchContains(INPUT_BUTTON, point)) {
+    press.press(INPUT_BUTTON_ID);
+    pendingAction = PENDING_INPUT;
     return true;
   }
   return false;
@@ -258,8 +284,8 @@ void HangmanApp::drawIntro(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   drawCenteredText(gfx, "HANGMAN", 20, 2);
   drawCenteredText(gfx, "Choose game mode", 48, 1);
-  uiDrawButton(gfx, CPU_BUTTON, "VS CPU");
-  uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER");
+  uiDrawButton(gfx, CPU_BUTTON, "VS CPU", press.isPressed(CPU_BUTTON_ID));
+  uiDrawButton(gfx, PVP_BUTTON, "2 PLAYER", press.isPressed(PVP_BUTTON_ID));
 }
 
 void HangmanApp::drawEntry(Adafruit_GFX &gfx) {
@@ -279,7 +305,7 @@ void HangmanApp::drawEntry(Adafruit_GFX &gfx) {
   gfx.print("Player 1 enters word");
   gfx.setCursor(17, 82);
   gfx.print("Player 2 looks away");
-  uiDrawButton(gfx, INPUT_BUTTON, "WORD");
+  uiDrawButton(gfx, INPUT_BUTTON, "WORD", press.isPressed(INPUT_BUTTON_ID));
 }
 
 void HangmanApp::drawGame(Adafruit_GFX &gfx) {
@@ -329,7 +355,7 @@ void HangmanApp::drawGame(Adafruit_GFX &gfx) {
     }
   }
 
-  uiDrawButton(gfx, INPUT_BUTTON, "GUESS");
+  uiDrawButton(gfx, INPUT_BUTTON, "GUESS", press.isPressed(INPUT_BUTTON_ID));
 }
 
 void HangmanApp::drawGallows(Adafruit_GFX &gfx) {

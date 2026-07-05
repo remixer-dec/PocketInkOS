@@ -9,6 +9,10 @@ static const UiRect TEXT_BUTTON = {12, 52, 52, 26};
 static const UiRect HTTP_BUTTON = {74, 52, 52, 26};
 static const UiRect HTTPS_BUTTON = {136, 52, 52, 26};
 static const UiRect INPUT_BUTTON = {50, 96, 100, 24};
+static const int8_t TEXT_BUTTON_ID = 0;
+static const int8_t HTTP_BUTTON_ID = 1;
+static const int8_t HTTPS_BUTTON_ID = 2;
+static const int8_t INPUT_BUTTON_ID = 3;
 static const int DATA_CODEWORDS = 48;
 static const int ECC_CODEWORDS = 26;
 static const int BLOCKS = 2;
@@ -73,6 +77,7 @@ void QrApp::reset() {
   clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
   hasQr = false;
+  press.clear();
   memset(modules, 0, sizeof(modules));
 }
 
@@ -200,7 +205,11 @@ void QrApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool QrApp::update() {
-  return keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update();
+  bool dirty = press.update();
+  if (keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update()) {
+    dirty = true;
+  }
+  return dirty;
 }
 
 bool QrApp::handleTouch(const TouchPoint &point) {
@@ -211,22 +220,26 @@ bool QrApp::handleTouch(const TouchPoint &point) {
     hasQr = false;
     return true;
   }
-  if (uiContains(TEXT_BUTTON, point)) {
+  if (uiTouchContains(TEXT_BUTTON, point)) {
+    press.press(TEXT_BUTTON_ID);
     mode = MODE_TEXT;
     inputText = "";
     return true;
   }
-  if (uiContains(HTTP_BUTTON, point)) {
+  if (uiTouchContains(HTTP_BUTTON, point)) {
+    press.press(HTTP_BUTTON_ID);
     mode = MODE_HTTP;
     inputText = "http://";
     return true;
   }
-  if (uiContains(HTTPS_BUTTON, point)) {
+  if (uiTouchContains(HTTPS_BUTTON, point)) {
+    press.press(HTTPS_BUTTON_ID);
     mode = MODE_HTTPS;
     inputText = "https://";
     return true;
   }
-  if (uiContains(INPUT_BUTTON, point)) {
+  if (uiTouchContains(INPUT_BUTTON, point)) {
+    press.press(INPUT_BUTTON_ID);
     openKeyboard();
     return true;
   }
@@ -296,10 +309,13 @@ void QrApp::drawMenu(Adafruit_GFX &gfx) {
   gfx.getTextBounds("QR", 0, 0, &x, &y, &w, &h);
   gfx.setCursor((200 - static_cast<int>(w)) / 2 - x, 16);
   gfx.print("QR");
-  uiDrawButton(gfx, TEXT_BUTTON, "TEXT", mode == MODE_TEXT);
-  uiDrawButton(gfx, HTTP_BUTTON, "HTTP", mode == MODE_HTTP);
-  uiDrawButton(gfx, HTTPS_BUTTON, "HTTPS", mode == MODE_HTTPS);
-  uiDrawButton(gfx, INPUT_BUTTON, "INPUT");
+  uiDrawButton(gfx, TEXT_BUTTON, "TEXT",
+               mode == MODE_TEXT || press.isPressed(TEXT_BUTTON_ID));
+  uiDrawButton(gfx, HTTP_BUTTON, "HTTP",
+               mode == MODE_HTTP || press.isPressed(HTTP_BUTTON_ID));
+  uiDrawButton(gfx, HTTPS_BUTTON, "HTTPS",
+               mode == MODE_HTTPS || press.isPressed(HTTPS_BUTTON_ID));
+  uiDrawButton(gfx, INPUT_BUTTON, "INPUT", press.isPressed(INPUT_BUTTON_ID));
   gfx.setTextSize(1);
   gfx.setCursor(10, 134);
   gfx.print("Version 4-Q, max 46 bytes");

@@ -10,10 +10,14 @@ static const int CELL_SIZE = 50;
 static const UiRect CPU_BUTTON = {10, 28, 52, 18};
 static const UiRect PVP_BUTTON = {70, 28, 52, 18};
 static const UiRect NEW_BUTTON = {130, 28, 56, 18};
+static const int8_t CPU_BUTTON_ID = 0;
+static const int8_t PVP_BUTTON_ID = 1;
+static const int8_t NEW_BUTTON_ID = 2;
 static const uint8_t TICTACTOE_CONTEXT_VERSION = 1;
 
 void TicTacToeApp::reset() {
   vsCpu = true;
+  press.clear();
   resetBoard();
 }
 
@@ -44,9 +48,11 @@ void TicTacToeApp::draw(Adafruit_GFX &gfx) {
     gfx.print(turn);
   }
 
-  uiDrawButton(gfx, CPU_BUTTON, "CPU", vsCpu);
-  uiDrawButton(gfx, PVP_BUTTON, "PVP", !vsCpu);
-  uiDrawButton(gfx, NEW_BUTTON, "NEW");
+  uiDrawButton(gfx, CPU_BUTTON, "CPU",
+               vsCpu || press.isPressed(CPU_BUTTON_ID));
+  uiDrawButton(gfx, PVP_BUTTON, "PVP",
+               !vsCpu || press.isPressed(PVP_BUTTON_ID));
+  uiDrawButton(gfx, NEW_BUTTON, "NEW", press.isPressed(NEW_BUTTON_ID));
 
   drawBoard(gfx);
 }
@@ -80,17 +86,20 @@ void TicTacToeApp::drawMark(Adafruit_GFX &gfx, int cell, char mark) {
 }
 
 bool TicTacToeApp::handleTouch(const TouchPoint &point) {
-  if (uiContains(CPU_BUTTON, point)) {
+  if (uiTouchContains(CPU_BUTTON, point)) {
+    press.press(CPU_BUTTON_ID);
     vsCpu = true;
     resetBoard();
     return true;
   }
-  if (uiContains(PVP_BUTTON, point)) {
+  if (uiTouchContains(PVP_BUTTON, point)) {
+    press.press(PVP_BUTTON_ID);
     vsCpu = false;
     resetBoard();
     return true;
   }
-  if (uiContains(NEW_BUTTON, point)) {
+  if (uiTouchContains(NEW_BUTTON, point)) {
+    press.press(NEW_BUTTON_ID);
     resetBoard();
     return true;
   }
@@ -104,6 +113,8 @@ bool TicTacToeApp::handleTouch(const TouchPoint &point) {
   makeMove(row * 3 + col);
   return true;
 }
+
+bool TicTacToeApp::update() { return press.update(); }
 
 bool TicTacToeApp::hasActiveSession() const {
   if (winner) {

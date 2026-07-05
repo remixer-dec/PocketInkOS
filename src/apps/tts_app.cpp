@@ -27,6 +27,11 @@ const UiRect kPlaybackButton = {136, 148, 56, 24};
 const UiRect kTextBox = {8, 38, 184, 70};
 const UiRect kBackendButton = {8, 124, 58, 20};
 const UiRect kIterButton = {72, 124, 58, 20};
+const int8_t kInputButtonId = 0;
+const int8_t kSpeakButtonId = 1;
+const int8_t kPlaybackButtonId = 2;
+const int8_t kBackendButtonId = 3;
+const int8_t kIterButtonId = 4;
 const uint32_t kTaskStackBytes = 16384;
 const UBaseType_t kTaskPriority = 1;
 const BaseType_t kTaskCore = 1;
@@ -130,6 +135,7 @@ void TtsApp::reset() {
   numberText = "";
   keyboardOpen = false;
   keyboardMode = KEYBOARD_T9;
+  press.clear();
   state = State::Idle;
   setStatus("Enter text");
   closeKeyboard();
@@ -148,7 +154,7 @@ void TtsApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool TtsApp::update() {
-  bool dirty = false;
+  bool dirty = press.update();
   if (keyboardOpen && keyboardMode == KEYBOARD_T9 && inputKeyboard.update()) {
     dirty = true;
   }
@@ -176,22 +182,27 @@ bool TtsApp::handleTouch(const TouchPoint &point) {
   if (keyboardOpen) {
     return handleKeyboardTouch(point);
   }
-  if (uiContains(kInputButton, point)) {
+  if (uiTouchContains(kInputButton, point)) {
+    press.press(kInputButtonId);
     openKeyboard();
     return true;
   }
-  if (uiContains(kBackendButton, point)) {
+  if (uiTouchContains(kBackendButton, point)) {
+    press.press(kBackendButtonId);
     toggleVocoderBackend();
     return true;
   }
-  if (uiContains(kIterButton, point)) {
+  if (uiTouchContains(kIterButton, point)) {
+    press.press(kIterButtonId);
     openIterationKeyboard();
     return true;
   }
-  if (uiContains(kSpeakButton, point)) {
+  if (uiTouchContains(kSpeakButton, point)) {
+    press.press(kSpeakButtonId);
     return startSynthesis();
   }
-  if (uiContains(kPlaybackButton, point)) {
+  if (uiTouchContains(kPlaybackButton, point)) {
+    press.press(kPlaybackButtonId);
     if (state == State::Playing) {
       stopAudio();
       state = State::Ready;
@@ -391,15 +402,18 @@ void TtsApp::drawMain(Adafruit_GFX &gfx) {
            static_cast<unsigned>(griffinLimIterations));
   uiDrawButton(gfx, kBackendButton,
                vocoderBackend == VocoderBackend::GriffinLim ? "GL" : "NEURAL",
-               vocoderBackend == VocoderBackend::GriffinLim);
-  uiDrawButton(gfx, kIterButton, iterLabel);
+               vocoderBackend == VocoderBackend::GriffinLim ||
+                   press.isPressed(kBackendButtonId));
+  uiDrawButton(gfx, kIterButton, iterLabel, press.isPressed(kIterButtonId));
 
-  uiDrawButton(gfx, kInputButton, "INPUT");
-  uiDrawButton(gfx, kSpeakButton, "SPEAK", state == State::Synthesizing);
+  uiDrawButton(gfx, kInputButton, "INPUT", press.isPressed(kInputButtonId));
+  uiDrawButton(gfx, kSpeakButton, "SPEAK",
+               state == State::Synthesizing || press.isPressed(kSpeakButtonId));
   if (state == State::Playing) {
     uiDrawButton(gfx, kPlaybackButton, "STOP", true);
   } else if (pcm.frameCount() > 0) {
-    uiDrawButton(gfx, kPlaybackButton, "PLAY");
+    uiDrawButton(gfx, kPlaybackButton, "PLAY",
+                 press.isPressed(kPlaybackButtonId));
   }
 }
 

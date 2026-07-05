@@ -112,11 +112,11 @@ void MinesweeperApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool MinesweeperApp::handleTouch(const TouchPoint &point) {
-  if (uiContains(OPEN_BUTTON, point)) {
+  if (uiTouchContains(OPEN_BUTTON, point)) {
     flagMode = false;
     return true;
   }
-  if (uiContains(FLAG_BUTTON, point)) {
+  if (uiTouchContains(FLAG_BUTTON, point)) {
     flagMode = true;
     return true;
   }

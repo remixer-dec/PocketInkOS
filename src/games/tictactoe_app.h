@@ -2,6 +2,7 @@
 #define TICTACTOE_APP_H
 
 #include "sys/touch_input.h"
+#include "ui/ui_helpers.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 
@@ -9,6 +10,7 @@ class TicTacToeApp {
 public:
   void reset();
   void draw(Adafruit_GFX &gfx);
+  bool update();
   bool handleTouch(const TouchPoint &point);
   bool hasActiveSession() const;
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
@@ -19,6 +21,7 @@ private:
   bool vsCpu = true;
   char turn = 'X';
   char winner = 0;
+  UiPressFeedback press;
 
   void resetBoard();
   void drawBoard(Adafruit_GFX &gfx);

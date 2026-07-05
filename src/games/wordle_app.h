@@ -4,6 +4,7 @@
 #include "ui/components/menu_button_consumer.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/ui_helpers.h"
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
@@ -27,6 +28,7 @@ private:
   enum State { STATE_INTRO, STATE_ENTER_WORD, STATE_GUESSING, STATE_WON, STATE_LOST };
   enum Mark { MARK_NONE, MARK_ABSENT, MARK_PRESENT, MARK_CORRECT };
   enum KeyboardMode { KEYBOARD_T9, KEYBOARD_QWERTY_ZOOM };
+  enum PendingAction { PENDING_NONE, PENDING_CPU, PENDING_PLAYER, PENDING_INPUT };
 
   State state = STATE_INTRO;
   char target[6] = {0};
@@ -37,6 +39,8 @@ private:
   int row = 0;
   bool keyboardOpen = false;
   KeyboardMode keyboardMode = KEYBOARD_T9;
+  UiPressFeedback press;
+  PendingAction pendingAction = PENDING_NONE;
 
   void startCpuGame();
   void startPlayerGame();

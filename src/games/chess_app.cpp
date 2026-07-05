@@ -776,23 +776,24 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
   }
 
   if (mode == Mode::Setup) {
-    if (uiContains(PVP_BUTTON, point)) {
+    if (uiTouchContains(PVP_BUTTON, point)) {
       vsAi = false;
       return true;
     }
-    if (uiContains(AI1_BUTTON, point) || uiContains(AI2_BUTTON, point) ||
-        uiContains(AI3_BUTTON, point)) {
+    if (uiTouchContains(AI1_BUTTON, point) ||
+        uiTouchContains(AI2_BUTTON, point) ||
+        uiTouchContains(AI3_BUTTON, point)) {
       vsAi = true;
-      aiLevel = uiContains(AI1_BUTTON, point) ? 1
-                : uiContains(AI2_BUTTON, point) ? 2
-                                                : 3;
+      aiLevel = uiTouchContains(AI1_BUTTON, point) ? 1
+                : uiTouchContains(AI2_BUTTON, point) ? 2
+                                                     : 3;
       return true;
     }
-    if (uiContains(COLOR_BUTTON, point)) {
+    if (uiTouchContains(COLOR_BUTTON, point)) {
       humanColor = opposite(humanColor);
       return true;
     }
-    if (uiContains(START_BUTTON, point)) {
+    if (uiTouchContains(START_BUTTON, point)) {
       startGame();
       return true;
     }
@@ -811,7 +812,7 @@ bool ChessApp::handleTouch(const TouchPoint &point) {
 
   if (awaitingPromotion) {
     for (int i = 0; i < 4; ++i) {
-      if (uiContains(PROMOTION_BUTTONS[i], point)) {
+      if (uiTouchContains(PROMOTION_BUTTONS[i], point)) {
         return finishPromotion(PROMOTION_TYPES[i]);
       }
     }
@@ -1302,7 +1303,7 @@ void ChessApp::drawPromotionChooser(Adafruit_GFX &gfx) {
 
   for (int i = 0; i < 4; ++i) {
     const UiRect &button = PROMOTION_BUTTONS[i];
-    gfx.drawRect(button.x, button.y, button.w, button.h, 1);
+    TouchButton(button).draw(gfx);
     const CaseFontGlyph *glyph =
         findGlyph(PROMOTION_TYPES[i], turn, BoardColor::Light);
     if (!glyph) {

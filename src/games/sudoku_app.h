@@ -2,6 +2,7 @@
 #define SUDOKU_APP_H
 
 #include "sys/touch_input.h"
+#include "ui/ui_helpers.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@ public:
   void reset();
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
+  bool update();
   bool hasActiveSession() const;
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
@@ -28,6 +30,8 @@ private:
   int selected = -1;
   bool pickerOpen = false;
   bool guessMode = false;
+  int8_t pendingDifficulty = -1;
+  UiPressFeedback press;
 
   void start(Difficulty nextDifficulty);
   void drawDifficulty(Adafruit_GFX &gfx);

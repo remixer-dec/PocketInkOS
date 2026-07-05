@@ -79,20 +79,20 @@ bool SettingsApp::handleTouch(const TouchPoint &point) {
     static const UiRect NO_BTN = {CONFIRM_BACKDROP.x + CONFIRM_BACKDROP.w - 84,
                                   CONFIRM_BACKDROP.y + CONFIRM_BACKDROP.h - 36,
                                   74, 24};
-    if (uiContains(YES_BTN, point)) {
+    if (uiTouchContains(YES_BTN, point)) {
       confirmOpen = false;
       resetSystemConfig();
       done = true;
       return true;
     }
-    if (uiContains(NO_BTN, point) || !uiContains(CONFIRM_BACKDROP, point)) {
+    if (uiTouchContains(NO_BTN, point) || !uiContains(CONFIRM_BACKDROP, point)) {
       confirmOpen = false;
       return true;
     }
     return true;
   }
 
-  if (uiContains(RESET_BUTTON, point)) {
+  if (uiTouchContains(RESET_BUTTON, point)) {
     confirmOpen = true;
     return true;
   }

@@ -183,7 +183,7 @@ void CalculatorApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool CalculatorApp::handleTouch(const TouchPoint &point) {
-  if (uiContains(EQUALS_BUTTON, point)) {
+  if (uiTouchContains(EQUALS_BUTTON, point)) {
     pressButton(EQUALS_BUTTON_ID);
     calculate();
     return true;
@@ -193,7 +193,7 @@ bool CalculatorApp::handleTouch(const TouchPoint &point) {
       UiRect rect = {static_cast<int16_t>(BUTTON_X + col * (BUTTON_W + BUTTON_GAP)),
                      static_cast<int16_t>(BUTTON_Y + row * (BUTTON_H + BUTTON_GAP)),
                      BUTTON_W, BUTTON_H};
-      if (!uiContains(rect, point)) {
+      if (!uiTouchContains(rect, point)) {
         continue;
       }
       pressButton(row * 4 + col);

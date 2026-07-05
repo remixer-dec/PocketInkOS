@@ -18,6 +18,7 @@ static const uint8_t kDefaultVolume = 40;
 static const uint16_t kPathCapacity = 288;
 static const uint32_t kPlaybackSampleRate = 16000;
 static const unsigned long kProgressRedrawMs = 5000;
+static const unsigned long kPressFeedbackMs = 180;
 
 struct MidiViewerState {
   char providerId[12] = {};
@@ -25,6 +26,8 @@ struct MidiViewerState {
   remidi_sequence sequence = {};
   bool loaded = false;
   bool playing = false;
+  AudioPlayerAction pressedAction = AudioPlayerAction::None;
+  unsigned long pressedUntil = 0;
   uint8_t volumePercent = kDefaultVolume;
   uint32_t positionMs = 0;
   unsigned long nextProgressRedrawMs = 0;
@@ -40,6 +43,15 @@ MidiViewerState &midiState() {
 AudioPlayerComponent &playerComponent() {
   static AudioPlayerComponent component;
   return component;
+}
+
+void showPressFeedback(MidiViewerState &state, AudioPlayerAction action) {
+  if (action == AudioPlayerAction::TogglePlayPause ||
+      action == AudioPlayerAction::VolumeDown ||
+      action == AudioPlayerAction::VolumeUp) {
+    state.pressedAction = action;
+    state.pressedUntil = millis() + kPressFeedbackMs;
+  }
 }
 
 bool copyText(char *dest, size_t destSize, const char *source) {
@@ -235,6 +247,7 @@ void drawMidiViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
   playerState.subtitle = subtitle;
   playerState.detail = detail;
   playerState.playing = state.playing;
+  playerState.pressedAction = state.pressedAction;
   playerState.volumePercent = state.volumePercent;
   playerState.positionMs = state.positionMs;
   playerState.durationMs = state.sequence.info.durationMs;
@@ -253,6 +266,7 @@ bool touchMidiViewer(FileViewerRuntime &runtime, const TouchPoint &point) {
   const AudioPlayerEvent event =
       playerComponent().hitTest(point, runtime.fullscreen,
                                 state.sequence.info.durationMs);
+  showPressFeedback(state, event.action);
   switch (event.action) {
   case AudioPlayerAction::TogglePlayPause:
     return togglePlayback(runtime, state);
@@ -302,6 +316,13 @@ bool updateMidiViewer(FileViewerRuntime &runtime) {
   MidiViewerState &state = midiState();
   runtime.size = state.sequence.info.durationMs;
   runtime.offset = state.positionMs;
+  const unsigned long now = millis();
+  if (state.pressedAction != AudioPlayerAction::None &&
+      now >= state.pressedUntil) {
+    state.pressedAction = AudioPlayerAction::None;
+    state.pressedUntil = 0;
+    return true;
+  }
   if (!state.playing) {
     return false;
   }
@@ -321,7 +342,6 @@ bool updateMidiViewer(FileViewerRuntime &runtime) {
     return true;
   }
 
-  const unsigned long now = millis();
   if (state.nextProgressRedrawMs == 0 || now >= state.nextProgressRedrawMs) {
     state.nextProgressRedrawMs = now + kProgressRedrawMs;
     return true;

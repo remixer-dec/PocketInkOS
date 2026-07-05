@@ -6,6 +6,7 @@
 #include "tts/inflect_tts_wrapper.h"
 #include "ui/components/menu_button_consumer.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/ui_helpers.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 
 #include <Adafruit_GFX.h>
@@ -57,6 +58,7 @@ private:
   AudioPlaybackRenderer renderer;
   size_t playbackCursor = 0;
   uint8_t volumePercent = 85;
+  UiPressFeedback press;
 
   T9KeyboardComponent inputKeyboard;
   QwertyZoomKeyboardComponent zoomKeyboard;

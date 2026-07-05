@@ -344,6 +344,10 @@ static const UiRect EASY_BUTTON = {18, 52, 74, 28};
 static const UiRect MEDIUM_BUTTON = {108, 52, 74, 28};
 static const UiRect HARD_BUTTON = {18, 92, 74, 28};
 static const UiRect EXTREME_BUTTON = {108, 92, 74, 28};
+static const int8_t EASY_BUTTON_ID = 0;
+static const int8_t MEDIUM_BUTTON_ID = 1;
+static const int8_t HARD_BUTTON_ID = 2;
+static const int8_t EXTREME_BUTTON_ID = 3;
 static const UiRect PICKER_RECT = {45, 38, 110, 124};
 static const UiRect INPUT_BUTTON = {53, 138, 46, 16};
 static const UiRect GUESS_BUTTON = {101, 138, 46, 16};
@@ -394,6 +398,8 @@ void SudokuApp::reset() {
   selected = -1;
   pickerOpen = false;
   guessMode = false;
+  pendingDifficulty = -1;
+  press.clear();
 }
 
 void SudokuApp::draw(Adafruit_GFX &gfx) {
@@ -409,31 +415,35 @@ void SudokuApp::draw(Adafruit_GFX &gfx) {
 
 bool SudokuApp::handleTouch(const TouchPoint &point) {
   if (state == STATE_DIFFICULTY) {
-    if (uiContains(EASY_BUTTON, point)) {
-      start(EASY);
+    if (uiTouchContains(EASY_BUTTON, point)) {
+      pendingDifficulty = EASY;
+      press.press(EASY_BUTTON_ID);
       return true;
     }
-    if (uiContains(MEDIUM_BUTTON, point)) {
-      start(MEDIUM);
+    if (uiTouchContains(MEDIUM_BUTTON, point)) {
+      pendingDifficulty = MEDIUM;
+      press.press(MEDIUM_BUTTON_ID);
       return true;
     }
-    if (uiContains(HARD_BUTTON, point)) {
-      start(HARD);
+    if (uiTouchContains(HARD_BUTTON, point)) {
+      pendingDifficulty = HARD;
+      press.press(HARD_BUTTON_ID);
       return true;
     }
-    if (uiContains(EXTREME_BUTTON, point)) {
-      start(EXTREME);
+    if (uiTouchContains(EXTREME_BUTTON, point)) {
+      pendingDifficulty = EXTREME;
+      press.press(EXTREME_BUTTON_ID);
       return true;
     }
     return false;
   }
 
   if (pickerOpen) {
-    if (uiContains(INPUT_BUTTON, point)) {
+    if (uiTouchContains(INPUT_BUTTON, point)) {
       guessMode = false;
       return true;
     }
-    if (uiContains(GUESS_BUTTON, point)) {
+    if (uiTouchContains(GUESS_BUTTON, point)) {
       guessMode = true;
       return true;
     }
@@ -456,6 +466,18 @@ bool SudokuApp::handleTouch(const TouchPoint &point) {
   selected = cell;
   pickerOpen = fixed[cell] == 0;
   return true;
+}
+
+bool SudokuApp::update() {
+  if (pendingDifficulty >= 0 && millis() >= press.until) {
+    const Difficulty nextDifficulty =
+        static_cast<Difficulty>(pendingDifficulty);
+    pendingDifficulty = -1;
+    press.clear();
+    start(nextDifficulty);
+    return true;
+  }
+  return press.update();
 }
 
 void SudokuApp::start(Difficulty nextDifficulty) {
@@ -487,10 +509,12 @@ void SudokuApp::drawDifficulty(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   drawCenteredText(gfx, "SUDOKU", 18, 2);
   drawCenteredText(gfx, "Select difficulty", 38, 1);
-  uiDrawButton(gfx, EASY_BUTTON, "EASY");
-  uiDrawButton(gfx, MEDIUM_BUTTON, "MEDIUM");
-  uiDrawButton(gfx, HARD_BUTTON, "HARD");
-  uiDrawButton(gfx, EXTREME_BUTTON, "EXTREME");
+  uiDrawButton(gfx, EASY_BUTTON, "EASY", press.isPressed(EASY_BUTTON_ID));
+  uiDrawButton(gfx, MEDIUM_BUTTON, "MEDIUM",
+               press.isPressed(MEDIUM_BUTTON_ID));
+  uiDrawButton(gfx, HARD_BUTTON, "HARD", press.isPressed(HARD_BUTTON_ID));
+  uiDrawButton(gfx, EXTREME_BUTTON, "EXTREME",
+               press.isPressed(EXTREME_BUTTON_ID));
 }
 
 void SudokuApp::drawBoard(Adafruit_GFX &gfx) {

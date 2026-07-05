@@ -4,6 +4,7 @@
 #include "ui/components/menu_button_consumer.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/ui_helpers.h"
 #include "sys/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
@@ -35,6 +36,7 @@ private:
   KeyboardMode keyboardMode = KEYBOARD_T9;
   bool hasQr = false;
   bool modules[QR_SIZE][QR_SIZE] = {};
+  UiPressFeedback press;
 
   void openKeyboard();
   void drawKeyboard(Adafruit_GFX &gfx);
