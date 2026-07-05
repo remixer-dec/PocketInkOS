@@ -35,6 +35,7 @@ enum class WeatherIcon {
 class WeatherApp {
 public:
   void reset();
+  void release();
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);
@@ -101,11 +102,11 @@ private:
   bool hasCurrent = false;
   bool hasCurrentFeels = false;
 
-  HourPoint hours[MAX_HOURS];
+  HourPoint *hours = nullptr;
   int hourCount = 0;
-  DayPoint days[MAX_DAYS];
+  DayPoint *days = nullptr;
   int dayCount = 0;
-  DaySummary daySummaries[MAX_DAYS];
+  DaySummary *daySummaries = nullptr;
   int daySummaryCount = 0;
 
   int16_t nextTempMinX10 = 0;
@@ -120,6 +121,8 @@ private:
   UnsafeUvWindow nextUnsafeUv;
   int nextHourSamples = 0;
 
+  bool ensureStorage();
+  void clearSamples();
   bool fetch();
   void summarize();
   int32_t effectiveNowUnix() const;

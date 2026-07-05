@@ -12,6 +12,7 @@
 class AiApp : public MenuButtonConsumer {
 public:
   void reset();
+  void release();
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);
@@ -69,7 +70,7 @@ private:
   int scrollOffset = 0;
   int maxScrollOffset = 0;
   int chunkRemaining = 0;
-  char transcript[TRANSCRIPT_MAX] = {0};
+  char *transcript = nullptr;
   int transcriptLen = 0;
   char status[STATUS_MAX] = {0};
   char requestHost[96] = {0};
@@ -126,6 +127,8 @@ private:
   void beginVoiceCapture();
   const char *audioFormatLabel() const;
   void releaseCapturedAudio();
+  bool ensureTextStorage();
+  void releaseTextStorage();
   void updateScrollMetrics();
   static int base64Length(size_t rawLength);
   static int measureWrappedLines(const char *text, int maxChars);

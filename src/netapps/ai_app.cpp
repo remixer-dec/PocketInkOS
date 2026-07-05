@@ -11,6 +11,7 @@
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <WiFi.h>
 #include <cstring>
 #include <cstdio>
@@ -240,9 +241,18 @@ void AiApp::reset() {
   pendingPrompt[0] = '\0';
   chunkLineLen = 0;
   inputText = "";
-  copyText(transcript, sizeof(transcript), kWelcomeText);
-  transcriptLen = strlen(transcript);
+  if (transcript != nullptr) {
+    copyText(transcript, TRANSCRIPT_MAX, kWelcomeText);
+    transcriptLen = strlen(transcript);
+  }
   clearActiveMenuButtonConsumer(this);
+}
+
+void AiApp::release() {
+  stopAudio();
+  client.stop();
+  releaseTextStorage();
+  reset();
 }
 
 bool AiApp::hasActiveSession() const {
@@ -405,6 +415,10 @@ void AiApp::submitPrompt() {
     setStatus("Wait for the current response");
     return;
   }
+  if (!ensureTextStorage()) {
+    setStatus("No AI mem");
+    return;
+  }
 
   char prompt[INPUT_MAX];
   copyText(prompt, sizeof(prompt), inputText.c_str());
@@ -442,6 +456,10 @@ void AiApp::submitPrompt() {
 }
 
 void AiApp::submitVoicePrompt() {
+  if (!ensureTextStorage()) {
+    setStatus("No AI mem");
+    return;
+  }
   if (capturedAudio.data == nullptr || capturedAudio.length == 0) {
     pendingAudio = false;
     setStatus("No audio captured");
@@ -998,6 +1016,10 @@ bool AiApp::appendResponse(const char *text) {
 }
 
 bool AiApp::appendTranscriptChar(char c) {
+  if (!ensureTextStorage()) {
+    setStatus("No AI mem");
+    return false;
+  }
   if (transcriptLen + 1 >= TRANSCRIPT_MAX) {
     setStatus("Transcript full");
     return false;
@@ -1078,6 +1100,10 @@ void AiApp::drawTranscript(Adafruit_GFX &gfx) {
   gfx.drawRect(TRANSCRIPT.x, TRANSCRIPT.y, TRANSCRIPT.w, TRANSCRIPT.h, 1);
   gfx.setTextColor(1);
   gfx.setTextSize(1);
+  if (!ensureTextStorage()) {
+    drawCenteredText(gfx, "No AI memory", 88);
+    return;
+  }
 
   updateScrollMetrics();
 
@@ -1150,7 +1176,39 @@ void AiApp::releaseCapturedAudio() {
   audioCapture.release(capturedAudio);
 }
 
+bool AiApp::ensureTextStorage() {
+  if (transcript != nullptr) {
+    return true;
+  }
+  transcript = static_cast<char *>(heap_caps_malloc(
+      TRANSCRIPT_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (transcript == nullptr) {
+    transcript = static_cast<char *>(
+        heap_caps_malloc(TRANSCRIPT_MAX, MALLOC_CAP_8BIT));
+  }
+  if (transcript == nullptr) {
+    transcriptLen = 0;
+    return false;
+  }
+  copyText(transcript, TRANSCRIPT_MAX, kWelcomeText);
+  transcriptLen = strlen(transcript);
+  return true;
+}
+
+void AiApp::releaseTextStorage() {
+  if (transcript != nullptr) {
+    heap_caps_free(transcript);
+    transcript = nullptr;
+  }
+  transcriptLen = 0;
+}
+
 void AiApp::updateScrollMetrics() {
+  if (transcript == nullptr) {
+    maxScrollOffset = 0;
+    scrollOffset = 0;
+    return;
+  }
   int totalLines = measureWrappedLines(transcript, LINE_WIDTH);
   maxScrollOffset = totalLines > VISIBLE_LINES ? totalLines - VISIBLE_LINES
                                                : 0;

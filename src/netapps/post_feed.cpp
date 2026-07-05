@@ -5,12 +5,18 @@
 #if ENABLE_NETWORK_APPS
 
 #include "netapps/post_feed.h"
+#include "ui/components/list_component.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <cstring>
 
-PostFeed::PostFeed() {
+PostFeed::PostFeed() {}
+
+bool PostFeed::ensureStorage() {
+  if (posts != nullptr) {
+    return true;
+  }
   posts = static_cast<FeedPost *>(
       heap_caps_malloc(sizeof(FeedPost) * MAX_POSTS,
                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -21,6 +27,7 @@ PostFeed::PostFeed() {
   if (posts != nullptr) {
     memset(posts, 0, sizeof(FeedPost) * MAX_POSTS);
   }
+  return posts != nullptr;
 }
 
 void PostFeed::reset() {
@@ -31,11 +38,23 @@ void PostFeed::reset() {
   scrollOffset = 0;
   expandedIndex = -1;
   expandedLineOffset = 0;
-  listMode = MODE_SCROLL;
+  listMode = MODE_SPLIT;
+}
+
+void PostFeed::release() {
+  if (posts != nullptr) {
+    heap_caps_free(posts);
+    posts = nullptr;
+  }
+  postCount = 0;
+  scrollOffset = 0;
+  expandedIndex = -1;
+  expandedLineOffset = 0;
+  listMode = MODE_SPLIT;
 }
 
 bool PostFeed::add(const FeedPost &post) {
-  if (posts == nullptr || postCount >= MAX_POSTS || post.title[0] == '\0') {
+  if (!ensureStorage() || postCount >= MAX_POSTS || post.title[0] == '\0') {
     return false;
   }
   posts[postCount++] = post;
@@ -55,21 +74,23 @@ bool PostFeed::handleTouch(const TouchPoint &point) {
     return false;
   }
 
-  if (listMode == MODE_SELECT && point.y >= 24 && point.y < 184) {
-    int slot = (point.y - 24) / 80;
-    int index = scrollOffset + slot;
-    if (slot >= 0 && slot < 2 && index >= 0 && index < postCount) {
-      expandedIndex = index;
-      expandedLineOffset = 0;
-      return true;
-    }
+  UiListNavMode navMode = UiListNavMode::Split;
+  if (listMode == MODE_SCROLL) {
+    navMode = UiListNavMode::Scroll;
+  } else if (listMode == MODE_SELECT) {
+    navMode = UiListNavMode::Select;
   }
-  if (point.y < 96 && scrollOffset > 0) {
-    scrollOffset--;
+  uint16_t offset = scrollOffset;
+  const UiListTouchResult listTouch =
+      uiListHandleTouch(point, postCount, 2, 24, 80, 160, 148, navMode, offset);
+  scrollOffset = static_cast<uint8_t>(offset);
+  if (listTouch.action == UiListTouchAction::Scroll) {
     return true;
   }
-  if (point.y >= 96 && scrollOffset + 2 < postCount) {
-    scrollOffset++;
+  if (listTouch.action == UiListTouchAction::Select &&
+      listTouch.index < postCount) {
+    expandedIndex = static_cast<int8_t>(listTouch.index);
+    expandedLineOffset = 0;
     return true;
   }
   return false;
@@ -101,7 +122,13 @@ void PostFeed::toggleSelectMode() {
   if (expandedIndex >= 0) {
     return;
   }
-  listMode = listMode == MODE_SCROLL ? MODE_SELECT : MODE_SCROLL;
+  if (listMode == MODE_SPLIT) {
+    listMode = MODE_SCROLL;
+  } else if (listMode == MODE_SCROLL) {
+    listMode = MODE_SELECT;
+  } else {
+    listMode = MODE_SPLIT;
+  }
 }
 
 bool PostFeed::isExpanded() const { return expandedIndex >= 0; }
@@ -112,8 +139,14 @@ void PostFeed::drawList(Adafruit_GFX &gfx, const char *header,
   gfx.setCursor(4, 6);
   gfx.print(header);
   drawRightText(gfx, rightHeader, 6);
-  gfx.setCursor(78, 188);
-  gfx.print(listMode == MODE_SCROLL ? "SCROLL" : "SELECT");
+  gfx.setCursor(82, 188);
+  if (listMode == MODE_SCROLL) {
+    gfx.print("SCROLL");
+  } else if (listMode == MODE_SELECT) {
+    gfx.print("SELECT");
+  } else {
+    gfx.print("SPLIT");
+  }
 
   if (postCount == 0) {
     gfx.setCursor(52, 92);

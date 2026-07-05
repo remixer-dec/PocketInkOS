@@ -8,6 +8,7 @@
 class RedditApp {
 public:
   void reset();
+  void release();
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);

@@ -15,6 +15,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 #include <cstring>
 
 namespace {
@@ -282,21 +283,84 @@ void WeatherApp::reset() {
   currentWindX10 = 0;
   hasCurrent = false;
   hasCurrentFeels = false;
-  for (int i = 0; i < MAX_HOURS; i++) {
-    hours[i] = HourPoint();
-  }
-  hourCount = 0;
-  for (int i = 0; i < MAX_DAYS; i++) {
-    days[i] = DayPoint();
-    daySummaries[i] = DaySummary();
-  }
-  dayCount = 0;
-  daySummaryCount = 0;
+  clearSamples();
   todayUvPeakX10 = 0;
   nextUvPeakX10 = 0;
   todayUnsafeUv = UnsafeUvWindow();
   nextUnsafeUv = UnsafeUvWindow();
   nextHourSamples = 0;
+}
+
+bool WeatherApp::ensureStorage() {
+  if (hours == nullptr) {
+    hours = static_cast<HourPoint *>(heap_caps_malloc(
+        sizeof(HourPoint) * MAX_HOURS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (hours == nullptr) {
+      hours = static_cast<HourPoint *>(
+          heap_caps_malloc(sizeof(HourPoint) * MAX_HOURS, MALLOC_CAP_8BIT));
+    }
+  }
+  if (days == nullptr) {
+    days = static_cast<DayPoint *>(heap_caps_malloc(
+        sizeof(DayPoint) * MAX_DAYS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (days == nullptr) {
+      days = static_cast<DayPoint *>(
+          heap_caps_malloc(sizeof(DayPoint) * MAX_DAYS, MALLOC_CAP_8BIT));
+    }
+  }
+  if (daySummaries == nullptr) {
+    daySummaries = static_cast<DaySummary *>(heap_caps_malloc(
+        sizeof(DaySummary) * MAX_DAYS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (daySummaries == nullptr) {
+      daySummaries = static_cast<DaySummary *>(heap_caps_malloc(
+          sizeof(DaySummary) * MAX_DAYS, MALLOC_CAP_8BIT));
+    }
+  }
+  if (hours == nullptr || days == nullptr || daySummaries == nullptr) {
+    release();
+    return false;
+  }
+  clearSamples();
+  return true;
+}
+
+void WeatherApp::clearSamples() {
+  if (hours != nullptr) {
+    for (int i = 0; i < MAX_HOURS; i++) {
+      hours[i] = HourPoint();
+    }
+  }
+  if (days != nullptr) {
+    for (int i = 0; i < MAX_DAYS; i++) {
+      days[i] = DayPoint();
+    }
+  }
+  if (daySummaries != nullptr) {
+    for (int i = 0; i < MAX_DAYS; i++) {
+      daySummaries[i] = DaySummary();
+    }
+  }
+  hourCount = 0;
+  dayCount = 0;
+  daySummaryCount = 0;
+}
+
+void WeatherApp::release() {
+  if (hours != nullptr) {
+    heap_caps_free(hours);
+    hours = nullptr;
+  }
+  if (days != nullptr) {
+    heap_caps_free(days);
+    days = nullptr;
+  }
+  if (daySummaries != nullptr) {
+    heap_caps_free(daySummaries);
+    daySummaries = nullptr;
+  }
+  clearSamples();
+  state = STATE_LOADING;
+  requested = false;
 }
 
 bool WeatherApp::hasActiveSession() const {
@@ -353,6 +417,10 @@ bool WeatherApp::handleTouch(const TouchPoint &point) {
 bool WeatherApp::fetch() {
   if (WiFi.status() != WL_CONNECTED) {
     setStatus("WiFi not connected");
+    return false;
+  }
+  if (!ensureStorage()) {
+    setStatus("No weather mem");
     return false;
   }
 

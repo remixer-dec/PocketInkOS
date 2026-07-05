@@ -30,7 +30,7 @@ public:
   bool consumePinkLaunch(char *path, size_t pathSize);
 
 private:
-  enum class Mode : uint8_t { Scroll = 0, Select = 1 };
+  enum class Mode : uint8_t { Scroll = 0, Select = 1, Split = 2 };
   enum class DirectoryScanPass : uint8_t { Folders = 0, Files = 1 };
 
   static const int16_t NO_SELECTION = -1;
@@ -103,7 +103,6 @@ private:
   void setStatus(const char *text);
   void setTransientStatus(const char *text);
   bool clearExpiredStatus();
-  void scrollBy(int8_t delta);
   bool activateIndex(uint16_t index);
   bool activateStorage();
   bool requestPinkLaunch(const char *path);

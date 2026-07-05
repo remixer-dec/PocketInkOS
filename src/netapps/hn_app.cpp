@@ -72,6 +72,13 @@ void HnApp::reset() {
   feed.reset();
 }
 
+void HnApp::release() {
+  state = STATE_IDLE;
+  requested = false;
+  setStatus("");
+  feed.release();
+}
+
 bool HnApp::hasActiveSession() const {
   return state == STATE_LOADING || state == STATE_READY;
 }

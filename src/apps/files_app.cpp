@@ -4,6 +4,7 @@
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
 #include "sys/inactivity_sleep_guard.h"
+#include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
 
 #include <Arduino.h>
@@ -140,7 +141,7 @@ static const int16_t kListBottomY = 199;
 static const int16_t kNameX = 28;
 static const int16_t kIconX = 2;
 static const int16_t kScrollSplitY = 110;
-static const int8_t kScrollStep = 3;
+static const int16_t kListSplitX = 148;
 static const unsigned long kStatusMs = 2000;
 static const unsigned long kPdfProgressRedrawMs = 2000;
 static const uint32_t kPdfBackgroundIndexBudgetUs = 180000;
@@ -1093,7 +1094,7 @@ void FilesApp::openDirectory(const char *path) {
   hasDirtyRegion = false;
   setStatus("");
   loadDirectory();
-  mode = entryCount < kSmallFolderLimit ? Mode::Select : Mode::Scroll;
+  mode = entryCount < kSmallFolderLimit ? Mode::Select : Mode::Split;
 }
 
 void FilesApp::goUp() {
@@ -1132,24 +1133,6 @@ void FilesApp::clampView() {
   const uint16_t lastVisible = scrollOffset + MAX_VISIBLE_ENTRIES - 1;
   if (selectedIndex > lastVisible) {
     selectedIndex = NO_SELECTION;
-  }
-}
-
-void FilesApp::scrollBy(int8_t delta) {
-  const uint16_t maxOffset =
-      entryCount > MAX_VISIBLE_ENTRIES ? entryCount - MAX_VISIBLE_ENTRIES : 0;
-  int32_t next = static_cast<int32_t>(scrollOffset) + delta;
-  if (next < 0) {
-    next = 0;
-  }
-  if (next > maxOffset) {
-    next = maxOffset;
-  }
-  scrollOffset = static_cast<uint16_t>(next);
-  selectedIndex = NO_SELECTION;
-  markListDirty();
-  if (entryCount > 0) {
-    setStatus(truncatedDirectory ? "LIMITED" : "");
   }
 }
 
@@ -1452,10 +1435,13 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
                     sizeof(folderLabel));
   gfx.setCursor(4, kHeaderY);
   gfx.print(folderLabel);
-  drawRightText(gfx,
-                statusUntil != 0 ? statusText
-                                 : (mode == Mode::Scroll ? "SCROLL" : "SELECT"),
-                kHeaderY);
+  const char *modeLabel = "SPLIT";
+  if (mode == Mode::Scroll) {
+    modeLabel = "SCROLL";
+  } else if (mode == Mode::Select) {
+    modeLabel = "SELECT";
+  }
+  drawRightText(gfx, statusUntil != 0 ? statusText : modeLabel, kHeaderY);
   gfx.drawLine(0, kHeaderLineY, 199, kHeaderLineY, 1);
 
   if (entryCount == 0) {
@@ -1471,7 +1457,7 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
     const uint16_t index = scrollOffset + i;
     const int16_t y = kListY + i * kRowH;
     const FileEntry &entry = entries[index];
-    const bool selected = mode == Mode::Select && index == selectedIndex;
+    const bool selected = mode != Mode::Scroll && index == selectedIndex;
     if (selected) {
       gfx.fillRect(2, y - 3, 196, kRowH - 1, 1);
       gfx.setTextColor(0);
@@ -1692,16 +1678,32 @@ bool FilesApp::handleTouch(const TouchPoint &point) {
     return false;
   }
 
+  UiListNavMode navMode = UiListNavMode::Split;
   if (mode == Mode::Scroll) {
-    scrollBy(point.y < kScrollSplitY ? -kScrollStep : kScrollStep);
+    navMode = UiListNavMode::Scroll;
+  } else if (mode == Mode::Select) {
+    navMode = UiListNavMode::Select;
+  }
+  uint16_t nextOffset = scrollOffset;
+  const UiListTouchResult listTouch = uiListHandleTouch(
+      point, entryCount, MAX_VISIBLE_ENTRIES, kListY, kRowH,
+      kListBottomY - kListY, kListSplitX, navMode, nextOffset);
+  if (listTouch.action == UiListTouchAction::Scroll) {
+    if (scrollOffset != nextOffset) {
+      scrollOffset = nextOffset;
+      selectedIndex = NO_SELECTION;
+      markListDirty();
+      if (entryCount > 0) {
+        setStatus(truncatedDirectory ? "LIMITED" : "");
+      }
+    }
     return true;
   }
-
-  const uint8_t row = (point.y - kListY) / kRowH;
-  const uint16_t index = scrollOffset + row;
-  if (row >= MAX_VISIBLE_ENTRIES || index >= entryCount) {
+  if (listTouch.action != UiListTouchAction::Select ||
+      listTouch.index >= entryCount) {
     return false;
   }
+  const uint16_t index = listTouch.index;
   if (selectedIndex != index) {
     selectedIndex = index;
     setStatus("");
@@ -1775,7 +1777,13 @@ bool FilesApp::handlePowerButton() {
     mode = Mode::Select;
     return true;
   }
-  mode = mode == Mode::Scroll ? Mode::Select : Mode::Scroll;
+  if (mode == Mode::Split) {
+    mode = Mode::Scroll;
+  } else if (mode == Mode::Scroll) {
+    mode = Mode::Select;
+  } else {
+    mode = Mode::Split;
+  }
   selectedIndex = NO_SELECTION;
   clampView();
   return true;

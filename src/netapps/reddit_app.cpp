@@ -104,6 +104,13 @@ void RedditApp::reset() {
   feed.reset();
 }
 
+void RedditApp::release() {
+  state = STATE_PICKER;
+  requested = false;
+  setStatus("");
+  feed.release();
+}
+
 bool RedditApp::hasActiveSession() const {
   return state == STATE_LOADING || state == STATE_READY;
 }

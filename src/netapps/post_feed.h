@@ -19,6 +19,7 @@ public:
   PostFeed();
 
   void reset();
+  void release();
   bool add(const FeedPost &post);
   bool handleTouch(const TouchPoint &point);
   void draw(Adafruit_GFX &gfx, const char *header,
@@ -29,15 +30,16 @@ public:
   bool isExpanded() const;
 
 private:
-  enum ListMode { MODE_SCROLL, MODE_SELECT };
+  enum ListMode { MODE_SCROLL, MODE_SELECT, MODE_SPLIT };
 
   FeedPost *posts = nullptr;
   uint8_t postCount = 0;
   uint8_t scrollOffset = 0;
   int8_t expandedIndex = -1;
   uint8_t expandedLineOffset = 0;
-  ListMode listMode = MODE_SCROLL;
+  ListMode listMode = MODE_SPLIT;
 
+  bool ensureStorage();
   void drawList(Adafruit_GFX &gfx, const char *header,
                 const char *scoreLabel, const char *rightHeader) const;
   void drawExpanded(Adafruit_GFX &gfx, const char *header,
