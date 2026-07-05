@@ -27,6 +27,7 @@ public:
   File open(const char *) { return File(); }
   File open(const char *, const char *) { return File(); }
   bool mkdir(const char *) { return false; }
+  bool remove(const char *) { return false; }
 };
 
 } // namespace fs
@@ -35,4 +36,7 @@ using fs::File;
 
 #ifndef FILE_APPEND
 #define FILE_APPEND "a"
+#endif
+#ifndef FILE_WRITE
+#define FILE_WRITE "w"
 #endif

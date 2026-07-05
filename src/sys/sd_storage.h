@@ -11,6 +11,7 @@ struct SdStorageSnapshot {
 
 void sdStorageBegin();
 void sdStorageEnd();
+void sdStorageRequestRefresh();
 bool sdStorageUpdate();
 bool sdStorageMounted();
 const SdStorageSnapshot &sdStorageSnapshot();

@@ -47,6 +47,10 @@ struct SerialStub {
 inline SerialStub Serial;
 struct ESPStub {
   void restart() {}
+  uint32_t getFreeHeap() { return 256 * 1024; }
+  uint32_t getMinFreeHeap() { return 200 * 1024; }
+  uint32_t getMaxAllocHeap() { return 128 * 1024; }
+  uint32_t getPsramSize() { return 0; }
 };
 inline ESPStub ESP;
 inline void delay(unsigned long) {}

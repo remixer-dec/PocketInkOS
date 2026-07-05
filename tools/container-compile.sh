@@ -153,6 +153,8 @@ FILES=( \
   "$ROOT/src/games/tictactoe_app.cpp" \
   "$ROOT/src/sys/touch_input.cpp" \
   "$ROOT/src/sys/usb_status.cpp" \
+  "$ROOT/src/sys/time_sync.cpp" \
+  "$ROOT/src/sys/wifi_manager.cpp" \
   "$ROOT/src/games/wordle_app.cpp")
 
 if [[ "$NETWORK_APPS" != "0" ]]; then

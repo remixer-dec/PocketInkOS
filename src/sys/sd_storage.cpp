@@ -6,11 +6,14 @@
 
 namespace {
 
-static const unsigned long kSdPollMs = 3000;
+static const unsigned long kSdMountedPollMs = 60000;
+static const unsigned long kSdRetryInitialMs = 30000;
+static const unsigned long kSdRetryMaxMs = 120000;
 static const uint64_t kGb = 1024ULL * 1024ULL * 1024ULL;
 
 SdStorageSnapshot snapshot;
-unsigned long lastPollAt = 0;
+unsigned long nextPollAt = 0;
+unsigned long retryDelayMs = kSdRetryInitialMs;
 
 uint32_t roundedGb(uint64_t bytes) {
   return static_cast<uint32_t>((bytes + kGb / 2) / kGb);
@@ -42,9 +45,13 @@ bool mountCard() {
 
 bool refreshSnapshot() {
   SdStorageSnapshot next;
-  if (snapshot.mounted && SD_MMC.cardType() != CARD_NONE) {
-    next = readMountedSnapshot();
-  } else if (!snapshot.mounted && mountCard()) {
+  if (snapshot.mounted) {
+    if (SD_MMC.cardType() != CARD_NONE) {
+      next = readMountedSnapshot();
+    } else {
+      SD_MMC.end();
+    }
+  } else if (mountCard()) {
     next = readMountedSnapshot();
   } else {
     SD_MMC.end();
@@ -55,25 +62,55 @@ bool refreshSnapshot() {
   return changed;
 }
 
+bool pollDue(unsigned long now) {
+  return static_cast<long>(now - nextPollAt) >= 0;
+}
+
+void scheduleNextPoll() {
+  const unsigned long now = millis();
+  if (snapshot.mounted) {
+    retryDelayMs = kSdRetryInitialMs;
+    nextPollAt = now + kSdMountedPollMs;
+    return;
+  }
+
+  nextPollAt = now + retryDelayMs;
+  if (retryDelayMs < kSdRetryMaxMs) {
+    retryDelayMs *= 2;
+    if (retryDelayMs > kSdRetryMaxMs) {
+      retryDelayMs = kSdRetryMaxMs;
+    }
+  }
+}
+
 } // namespace
 
 void sdStorageBegin() {
-  lastPollAt = millis();
+  nextPollAt = millis();
+  retryDelayMs = kSdRetryInitialMs;
   refreshSnapshot();
+  scheduleNextPoll();
 }
 
 void sdStorageEnd() {
   SD_MMC.end();
   snapshot = SdStorageSnapshot{};
+  nextPollAt = 0;
+  retryDelayMs = kSdRetryInitialMs;
+}
+
+void sdStorageRequestRefresh() {
+  nextPollAt = millis();
 }
 
 bool sdStorageUpdate() {
   const unsigned long now = millis();
-  if (now - lastPollAt < kSdPollMs) {
+  if (!pollDue(now)) {
     return false;
   }
-  lastPollAt = now;
-  return refreshSnapshot();
+  const bool changed = refreshSnapshot();
+  scheduleNextPoll();
+  return changed;
 }
 
 bool sdStorageMounted() { return snapshot.mounted; }

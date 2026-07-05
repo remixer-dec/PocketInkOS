@@ -33,6 +33,7 @@ enum Screen {
   SCREEN_GFX,
   SCREEN_CALENDAR,
   SCREEN_FILES,
+  SCREEN_SETTINGS,
   SCREEN_PINK_EXECUTABLE,
   SCREEN_CONTACT_LINKS
 #if ENABLE_TTS
@@ -152,6 +153,7 @@ struct AppBehavior {
   AppRawTouchHandler onRawTouch = nullptr;
   AppSaveContextHandler onSaveContext = nullptr;
   AppRestoreContextHandler onRestoreContext = nullptr;
+  AppCallback onRelease = nullptr;
 };
 
 struct AppDefinition {

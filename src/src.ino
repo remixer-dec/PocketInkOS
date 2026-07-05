@@ -4,7 +4,7 @@
 #ifndef ENABLE_NETWORK_APPS
 #define ENABLE_NETWORK_APPS 1
 #endif
-#include "sys/config.h"
+#include "sys/system_config.h"
 #include "ui/components/menu_button_consumer.h"
 #include "sys/shell_buttons.h"
 #include "sys/touch_input.h"
@@ -15,6 +15,8 @@
 #include "sys/battery_monitor.h"
 #include "sys/device_controls.h"
 #include "sys/environment_monitor.h"
+#include "sys/global.h"
+#include "sys/heap_debug.h"
 #include "sys/inactivity_sleep_guard.h"
 #include "sys/power_control.h"
 #include "sys/pcf85063_clock.h"
@@ -119,10 +121,14 @@ void switchTo(Screen next, ActiveApp *nextApp = nullptr,
               const AppDefinition *nextDefinition = nullptr) {
   const bool sameDefinition =
       sameAppDefinition(activeDefinition, nextDefinition);
-  if (!activePausedForDialog && activeDefinition != nullptr &&
-      !sameDefinition &&
-      activeDefinition->behavior.onExit != nullptr) {
-    activeDefinition->behavior.onExit();
+  const AppDefinition *previousDefinition = activeDefinition;
+  if (!activePausedForDialog && previousDefinition != nullptr &&
+      !sameDefinition && previousDefinition->behavior.onExit != nullptr) {
+    previousDefinition->behavior.onExit();
+  }
+  if (previousDefinition != nullptr && !sameDefinition &&
+      previousDefinition->behavior.onRelease != nullptr) {
+    previousDefinition->behavior.onRelease();
   }
   screen = next;
   activeApp = nextApp;
@@ -858,6 +864,11 @@ uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds) {
 
 bool syncDeviceClockFromRtc() {
 #if ENABLE_RTC_CLOCK
+  // The RTC shares the touch I2C bus; release touch reset after deep sleep so
+  // it cannot hold the shared lines in an undefined state.
+  pinMode(EPD_TP_RST_PIN, OUTPUT);
+  digitalWrite(EPD_TP_RST_PIN, HIGH);
+  delay(5);
   touchI2cBegin();
   rtcClock.begin();
   return rtcClock.readToDeviceClock();
@@ -906,6 +917,7 @@ void enterSleepClockDeepSleep() {
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
                  SLEEP_CLOCK_RETAIN_EPD_POWER);
+  rebootDevice();
 }
 
 void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock) {
@@ -966,6 +978,7 @@ bool handleSleepClockTimerWake() {
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
                  SLEEP_CLOCK_RETAIN_EPD_POWER);
+  rebootDevice();
   return true;
 }
 
@@ -1055,34 +1068,54 @@ void setup() {
   Serial.begin(115200);
   waitForSerialDebugWindow();
   logSetupStage("start");
+  heapMark("boot-start");
 
   logSetupStage("power latch");
   keepPowerLatchOn();
   releasePowerHolds();
   keepPowerLatchOn();
-  logSetupStage("sd");
-  sdStorageBegin();
-  logSetupStage("config");
-  configBegin();
-  shellLayoutConfigReload();
+  heapMark("after-power-latch");
+
+  logSetupStage("config defaults");
+  configLoadDefaults();
+  heapMark("after-config-defaults");
+
   logSetupStage("check sleep-clock wake");
   if (handleSleepClockTimerWake()) {
     return;
   }
   logSetupStage("normal boot");
   sleepClockContextClear();
+  heapMark("after-sleep-clock-check");
+
+  logSetupStage("sd");
+  sdStorageBegin();
+  heapMark("after-sd");
+
+  logSetupStage("config");
+  configBegin();
+  shellLayoutConfigReload();
+  heapMark("after-config");
+
   logSetupStage("audio");
   audioPowerBegin();
+  heapMark("after-audio");
+
   logSetupStage("device controls");
   deviceControlsBegin();
+  heapMark("after-device-controls");
+
   logSetupStage("display");
   display.begin();
+  heapMark("after-display");
+
   logSetupStage("touch");
   touch.begin();
 #if ENABLE_RTC_CLOCK
   logSetupStage("rtc");
   rtcClock.begin();
   rtcClock.readToDeviceClock();
+  heapMark("after-rtc");
 #endif
   logSetupStage("battery");
   refreshBatteryAndCheckCutoff();
@@ -1090,23 +1123,35 @@ void setup() {
     logSetupStage("battery shutdown");
     return;
   }
+  heapMark("after-battery");
+
   logSetupStage("environment");
   environmentMonitor.refresh();
   pinkExecutableRefreshApps();
   refreshAppCatalog();
+  heapMark("after-app-catalog");
 
   logSetupStage("buttons");
   shellButtonsBegin({handleMenuButton, handleMenuDoubleButton,
                      handleMenuLongButton, handlePowerSingleButton,
                      handlePowerDoubleButton, handlePowerLongButton});
   noteUserActivity();
+  heapMark("after-buttons");
 
   logSetupStage("apps");
   resetApps();
+  heapMark("after-apps-reset");
+
   logSetupStage("restore context");
   restoreRetainedContextAfterSleep();
   dirty = true;
   logSetupStage("ready");
+  heapMark("after-ready");
+#if ENABLE_NETWORK_APPS
+  heapMark("pre-wifi");
+  wifiUpdate();
+  heapMark("after-wifi-first-update");
+#endif
 }
 
 void loop() {
@@ -1161,6 +1206,8 @@ void loop() {
   }
 
   if (sdStorageUpdate()) {
+    configReload();
+    shellLayoutConfigReload();
     pinkExecutableRefreshApps();
     refreshAppCatalog();
     clampMenuState(menuState);
