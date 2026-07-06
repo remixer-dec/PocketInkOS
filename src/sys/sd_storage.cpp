@@ -115,4 +115,4 @@ bool sdStorageUpdate() {
 
 bool sdStorageMounted() { return snapshot.mounted; }
 
-const SdStorageSnapshot &sdStorageSnapshot() { return snapshot; }
+const SdStorageSnapshot &currentSdStorageSnapshot() { return snapshot; }

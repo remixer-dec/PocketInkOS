@@ -408,7 +408,7 @@ void configReload() {
   visitConfigFile(kSystemConfigPath, applySystemVisitor, nullptr);
 }
 
-const SystemConfig &systemConfig() { return currentConfig; }
+const SystemConfig &currentSystemConfig() { return currentConfig; }
 
 bool configGet(const char *key, char *out, size_t outSize) {
   if (!validKey(key) || out == nullptr || outSize == 0) {

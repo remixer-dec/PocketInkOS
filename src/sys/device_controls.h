@@ -18,7 +18,7 @@ struct DeviceControlSnapshot {
 /// Initializes device-control state from persisted config and hardware defaults.
 void deviceControlsBegin();
 /// Returns the latest device-control state for display.
-DeviceControlSnapshot deviceControlSnapshot();
+DeviceControlSnapshot deviceControlsSnapshot();
 
 /// Toggles the Bluetooth preference and hardware state when supported.
 void toggleBluetooth();

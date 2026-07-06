@@ -1,15 +1,14 @@
-#ifndef SMART_BUTTON_H
-#define SMART_BUTTON_H
+#ifndef HW_BUTTON_H
+#define HW_BUTTON_H
 
 #include <Arduino.h>
 #include <Bounce2.h>
 #include <functional>
 
 /// Debounces one hardware button and emits click and long-press callbacks.
-class SmartButton {
+class HwButton {
 public:
-  // Constructor
-  SmartButton(uint8_t pin, bool activeLow = true);
+  HwButton(uint8_t pin, bool activeLow = true);
 
   // Initialization to be called in setup()
   void begin();

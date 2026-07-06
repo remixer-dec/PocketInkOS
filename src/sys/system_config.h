@@ -97,7 +97,7 @@ void configLoadDefaults();
 /// Reloads config from persistent storage.
 void configReload();
 /// Returns the active read-only system configuration.
-const SystemConfig &systemConfig();
+const SystemConfig &currentSystemConfig();
 
 /// Reads a raw config value by key into out.
 bool configGet(const char *key, char *out, size_t outSize);

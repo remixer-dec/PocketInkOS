@@ -41,8 +41,8 @@ void WifiManager::reset() {
     staStarted = false;
   }
   timeSync.reset();
-  autoConnectPending = state == STATE_IDLE && systemConfig().wifi.autoConnect &&
-                        systemConfig().wifi.ssid[0] != '\0';
+  autoConnectPending = state == STATE_IDLE && currentSystemConfig().wifi.autoConnect &&
+                        currentSystemConfig().wifi.ssid[0] != '\0';
 }
 
 bool WifiManager::startSta() {
@@ -66,7 +66,7 @@ bool WifiManager::startSta() {
 }
 
 void WifiManager::connect() {
-  connectTo(systemConfig().wifi.ssid, systemConfig().wifi.password);
+  connectTo(currentSystemConfig().wifi.ssid, currentSystemConfig().wifi.password);
 }
 
 void WifiManager::connectTo(const char *ssid, const char *password) {
@@ -178,7 +178,7 @@ bool WifiManager::update() {
 }
 
 bool WifiManager::preferredMatches(const char *ssid) const {
-  return ssid != nullptr && strcmp(systemConfig().wifi.ssid, ssid) == 0;
+  return ssid != nullptr && strcmp(currentSystemConfig().wifi.ssid, ssid) == 0;
 }
 
 void WifiManager::saveNetworkSlot(uint8_t slot, const char *ssid,

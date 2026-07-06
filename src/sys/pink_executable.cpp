@@ -28,7 +28,7 @@ static const size_t kPinkMemorySize = 4096;
 static const size_t kPinkMaxRelocations = 4096;
 
 bool hiddenByMenuButtonApp(const char *id) {
-  return id != nullptr && strcmp(id, systemConfig().home.sunBtnApp) == 0;
+  return id != nullptr && strcmp(id, currentSystemConfig().home.sunBtnApp) == 0;
 }
 
 struct PinkExecutableEntry {

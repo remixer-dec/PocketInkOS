@@ -538,7 +538,7 @@ const AppDefinition *contactLinksDefinition() { return &contactLinksApp; }
 
 bool appVisible(const AppDefinition &app) {
   if (app.id != nullptr &&
-      strcmp(app.id, systemConfig().home.sunBtnApp) == 0) {
+      strcmp(app.id, currentSystemConfig().home.sunBtnApp) == 0) {
     return false;
   }
   return app.visible == nullptr || app.visible();

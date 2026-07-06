@@ -80,7 +80,7 @@ bool TimeSyncService::fetchCurrentTime() {
   datetime[0] = '\0';
   setStatus("");
 
-  if (systemConfig().time.syncProtocol == CONFIG_TIME_SYNC_NTP) {
+  if (currentSystemConfig().time.syncProtocol == CONFIG_TIME_SYNC_NTP) {
     return fetchNtpTime();
   }
   return fetchHttpsTime();
@@ -92,7 +92,7 @@ bool TimeSyncService::fetchHttpsTime() {
 
   HTTPClient http;
   http.setTimeout(TIME_TIMEOUT_MS);
-  if (!http.begin(client, systemConfig().time.syncServer)) {
+  if (!http.begin(client, currentSystemConfig().time.syncServer)) {
     setStatus("HTTP setup fail");
     return false;
   }
@@ -248,7 +248,7 @@ bool TimeSyncService::fetchNtpTime() {
 }
 
 const char *TimeSyncService::configuredNtpServer() const {
-  const char *server = systemConfig().time.syncServer;
+  const char *server = currentSystemConfig().time.syncServer;
   if (server == nullptr || server[0] == '\0') {
     return server;
   }
@@ -336,7 +336,7 @@ bool TimeSyncService::parseUtcOffset(const char *json, int32_t &out) const {
 }
 
 bool TimeSyncService::parseConfiguredUtcOffset(int32_t &out) const {
-  const char *cursor = systemConfig().time.timezone;
+  const char *cursor = currentSystemConfig().time.timezone;
   if (cursor == nullptr || cursor[0] == '\0' ||
       strcasecmp(cursor, "auto") == 0 || strcasecmp(cursor, "utc") == 0 ||
       strcasecmp(cursor, "z") == 0) {

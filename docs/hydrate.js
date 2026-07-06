@@ -11,8 +11,12 @@ const viewerApps = new WeakMap();
 let viewerRuntimePromise = null;
 let activeTheme = "paper";
 let sectionIndexState = null;
+let sectionIndexScrollLockHref = "";
+let sectionIndexScrollLockUntil = 0;
+const sectionIndexOpenTargets = new Set();
 let apiLookupState = null;
 let apiLookupBubble = null;
+let referenceModeState = null;
 
 function docsUrl(href) {
   if (!hasStaticShell) return null;
@@ -118,24 +122,40 @@ function activateCommandTab(button) {
 }
 
 function collectSectionIndexState() {
-  const root = document.querySelector(".section-index");
-  if (!root) return null;
+  const roots = [...document.querySelectorAll(".section-index")];
+  if (!roots.length) return null;
 
-  const scrollRoot = root.querySelector(".register-screen");
-  const entries = [...root.querySelectorAll('a[href^="#"], summary[data-section-target^="#"]')]
-    .map((link) => {
-      const href = link.getAttribute("href") || link.dataset.sectionTarget;
-      const id = href ? decodeURIComponent(href.slice(1)) : "";
-      const target = id ? document.getElementById(id) : null;
-      return target ? { link, target, href } : null;
+  const entries = roots
+    .flatMap((root) => {
+      const scrollRoot = root.querySelector(".register-screen") || root;
+      return [...root.querySelectorAll('a[href^="#"], summary[data-section-target^="#"]')].map((link) => {
+        const href = link.getAttribute("href") || link.dataset.sectionTarget;
+        const id = href ? decodeURIComponent(href.slice(1)) : "";
+        const target = id ? document.getElementById(id) : null;
+        const targetGroup = target?.closest?.("[data-api-group]");
+        const targetSection = target?.closest?.(".api-doc-section");
+        return target
+          ? {
+              link,
+              target,
+              href,
+              parentHref: link.dataset.indexParent || (targetGroup ? `#${targetGroup.id}` : ""),
+              sectionHref: targetSection ? `#${targetSection.id}` : "",
+              scrollRoot,
+            }
+          : null;
+      });
     })
     .filter(Boolean);
 
   if (!entries.length) return null;
+  entries.sort((a, b) => {
+    if (a.target === b.target) return 0;
+    return a.target.compareDocumentPosition(b.target) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  });
 
   return {
-    root,
-    scrollRoot,
+    roots,
     entries,
     activeHref: "",
     ticking: false,
@@ -146,14 +166,26 @@ function openSectionIndexAncestors(link) {
   let disclosure = link?.closest("details");
   while (disclosure) {
     disclosure.open = true;
+    const target = disclosure.querySelector(":scope > summary[data-section-target]")?.dataset.sectionTarget;
+    if (target) sectionIndexOpenTargets.add(target);
     disclosure = disclosure.parentElement?.closest("details") || null;
+  }
+}
+
+function restoreSectionIndexDisclosureState() {
+  for (const disclosure of document.querySelectorAll(".section-index-disclosure")) {
+    const target = disclosure.querySelector(":scope > summary[data-section-target]")?.dataset.sectionTarget;
+    if (target && sectionIndexOpenTargets.has(target)) {
+      disclosure.open = true;
+    }
   }
 }
 
 function revealSectionIndexLink(link) {
   if (!sectionIndexState || !link) return;
 
-  const container = sectionIndexState.scrollRoot;
+  const entry = sectionIndexState.entries.find((item) => item.link === link);
+  const container = entry?.scrollRoot;
   if (!container) return;
 
   const containerRect = container.getBoundingClientRect();
@@ -177,9 +209,23 @@ function setSectionIndexActive(href, syncHash = false) {
   if (sectionIndexState.activeHref === href && !syncHash) return;
 
   sectionIndexState.activeHref = href || "";
+  const activeTarget = href ? document.getElementById(decodeURIComponent(href.slice(1))) : null;
+  const activeGroup = activeTarget?.closest?.("[data-api-group]");
+  const activeChildGroup = activeTarget?.querySelector?.("[data-api-group]");
+  const activeGroupHref = activeGroup
+    ? `#${activeGroup.id}`
+    : activeChildGroup
+      ? `#${activeChildGroup.id}`
+      : "";
+
+  if (activeGroupHref && referenceModeState) {
+    setReferenceSymbolIndexActive(activeGroupHref);
+  }
 
   for (const { link, href: entryHref } of sectionIndexState.entries) {
-    const active = entryHref === href;
+    const active =
+      entryHref === href ||
+      (activeGroupHref && entryHref === activeGroupHref);
     link.classList.toggle("active", active);
     if (active) {
       openSectionIndexAncestors(link);
@@ -221,6 +267,14 @@ function findActiveSectionHref() {
 function syncSectionIndexFromScroll() {
   if (!sectionIndexState) return;
   sectionIndexState.ticking = false;
+  if (Date.now() < sectionIndexScrollLockUntil) {
+    if (sectionIndexScrollLockHref) {
+      setSectionIndexActive(sectionIndexScrollLockHref, false);
+    }
+    return;
+  }
+
+  sectionIndexScrollLockHref = "";
   setSectionIndexActive(findActiveSectionHref(), true);
 }
 
@@ -230,9 +284,46 @@ function queueSectionIndexSync() {
   window.requestAnimationFrame(syncSectionIndexFromScroll);
 }
 
+function lockSectionIndexScrollSync(href) {
+  sectionIndexScrollLockHref = href || "";
+  sectionIndexScrollLockUntil = Date.now() + 4000;
+  window.setTimeout(() => {
+    if (Date.now() >= sectionIndexScrollLockUntil) {
+      sectionIndexScrollLockHref = "";
+      queueSectionIndexSync();
+    }
+  }, 4050);
+}
+
+function targetForHash(href) {
+  if (!href?.startsWith("#")) return null;
+  return document.getElementById(decodeURIComponent(href.slice(1)));
+}
+
+function jumpToHashTarget(href, replaceHistory = false) {
+  const target = targetForHash(href);
+  if (!target) return false;
+
+  const previousScrollBehavior = document.documentElement.style.scrollBehavior;
+  document.documentElement.style.scrollBehavior = "auto";
+  target.scrollIntoView({ block: "start" });
+  document.documentElement.style.scrollBehavior = previousScrollBehavior;
+
+  const url = new URL(window.location.href);
+  url.hash = target.id;
+  if (replaceHistory) {
+    window.history.replaceState(null, "", url.href);
+  } else {
+    window.history.pushState(null, "", url.href);
+  }
+  setSectionIndexActive(`#${target.id}`, false);
+  return true;
+}
+
 function setupSectionIndex() {
   sectionIndexState = collectSectionIndexState();
   if (!sectionIndexState) return;
+  restoreSectionIndexDisclosureState();
 
   const currentHash = window.location.hash;
   const matchingEntry = sectionIndexState.entries.find(
@@ -244,7 +335,153 @@ function setupSectionIndex() {
     return;
   }
 
-  setSectionIndexActive(findActiveSectionHref(), true);
+  if (currentHash) {
+    setSectionIndexActive(findActiveSectionHref(), true);
+  }
+}
+
+function groupHrefForTarget(target) {
+  const group = target?.closest?.("[data-api-group]");
+  if (group?.id) {
+    return `#${group.id}`;
+  }
+
+  const firstGroup = target?.querySelector?.("[data-api-group]");
+  return firstGroup?.id ? `#${firstGroup.id}` : "";
+}
+
+function resolveReferenceTargetHref(href) {
+  if (!href) return "";
+  const target = document.getElementById(decodeURIComponent(href.slice(1)));
+  if (!target) return "";
+  return groupHrefForTarget(target) || href;
+}
+
+function collectReferenceModeState() {
+  const switcher = document.querySelector("[data-reference-mode-switch]");
+  const groups = [...document.querySelectorAll("[data-api-group]")]
+    .filter((group) => group.id)
+    .map((group) => ({
+      href: `#${group.id}`,
+      element: group,
+      section: group.closest(".api-doc-section"),
+      label:
+        group.querySelector(".api-group-header strong")?.textContent?.trim() ||
+        group.querySelector(".api-group-header code")?.textContent?.trim() ||
+        group.id,
+    }));
+
+  if (!switcher || !groups.length) {
+    return null;
+  }
+
+  const currentHash = window.location.hash;
+  const selectedHref =
+    resolveReferenceTargetHref(currentHash) ||
+    resolveReferenceTargetHref(findActiveSectionHref()) ||
+    groups[0].href;
+
+  return {
+    switcher,
+    pager: document.querySelector("[data-reference-file-pager]"),
+    groups,
+    mode: "all",
+    activeGroupHref: selectedHref,
+  };
+}
+
+function renderReferencePager() {
+  if (!referenceModeState?.pager) return;
+
+  const { groups, activeGroupHref, pager, mode } = referenceModeState;
+  const index = groups.findIndex((group) => group.href === activeGroupHref);
+  if (mode !== "one" || index < 0) {
+    pager.hidden = true;
+    pager.replaceChildren();
+    return;
+  }
+
+  const items = [
+    { label: "Previous", group: groups[index - 1], direction: "prev" },
+    { label: "Next", group: groups[index + 1], direction: "next" },
+  ];
+
+  pager.replaceChildren();
+  for (const item of items) {
+    const node = document.createElement(item.group ? "a" : "span");
+    node.className = `reference-file-card ${item.direction}${item.group ? "" : " disabled"}`;
+    if (item.group) {
+      node.href = item.group.href;
+      node.dataset.referenceFileLink = "true";
+    }
+
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    const name = document.createElement("strong");
+    name.textContent = item.group?.label || (item.direction === "prev" ? "Start" : "End");
+    node.append(label, name);
+    pager.appendChild(node);
+  }
+
+  pager.hidden = false;
+}
+
+function setReferenceSymbolIndexActive(groupHref) {
+  if (!referenceModeState || !groupHref) return;
+
+  referenceModeState.activeGroupHref = groupHref;
+  for (const symbolGroup of document.querySelectorAll("[data-symbol-group]")) {
+    symbolGroup.hidden = symbolGroup.dataset.symbolGroup !== groupHref;
+  }
+
+  renderReferencePager();
+}
+
+function applyReferenceMode(mode, targetHref = "") {
+  if (!referenceModeState) return;
+
+  const nextMode = mode === "one" ? "one" : "all";
+  const nextGroupHref =
+    resolveReferenceTargetHref(targetHref) ||
+    referenceModeState.activeGroupHref ||
+    referenceModeState.groups[0].href;
+
+  referenceModeState.mode = nextMode;
+  referenceModeState.activeGroupHref = nextGroupHref;
+
+  const shell = document.querySelector("[data-static-docs]");
+  if (shell) {
+    shell.dataset.referenceMode = nextMode;
+  }
+
+  for (const button of referenceModeState.switcher.querySelectorAll("[data-reference-mode-option]")) {
+    const selected = button.dataset.referenceModeOption === nextMode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  }
+
+  for (const group of referenceModeState.groups) {
+    const visible = nextMode === "all" || group.href === nextGroupHref;
+    group.element.hidden = !visible;
+  }
+
+  const visibleSections = new Set(
+    referenceModeState.groups
+      .filter((group) => nextMode === "all" || group.href === nextGroupHref)
+      .map((group) => group.section)
+      .filter(Boolean),
+  );
+  for (const section of document.querySelectorAll(".api-doc-section")) {
+    section.hidden = nextMode === "one" && !visibleSections.has(section);
+  }
+
+  setReferenceSymbolIndexActive(nextGroupHref);
+}
+
+function setupReferenceMode() {
+  referenceModeState = collectReferenceModeState();
+  if (!referenceModeState) return;
+  applyReferenceMode("all", window.location.hash);
 }
 
 function ensureApiLookupBubble() {
@@ -479,7 +716,9 @@ function replacePage(nextDoc) {
 
 function settleNavigation(url) {
   const target = url.hash ? document.querySelector(url.hash) : null;
+  setupReferenceMode();
   if (target) {
+    applyReferenceMode(referenceModeState?.mode || "all", url.hash);
     target.scrollIntoView({ block: "start" });
     target.focus?.({ preventScroll: true });
     setupSectionIndex();
@@ -518,6 +757,7 @@ if (hasStaticShell) {
   hydrateViewers().catch((error) => {
     console.warn("3D viewer hydration failed", error);
   });
+  setupReferenceMode();
   setupSectionIndex();
   setupApiLookup();
 
@@ -533,6 +773,21 @@ if (hasStaticShell) {
     });
   });
 
+  document.addEventListener("toggle", (event) => {
+    const disclosure = event.target.closest?.(".section-index-disclosure");
+    if (!disclosure || event.target !== disclosure) return;
+
+    const target = disclosure.querySelector(":scope > summary[data-section-target]")?.dataset.sectionTarget;
+    if (!target) return;
+
+    if (disclosure.open) {
+      sectionIndexOpenTargets.add(target);
+      return;
+    }
+
+    sectionIndexOpenTargets.delete(target);
+  }, true);
+
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-command-tab-value]");
     if (!button) return;
@@ -542,11 +797,63 @@ if (hasStaticShell) {
   });
 
   document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-reference-mode-option]");
+    if (!button || !referenceModeState) return;
+
+    event.preventDefault();
+    const activeHref = window.location.hash || findActiveSectionHref();
+    applyReferenceMode(button.dataset.referenceModeOption, activeHref);
+    setupSectionIndex();
+
+    if (referenceModeState.mode === "one") {
+      document
+        .querySelector(referenceModeState.activeGroupHref)
+        ?.scrollIntoView({ block: "start" });
+    }
+  });
+
+  document.addEventListener("click", (event) => {
     const link = event.target.closest('.section-index a[href^="#"]');
     if (!link) return;
-    window.requestAnimationFrame(() => {
-      setupSectionIndex();
-    });
+
+    const href = link.getAttribute("href");
+    if (href) {
+      lockSectionIndexScrollSync(href);
+      setSectionIndexActive(href, false);
+    }
+
+    if (referenceModeState?.mode === "one") {
+      const targetHref = resolveReferenceTargetHref(href);
+      if (targetHref) {
+        event.preventDefault();
+        applyReferenceMode("one", href);
+        const scrollHref = href === targetHref ? targetHref : href;
+        jumpToHashTarget(targetForHash(scrollHref) ? scrollHref : targetHref);
+        return;
+      }
+    }
+
+    if (href && jumpToHashTarget(href)) {
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-reference-file-link]");
+    if (!link || !referenceModeState) return;
+
+    event.preventDefault();
+    const href = link.getAttribute("href");
+    applyReferenceMode("one", href);
+    setupSectionIndex();
+    const target = href ? document.querySelector(href) : null;
+    if (target) {
+      target.scrollIntoView({ block: "start" });
+      const url = new URL(window.location.href);
+      url.hash = target.id;
+      window.history.pushState(null, "", url.href);
+      setSectionIndexActive(`#${target.id}`, false);
+    }
   });
 
   document.addEventListener("click", (event) => {
@@ -627,6 +934,9 @@ if (hasStaticShell) {
   window.addEventListener("hashchange", () => {
     if (!sectionIndexState) return;
     hideApiLookup();
+    if (referenceModeState) {
+      applyReferenceMode(referenceModeState.mode, window.location.hash);
+    }
     const currentHash = window.location.hash;
     const matchingEntry = sectionIndexState.entries.find(
       (entry) => entry.href === currentHash,

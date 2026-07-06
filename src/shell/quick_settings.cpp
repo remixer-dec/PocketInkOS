@@ -15,7 +15,7 @@ void QuickSettingsController::close() { openFlag = false; }
 bool QuickSettingsController::isOpen() const { return openFlag; }
 
 PowerDialogSnapshot QuickSettingsController::snapshot() const {
-  DeviceControlSnapshot controls = deviceControlSnapshot();
+  DeviceControlSnapshot controls = deviceControlsSnapshot();
   PowerDialogSnapshot result;
   result.page = page;
   result.wifiOn = wifiIsOn();

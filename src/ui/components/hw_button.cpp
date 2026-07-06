@@ -1,16 +1,16 @@
-#include "ui/components/smart_button.h"
+#include "ui/components/hw_button.h"
 
-SmartButton::SmartButton(uint8_t pin, bool activeLow)
+HwButton::HwButton(uint8_t pin, bool activeLow)
     : _pin(pin), _activeLow(activeLow) {}
 
-void SmartButton::begin() {
+void HwButton::begin() {
   // Initialize Bounce2
   _bounce.attach(_pin, _activeLow ? INPUT_PULLUP : INPUT_PULLDOWN);
   _bounce.interval(10); // 10ms debounce time
   _bounce.setPressedState(_activeLow ? LOW : HIGH);
 }
 
-void SmartButton::update() {
+void HwButton::update() {
   _bounce.update();
   unsigned long currentMillis = millis();
 
@@ -63,17 +63,17 @@ void SmartButton::update() {
 }
 
 // Setters
-void SmartButton::attachSingleClick(std::function<void()> callback) {
+void HwButton::attachSingleClick(std::function<void()> callback) {
   _cbSingleClick = callback;
 }
-void SmartButton::attachDoubleClick(std::function<void()> callback) {
+void HwButton::attachDoubleClick(std::function<void()> callback) {
   _cbDoubleClick = callback;
 }
-void SmartButton::attachLongPressStart(std::function<void()> callback) {
+void HwButton::attachLongPressStart(std::function<void()> callback) {
   _cbLongPressStart = callback;
 }
-void SmartButton::attachActivity(std::function<void()> callback) {
+void HwButton::attachActivity(std::function<void()> callback) {
   _cbActivity = callback;
 }
-void SmartButton::setLongPressMs(uint16_t ms) { _longPressMs = ms; }
-void SmartButton::setDoubleClickMs(uint16_t ms) { _doubleClickMs = ms; }
+void HwButton::setLongPressMs(uint16_t ms) { _longPressMs = ms; }
+void HwButton::setDoubleClickMs(uint16_t ms) { _doubleClickMs = ms; }

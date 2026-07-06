@@ -24,6 +24,6 @@ bool sdStorageUpdate();
 /// Returns true when SD storage is currently mounted.
 bool sdStorageMounted();
 /// Returns the last cached SD storage snapshot.
-const SdStorageSnapshot &sdStorageSnapshot();
+const SdStorageSnapshot &currentSdStorageSnapshot();
 
 #endif

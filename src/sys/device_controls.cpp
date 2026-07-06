@@ -51,12 +51,12 @@ uint16_t currentCpuMhz() {
 } // namespace
 
 void deviceControlsBegin() {
-  cpuStep = cpuStepIndexForMhz(systemConfig().cpu.mhz);
+  cpuStep = cpuStepIndexForMhz(currentSystemConfig().cpu.mhz);
   applyBluetoothState();
   applyCpuFrequency();
 }
 
-DeviceControlSnapshot deviceControlSnapshot() {
+DeviceControlSnapshot deviceControlsSnapshot() {
   DeviceControlSnapshot snapshot;
   snapshot.bluetoothOn = bluetoothEnabled;
   snapshot.cpuMhz = currentCpuMhz();

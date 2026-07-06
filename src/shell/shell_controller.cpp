@@ -359,7 +359,7 @@ ShellData ShellController::currentShellData(char *dateText, size_t dateSize,
 
   const BatterySnapshot &battery = batteryMonitor.snapshot();
   const EnvironmentSnapshot &env = environmentMonitor.snapshot();
-  const SdStorageSnapshot &sd = sdStorageSnapshot();
+  const SdStorageSnapshot &sd = currentSdStorageSnapshot();
 
   ShellData data = {};
   data.status.dateText = dateText;
@@ -443,7 +443,7 @@ bool ShellController::launchAppById(const char *id) {
 }
 
 void ShellController::launchMenuButtonApp() {
-  const char *target = systemConfig().home.sunBtnApp;
+  const char *target = currentSystemConfig().home.sunBtnApp;
   if (target != nullptr && target[0] != '\0' && launchAppById(target)) {
     return;
   }

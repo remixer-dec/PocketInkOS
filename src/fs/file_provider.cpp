@@ -12,7 +12,7 @@ namespace {
 bool sdMounted() { return sdStorageMounted(); }
 
 FileProviderCapacity sdCapacity() {
-  const SdStorageSnapshot &sd = sdStorageSnapshot();
+  const SdStorageSnapshot &sd = currentSdStorageSnapshot();
   FileProviderCapacity capacity;
   capacity.mounted = sd.mounted;
   capacity.totalGb = sd.totalGb;

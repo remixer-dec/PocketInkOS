@@ -1,14 +1,14 @@
 #include "sys/shell_buttons.h"
 #include "sys/global.h"
-#include "ui/components/smart_button.h"
+#include "ui/components/hw_button.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdint.h>
 
 namespace {
 
-SmartButton mainButton(BOOT_BUTTON_PIN);
-SmartButton backButton(PWR_BUTTON_PIN);
+HwButton mainButton(BOOT_BUTTON_PIN);
+HwButton backButton(PWR_BUTTON_PIN);
 TaskHandle_t buttonTaskHandle = NULL;
 ShellButtonHandlers activeHandlers;
 

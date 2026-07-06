@@ -55,7 +55,7 @@ void DeviceClock::formatTime(char *out, size_t outSize) const {
   int daySecond = static_cast<int>((seconds % 86400 + 86400) % 86400);
   int hour = daySecond / 3600;
   const int minute = (daySecond / 60) % 60;
-  if (systemConfig().time.timeFormat == CONFIG_TIME_12H) {
+  if (currentSystemConfig().time.timeFormat == CONFIG_TIME_12H) {
     const bool pm = hour >= 12;
     hour %= 12;
     if (hour == 0) {
@@ -87,7 +87,7 @@ void DeviceClock::formatDate(char *out, size_t outSize) const {
   unsigned day = doy - (153 * mp + 2) / 5 + 1;
   unsigned month = mp + (mp < 10 ? 3 : -9);
   year += month <= 2;
-  switch (systemConfig().time.dateFormat) {
+  switch (currentSystemConfig().time.dateFormat) {
   case CONFIG_DATE_WEEKDAY: {
     static const char *WEEKDAYS[] = {"Sun", "Mon", "Tue", "Wed",
                                      "Thu", "Fri", "Sat"};

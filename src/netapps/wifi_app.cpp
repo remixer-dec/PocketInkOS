@@ -598,7 +598,7 @@ void WifiApp::loadSavedNetworks() {
     savedNetworks[i] = {};
     savedNetworks[i].rssi = -999;
   }
-  const SystemConfig &cfg = systemConfig();
+  const SystemConfig &cfg = currentSystemConfig();
   for (uint8_t i = 0; i < CONFIG_WIFI_SAVED_MAX && savedCount < MAX_SAVED_NETWORKS;
        i++) {
     const ConfigWifiSavedNetwork &source = cfg.wifi.saved[i];
@@ -913,8 +913,8 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   gfx.setCursor(42, 4);
   if (WiFi.status() == WL_CONNECTED) {
     gfx.print("connected ");
-    gfx.print(systemConfig().wifi.displayName[0] != '\0'
-                  ? systemConfig().wifi.displayName
+    gfx.print(currentSystemConfig().wifi.displayName[0] != '\0'
+                  ? currentSystemConfig().wifi.displayName
                   : WiFi.SSID().c_str());
   } else if (wifiManager.connectionState() == WifiManager::STATE_CONNECTING) {
     gfx.print("connecting");
@@ -955,8 +955,8 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
     if (i < savedCount) {
       const SavedNetwork &network = savedNetworks[i];
       const char *label = preferredMatches(network.ssid) &&
-                                  systemConfig().wifi.displayName[0] != '\0'
-                              ? systemConfig().wifi.displayName
+                                  currentSystemConfig().wifi.displayName[0] != '\0'
+                              ? currentSystemConfig().wifi.displayName
                               : network.ssid;
       drawNetworkRow(gfx, y, label, network.bssid, network.rssi, true,
                      preferredMatches(network.ssid),
@@ -1103,8 +1103,8 @@ void WifiApp::drawPopup(Adafruit_GFX &gfx) {
       selectedIndex < savedCount) {
     copyText(rawSsid, sizeof(rawSsid), savedNetworks[selectedIndex].ssid);
     if (preferredMatches(rawSsid) &&
-        systemConfig().wifi.displayName[0] != '\0') {
-      copyText(label, sizeof(label), systemConfig().wifi.displayName);
+        currentSystemConfig().wifi.displayName[0] != '\0') {
+      copyText(label, sizeof(label), currentSystemConfig().wifi.displayName);
     } else {
       copyText(label, sizeof(label), rawSsid);
     }

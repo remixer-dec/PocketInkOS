@@ -187,7 +187,8 @@ a {
   text-transform: uppercase;
 }
 
-.theme-switch {
+.theme-switch,
+.reference-mode-switch {
   position: fixed;
   top: var(--page-top-offset);
   right: var(--page-side-offset);
@@ -197,7 +198,12 @@ a {
   background: var(--paper-strong);
 }
 
-.theme-switch button {
+.reference-mode-switch {
+  top: calc(var(--page-top-offset) + 42px);
+}
+
+.theme-switch button,
+.reference-mode-switch button {
   border: 0;
   border-left: 1px solid currentColor;
   background: transparent;
@@ -209,11 +215,13 @@ a {
   text-transform: uppercase;
 }
 
-.theme-switch button:first-child {
+.theme-switch button:first-child,
+.reference-mode-switch button:first-child {
   border-left: 0;
 }
 
-.theme-switch button.active {
+.theme-switch button.active,
+.reference-mode-switch button.active {
   background: var(--ink);
   color: var(--paper-strong);
 }
@@ -228,6 +236,25 @@ a {
     var(--page-bottom-offset);
 }
 
+.reference-page-frame {
+  --reference-left-offset: max(var(--page-side-offset), calc(50vw - 616px));
+  grid-template-columns:
+    230px
+    minmax(
+      0,
+      min(
+        900px,
+        calc(
+          100vw - var(--reference-left-offset) - var(--page-side-offset) -
+            494px
+        )
+      )
+    )
+    220px;
+  justify-content: start;
+  padding-left: var(--reference-left-offset);
+}
+
 .left-rail {
   position: sticky;
   top: 22px;
@@ -237,6 +264,18 @@ a {
   width: 100%;
   max-width: 240px;
   min-width: 0;
+}
+
+.right-rail {
+  position: sticky;
+  top: calc(var(--page-top-offset) + 88px);
+  align-self: start;
+  justify-self: end;
+  width: 220px;
+  max-height: calc(100vh - var(--page-top-offset) - 110px);
+  min-width: 0;
+  display: grid;
+  justify-items: end;
 }
 
 .page-register {
@@ -464,12 +503,6 @@ code {
 .section-index-list.level-0 > .section-index-item + .section-index-item {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid currentColor;
-}
-
-.section-index-list.level-1,
-.section-index-list.level-2 {
-  padding-left: 12px;
 }
 
 .section-index-list a,
@@ -490,11 +523,26 @@ code {
   word-break: break-word;
 }
 
+.left-rail .section-index-list.level-1 a {
+  text-align: center;
+  font-weight: 100;
+  border: 1px solid #bebebe;
+}
+
+.left-rail .section-index-list.level-2 a {
+  padding-left: 32px;
+}
+
 .section-index-toggle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   cursor: pointer;
+}
+
+.section-index-disclosure {
+  display: grid;
+  gap: 8px;
 }
 
 .section-index-toggle::-webkit-details-marker {
@@ -521,12 +569,35 @@ code {
   font-size: 0.68rem;
 }
 
+.section-index.symbol-index {
+  width: 100%;
+  max-width: 220px;
+  max-height: calc(100vh - var(--page-top-offset) - 110px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.symbol-index-group[hidden] {
+  display: none;
+}
+
+.symbol-index-file {
+  border: 1px solid currentColor;
+  background: var(--paper);
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.3;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
 .section-index-list a:hover,
 .section-index-list a:focus-visible,
 .section-index-toggle:hover,
 .section-index-toggle:focus-visible,
-.section-index-toggle.active,
-.section-index-disclosure[open] > .section-index-toggle {
+.section-index-toggle.active {
   background: var(--ink);
   color: var(--paper-strong);
 }
@@ -570,7 +641,7 @@ code {
   border: 1px solid var(--line);
   background: var(--paper-strong);
   min-width: 0;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 92px;
 }
 
 .paper-theme .api-group:nth-of-type(n + 2) {
@@ -635,7 +706,7 @@ code {
   border: 1px solid var(--line);
   background: var(--paper-strong);
   min-width: 0;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 92px;
 }
 
 .api-symbol strong {
@@ -644,6 +715,11 @@ code {
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+.paper-theme .api-symbol strong {
+  text-transform: none;
+  font-variant: small-caps;
+  margin-bottom: 20px;
 }
 
 .api-symbol-doc {
@@ -732,6 +808,55 @@ code {
   background: transparent;
   font-family: var(--mono);
   padding: 10px;
+}
+
+.reference-file-pager {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.reference-file-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 2px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper-strong);
+  padding: 16px;
+  text-decoration: none;
+}
+
+.reference-file-card span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.reference-file-card strong {
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.reference-file-card.next {
+  text-align: right;
+}
+
+.reference-file-card.disabled {
+  opacity: 0.45;
+}
+
+.reference-file-card:not(.disabled):hover,
+.reference-file-card:not(.disabled):focus-visible {
+  background: var(--ink);
+  color: var(--paper-strong);
+}
+
+.reference-file-card:not(.disabled):hover span,
+.reference-file-card:not(.disabled):focus-visible span {
+  color: inherit;
 }
 
 .device-card,
@@ -1047,13 +1172,15 @@ code {
   color: var(--muted);
 }
 
-.ink-theme .theme-switch {
+.ink-theme .theme-switch,
+.ink-theme .reference-mode-switch {
   border-color: var(--line);
   background: var(--paper-strong);
   color: var(--ink);
 }
 
-.ink-theme .theme-switch button.active {
+.ink-theme .theme-switch button.active,
+.ink-theme .reference-mode-switch button.active {
   background: var(--ink);
   color: var(--paper-strong);
 }
@@ -1084,12 +1211,14 @@ code {
 
 .ink-theme .register-screen,
 .ink-theme .register-screen a,
+.ink-theme .symbol-index-file,
 .ink-theme .rule-list article,
 .ink-theme .spec-list article,
 .ink-theme .command-list article,
 .ink-theme .api-group,
 .ink-theme .api-symbol,
-.ink-theme .dither-figure {
+.ink-theme .dither-figure,
+.ink-theme .reference-file-card {
   border-color: var(--paper-strong);
   color: var(--paper-strong);
   background:
@@ -1118,8 +1247,7 @@ code {
 .ink-theme .section-index-list a:focus-visible,
 .ink-theme .section-index-toggle:hover,
 .ink-theme .section-index-toggle:focus-visible,
-.ink-theme .section-index-toggle.active,
-.ink-theme .section-index-disclosure[open] > .section-index-toggle {
+.ink-theme .section-index-toggle.active {
   background: var(--paper-strong);
   color: var(--ink);
 }
@@ -1202,6 +1330,21 @@ code {
   color: var(--paper-strong);
 }
 
+.ink-theme .reference-file-card span {
+  color: var(--wash);
+}
+
+.ink-theme .reference-file-card:not(.disabled):hover,
+.ink-theme .reference-file-card:not(.disabled):focus-visible {
+  background: var(--paper-strong);
+  color: var(--ink);
+}
+
+.ink-theme .reference-file-card:not(.disabled):hover span,
+.ink-theme .reference-file-card:not(.disabled):focus-visible span {
+  color: var(--ink);
+}
+
 .ink-theme .command-value,
 .doc-section.post-panel-ink .command-value {
   background: var(--ink);
@@ -1222,11 +1365,17 @@ code {
 }
 
 @media (max-width: 980px) {
-  .theme-switch {
+  .theme-switch,
+  .reference-mode-switch {
     position: static;
     top: auto;
     right: auto;
     margin: 0 0 12px auto;
+    width: fit-content;
+  }
+
+  .right-rail {
+    display: none;
   }
 
   .page-frame,
@@ -1256,9 +1405,12 @@ code {
     max-height: min(50vh, 360px);
   }
 
-  .section-index-list.level-1,
-  .section-index-list.level-2 {
-    padding-left: 8px;
+  .left-rail .section-index-list.level-1 a {
+    padding-left: 20px;
+  }
+
+  .left-rail .section-index-list.level-2 a {
+    padding-left: 26px;
   }
 }
 
@@ -1308,9 +1460,12 @@ code {
     font-size: 0.72rem;
   }
 
-  .section-index-list.level-1,
-  .section-index-list.level-2 {
-    padding-left: 6px;
+  .left-rail .section-index-list.level-1 a {
+    padding-left: 18px;
+  }
+
+  .left-rail .section-index-list.level-2 a {
+    padding-left: 22px;
   }
 
   .section-index .register-screen {
@@ -1321,6 +1476,14 @@ code {
   .api-symbol-list,
   .api-symbol {
     padding: 10px;
+  }
+
+  .reference-file-pager {
+    grid-template-columns: 1fr;
+  }
+
+  .reference-file-card.next {
+    text-align: left;
   }
 }
 
