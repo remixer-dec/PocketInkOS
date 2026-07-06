@@ -1,5 +1,6 @@
 #include "apps/tts_app.h"
 
+#include "sys/device_controls.h"
 #include "sys/inactivity_sleep_guard.h"
 #include "sys/sd_storage.h"
 #include "ui/ui_helpers.h"
@@ -390,9 +391,15 @@ void TtsApp::drawMain(Adafruit_GFX &gfx) {
   gfx.print(meta);
 
   if (state == State::Playing) {
-    snprintf(meta, sizeof(meta), "PCM %u  VOL %u%%",
-             static_cast<unsigned>(renderer.lastPeak()),
-             static_cast<unsigned>(volumePercent));
+    const DeviceControlSnapshot controls = deviceControlsSnapshot();
+    if (controls.muted) {
+      snprintf(meta, sizeof(meta), "PCM %u  MUTED",
+               static_cast<unsigned>(renderer.lastPeak()));
+    } else {
+      snprintf(meta, sizeof(meta), "PCM %u  VOL %u%%",
+               static_cast<unsigned>(renderer.lastPeak()),
+               static_cast<unsigned>(controls.volume));
+    }
     gfx.setCursor(136, 130);
     gfx.print(meta);
   }
@@ -529,7 +536,7 @@ bool TtsApp::startPlayback() {
   AudioPlaybackConfig config;
   config.sampleRate = pcm.sampleRateHz();
   config.chunkFrames = 256;
-  config.volumePercent = volumePercent;
+  config.volumePercent = 100;
 
   char error[32];
   ttsAppLog("[tts-app] playback begin frames=%u rate=%u\n",
@@ -581,7 +588,7 @@ void TtsApp::synthesisTaskEntry(void *user) {
 }
 
 void TtsApp::synthesisTask() {
-  ScopedInactivitySleepGuard sleepGuard;
+  LockscreenGuard sleepGuard;
   ttsAppLog("[tts-app] synth task stack_hwm_start=%u\n",
             currentTaskStackHighWaterMark());
   tts::ModelPaths paths;

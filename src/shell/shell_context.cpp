@@ -2,6 +2,7 @@
 #include "shell/connectivity.h"
 #include "sys/builtin_apps.h"
 #include "sys/device_clock.h"
+#include "sys/device_controls.h"
 #include "sys/rtc_context.h"
 #include <cstring>
 
@@ -38,6 +39,9 @@ void shellContextSaveForSleep(Screen screen, bool textInputScreen,
   snapshot.system.wifiOn = wifiIsOn();
   snapshot.system.clockSet =
       deviceClock.snapshotLocalUnix(snapshot.system.clockLocalUnix);
+  DeviceControlSnapshot controls = deviceControlsSnapshot();
+  snapshot.system.volume = controls.volume;
+  snapshot.system.muted = controls.muted;
 
   if (activeDefinition != nullptr && activeDefinition->id != nullptr) {
     snapshot.navigation.hasActiveApp = true;
@@ -70,6 +74,7 @@ bool shellContextRestoreAfterSleep(MenuState &menuState,
   }
 
   restoreWifiOn(snapshot.system.wifiOn);
+  deviceControlsRestoreAudio(snapshot.system.volume, snapshot.system.muted);
   menuState.category = snapshot.navigation.menuCategory;
   menuState.page = snapshot.navigation.menuPage;
 

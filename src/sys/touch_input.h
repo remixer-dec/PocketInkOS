@@ -10,7 +10,7 @@ struct TouchPoint {
   uint16_t y;
 };
 
-/// Classifies touch transitions reported by the controller.
+/// Type of touch transitions reported by the controller.
 enum TouchEventType {
   TOUCH_EVENT_DOWN,
   TOUCH_EVENT_MOVE,

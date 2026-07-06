@@ -444,7 +444,8 @@ bool ShellController::launchAppById(const char *id) {
 
 void ShellController::launchMenuButtonApp() {
   const char *target = currentSystemConfig().home.sunBtnApp;
-  if (target != nullptr && target[0] != '\0' && launchAppById(target)) {
+  if (target != nullptr && target[0] != '\0') {
+    launchAppById(target);
     return;
   }
   launchAppById("contact_links");
@@ -471,7 +472,7 @@ void ShellController::handleMenuTouch(const TouchPoint &point) {
 bool ShellController::handlePendingFilesPinkLaunch() {
   char path[288];
   AppCatalogEntry app;
-  if (!consumeFilesPinkLaunch(path, sizeof(path))) {
+  if (!takePendingPinkExecLaunchPath(path, sizeof(path))) {
     return false;
   }
   if (!pinkExecutableLaunchPath(path, &app.definition, app.id, sizeof(app.id),

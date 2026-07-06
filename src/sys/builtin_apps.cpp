@@ -397,6 +397,10 @@ AppBehavior contactLinksBehavior() {
   return behavior;
 }
 
+const AppDefinition contactLinksApp =
+    builtInApp("contact_links", "contact", "C", MENU_APPS, &contactLinksScreen,
+               []() { contactLinks.reset(); }, contactLinksBehavior());
+
 #if ENABLE_NETWORK_APPS
 AppBehavior redditBehavior() {
   AppBehavior behavior;
@@ -456,10 +460,6 @@ AppBehavior ttsBehavior() {
 }
 #endif
 
-const AppDefinition contactLinksApp =
-    builtInApp("contact_links", "contact", "C", MENU_APPS, &contactLinksScreen,
-               []() { contactLinks.reset(); }, contactLinksBehavior());
-
 } // namespace
 
 const AppDefinition builtInApps[] = {
@@ -504,6 +504,7 @@ const AppDefinition builtInApps[] = {
                        sdStorageMounted,
                        []() { filesApp.reset(); },
                        filesBehavior()),
+    contactLinksApp,
     builtInAppWhen("settings", "settings", "S", MENU_APPS, &settingsScreen,
                    sdStorageMounted,
                    []() { settingsApp.reset(); },
@@ -532,10 +533,6 @@ const AppDefinition builtInApps[] = {
 
 const size_t builtInAppCount = sizeof(builtInApps) / sizeof(builtInApps[0]);
 
-ActiveApp *contactLinksRuntime() { return &contactLinksScreen; }
-
-const AppDefinition *contactLinksDefinition() { return &contactLinksApp; }
-
 bool appVisible(const AppDefinition &app) {
   if (app.id != nullptr &&
       strcmp(app.id, currentSystemConfig().home.sunBtnApp) == 0) {
@@ -561,8 +558,8 @@ size_t appCatalogCount(MenuCategory category) {
   return count + pinkExecutableCount(category);
 }
 
-bool appCatalogAtVisibleIndex(MenuCategory category, size_t index,
-                              AppCatalogEntry &out) {
+bool tryGetVisibleAppAtIndex(MenuCategory category, size_t index,
+                             AppCatalogEntry &out) {
   size_t visibleIndex = 0;
   for (size_t i = 0; i < builtInAppCount; i++) {
     if (builtInApps[i].category != category || !appVisible(builtInApps[i])) {
@@ -586,46 +583,22 @@ bool findAppById(const char *id, AppCatalogEntry &out) {
     return false;
   }
   for (size_t i = 0; i < builtInAppCount; i++) {
-    if (appVisible(builtInApps[i]) && strcmp(builtInApps[i].id, id) == 0) {
+    if (strcmp(builtInApps[i].id, id) == 0) {
       copyCatalogEntry(out, builtInApps[i]);
       return true;
     }
   }
-  if (strcmp(contactLinksApp.id, id) == 0) {
-    copyCatalogEntry(out, contactLinksApp);
-    return true;
-  }
-
-  const MenuCategory categories[] = {
-      MENU_GAMES,
-      MENU_APPS
-#if ENABLE_NETWORK_APPS
-      ,
-      MENU_NETWORK
-#endif
-  };
-  for (MenuCategory category : categories) {
-    const size_t count = pinkExecutableCount(category);
-    for (size_t i = 0; i < count; i++) {
-      if (pinkExecutableDefinitionAt(category, i, &out.definition, out.id,
-                                     sizeof(out.id), out.label,
-                                     sizeof(out.label), out.icon,
-                                     sizeof(out.icon)) &&
-          strcmp(out.definition.id, id) == 0) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return pinkExecutableDefinitionById(id, &out.definition, out.id,
+                                      sizeof(out.id), out.label,
+                                      sizeof(out.label), out.icon,
+                                      sizeof(out.icon));
 }
 
 void refreshAppCatalog() {}
 
-bool consumeFilesPinkLaunch(char *path, size_t pathSize) {
+bool takePendingPinkExecLaunchPath(char *path, size_t pathSize) {
   return filesApp.consumePinkLaunch(path, pathSize);
 }
-
-void resetContactLinks() { contactLinks.reset(); }
 
 void resetApps() {
   for (size_t i = 0; i < builtInAppCount; i++) {
@@ -633,7 +606,6 @@ void resetApps() {
       builtInApps[i].reset();
     }
   }
-  resetContactLinks();
 #if ENABLE_NETWORK_APPS
   wifiManager.reset();
 #endif

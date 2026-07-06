@@ -32,6 +32,10 @@ struct RtcSystemContext {
   int64_t clockLocalUnix;
   /// Whether Wi-Fi was enabled before sleep.
   bool wifiOn;
+  /// Runtime output volume before sleep.
+  uint8_t volume;
+  /// Runtime mute state before sleep.
+  bool muted;
 };
 
 /// App-owned state blob preserved across deep sleep.

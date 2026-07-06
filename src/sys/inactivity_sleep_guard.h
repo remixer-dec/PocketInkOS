@@ -12,17 +12,16 @@ void inactivitySleepKeepAwake();
 /// Returns true when sleep is blocked by holds or recent keep-awake activity.
 bool inactivitySleepBlocked(uint32_t graceMs = 0);
 
-/// RAII helper that blocks inactivity sleep for the lifetime of a scope.
-class ScopedInactivitySleepGuard {
+/// RAII helper that keeps the lockscreen awake for the lifetime of a scope.
+class LockscreenGuard {
 public:
-  /// Acquires one inactivity-sleep hold.
-  ScopedInactivitySleepGuard() { inactivitySleepGuardAcquire(); }
-  /// Releases the hold acquired by the constructor.
-  ~ScopedInactivitySleepGuard() { inactivitySleepGuardRelease(); }
+  /// Acquires one lockscreen hold.
+  LockscreenGuard() { inactivitySleepGuardAcquire(); }
+  /// Releases the lockscreen hold acquired by the constructor.
+  ~LockscreenGuard() { inactivitySleepGuardRelease(); }
 
-  ScopedInactivitySleepGuard(const ScopedInactivitySleepGuard &) = delete;
-  ScopedInactivitySleepGuard &
-  operator=(const ScopedInactivitySleepGuard &) = delete;
+  LockscreenGuard(const LockscreenGuard &) = delete;
+  LockscreenGuard &operator=(const LockscreenGuard &) = delete;
 };
 
 #endif

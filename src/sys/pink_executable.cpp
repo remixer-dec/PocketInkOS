@@ -876,6 +876,26 @@ AppBehavior pinkBehavior() {
   return behavior;
 }
 
+bool populatePinkDefinition(const PinkExecutableEntry &entry, AppDefinition *out,
+                            char *id, size_t idSize, char *label,
+                            size_t labelSize, char *icon, size_t iconSize) {
+  if (out == nullptr || id == nullptr || label == nullptr || icon == nullptr) {
+    return false;
+  }
+  copyText(id, idSize, entry.id);
+  copyText(label, labelSize, entry.label);
+  copyIcon(icon, iconSize, label);
+  *out = AppDefinition{};
+  out->id = id;
+  out->label = label;
+  out->icon = icon;
+  out->category = entry.category;
+  out->runtime = pinkExecutableRuntime();
+  out->visible = visiblePinkApp;
+  out->behavior = pinkBehavior();
+  return true;
+}
+
 } // namespace
 
 ActiveApp *pinkExecutableRuntime() { return &pinkApp; }
@@ -934,18 +954,24 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
   if (entry == nullptr) {
     return false;
   }
-  copyText(id, idSize, entry->id);
-  copyText(label, labelSize, entry->label);
-  copyIcon(icon, iconSize, label);
-  *out = AppDefinition{};
-  out->id = id;
-  out->label = label;
-  out->icon = icon;
-  out->category = category;
-  out->runtime = pinkExecutableRuntime();
-  out->visible = visiblePinkApp;
-  out->behavior = pinkBehavior();
-  return true;
+  return populatePinkDefinition(*entry, out, id, idSize, label, labelSize,
+                                icon, iconSize);
+}
+
+bool pinkExecutableDefinitionById(const char *id, AppDefinition *out,
+                                  char *idOut, size_t idSize, char *label,
+                                  size_t labelSize, char *icon,
+                                  size_t iconSize) {
+  if (pinkApps == nullptr || id == nullptr || id[0] == '\0') {
+    return false;
+  }
+  for (size_t i = 0; i < pinkAppCount; i++) {
+    if (strcmp(pinkApps[i].id, id) == 0) {
+      return populatePinkDefinition(pinkApps[i], out, idOut, idSize, label,
+                                    labelSize, icon, iconSize);
+    }
+  }
+  return false;
 }
 
 bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,

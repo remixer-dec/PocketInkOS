@@ -127,8 +127,12 @@ void AudioPlayerComponent::draw(Adafruit_GFX &gfx, const AudioPlayerState &state
   char right[12];
   formatClock(positionMs, left, sizeof(left));
   formatClock(durationMs, right, sizeof(right));
-  snprintf(detail, sizeof(detail), "%s / %s   VOL %u%%", left, right,
-           static_cast<unsigned>(state.volumePercent));
+  if (state.muted) {
+    snprintf(detail, sizeof(detail), "%s / %s   MUTED", left, right);
+  } else {
+    snprintf(detail, sizeof(detail), "%s / %s   VOL %u%%", left, right,
+             static_cast<unsigned>(state.volumePercent));
+  }
   gfx.setCursor(layout.time.x, layout.time.y + layout.time.h - 2);
   gfx.print(detail);
 }

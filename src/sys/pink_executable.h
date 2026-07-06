@@ -130,6 +130,12 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
                                 AppDefinition *out, char *id, size_t idSize,
                                 char *label, size_t labelSize, char *icon,
                                 size_t iconSize);
+/// Copies a discovered .pink app definition by stable id, including entries
+/// hidden from the launcher because they are the quick-access app.
+bool pinkExecutableDefinitionById(const char *id, AppDefinition *out,
+                                  char *idOut, size_t idSize, char *label,
+                                  size_t labelSize, char *icon,
+                                  size_t iconSize);
 /// Launches a discovered .pink app by stable id.
 bool pinkExecutableLaunchById(const char *id);
 /// Launches a .pink executable at an explicit filesystem path.

@@ -4,6 +4,8 @@
 
 namespace fs {
 
+enum SeekMode { SeekSet, SeekCur, SeekEnd };
+
 class File {
 public:
   File() = default;
@@ -17,7 +19,9 @@ public:
   size_t read(uint8_t *, size_t) { return 0; }
   size_t write(const uint8_t *, size_t) { return 0; }
   int peek() { return -1; }
+  size_t position() const { return 0; }
   bool seek(uint32_t) { return false; }
+  bool seek(uint32_t, SeekMode) { return false; }
   void close() {}
   File openNextFile() { return File(); }
 };
@@ -33,6 +37,10 @@ public:
 } // namespace fs
 
 using fs::File;
+using fs::SeekCur;
+using fs::SeekEnd;
+using fs::SeekMode;
+using fs::SeekSet;
 
 #ifndef FILE_APPEND
 #define FILE_APPEND "a"

@@ -334,7 +334,7 @@ bool appAtVisibleSlot(const MenuState &state, uint8_t slot,
                       AppCatalogEntry &out) {
   const size_t targetIndex =
       static_cast<size_t>(state.page) * MENU_PAGE_SIZE + slot;
-  return appCatalogAtVisibleIndex(state.category, targetIndex, out);
+  return tryGetVisibleAppAtIndex(state.category, targetIndex, out);
 }
 
 bool hasMenuNextPage(const MenuState &state) {

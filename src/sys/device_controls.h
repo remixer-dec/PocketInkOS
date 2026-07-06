@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/// Snapshot of user-facing hardware toggles shown by status and settings UI.
+/// Snapshot of user-facing hardware toggles shown by status and settings UI, used by quick settings and power dialog display.
 struct DeviceControlSnapshot {
   /// Whether Bluetooth radio state is currently considered enabled.
   bool bluetoothOn = false;
@@ -19,14 +19,18 @@ struct DeviceControlSnapshot {
 void deviceControlsBegin();
 /// Returns the latest device-control state for display.
 DeviceControlSnapshot deviceControlsSnapshot();
+/// Restores runtime audio controls from retained RTC state.
+void deviceControlsRestoreAudio(uint8_t volume, bool muteState);
 
 /// Toggles the Bluetooth preference and hardware state when supported.
 void toggleBluetooth();
 /// Advances to the next supported CPU frequency profile.
 void cycleCpuFrequency();
-/// Decreases persisted output volume by one UI step.
+/// Returns source volume scaled by the current output volume and mute state.
+uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent);
+/// Decreases runtime output volume by one UI step.
 void volumeDown();
-/// Increases persisted output volume by one UI step.
+/// Increases runtime output volume by one UI step.
 void volumeUp();
 /// Toggles mute while preserving the configured volume level.
 void toggleMute();

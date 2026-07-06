@@ -4,17 +4,15 @@
 #include "fs/providers/resonatto/remidi.h"
 #include "fs/providers/resonatto/remidi_synth.h"
 #include "sys/audio_playback_renderer.h"
+#include "sys/device_controls.h"
 #include "ui/components/audio_player_component.h"
 
 #include <Arduino.h>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace {
 
-static const uint8_t kVolumeStep = 5;
-static const uint8_t kDefaultVolume = 40;
 static const uint16_t kPathCapacity = 288;
 static const uint32_t kPlaybackSampleRate = 16000;
 static const unsigned long kProgressRedrawMs = 5000;
@@ -28,7 +26,6 @@ struct MidiViewerState {
   bool playing = false;
   AudioPlayerAction pressedAction = AudioPlayerAction::None;
   unsigned long pressedUntil = 0;
-  uint8_t volumePercent = kDefaultVolume;
   uint32_t positionMs = 0;
   unsigned long nextProgressRedrawMs = 0;
   RemidiSynth synth;
@@ -80,20 +77,6 @@ int readFileByte(void *user) {
   return file != nullptr ? file->read() : -1;
 }
 
-uint8_t rendererVolumeForUi(uint8_t uiVolume) {
-  if (uiVolume == 0) {
-    return 0;
-  }
-  if (uiVolume >= 100) {
-    return 100;
-  }
-
-  const float normalized = static_cast<float>(uiVolume) / 100.0f;
-  const int mapped =
-      static_cast<int>(powf(normalized, 2.5129f) * 100.0f + 0.5f);
-  return static_cast<uint8_t>(mapped < 1 ? 1 : mapped);
-}
-
 void stopPlayback(MidiViewerState &state) {
   state.renderer.stop();
   state.playing = false;
@@ -137,7 +120,7 @@ bool startPlayback(MidiViewerState &state) {
   AudioPlaybackConfig config;
   config.sampleRate = kPlaybackSampleRate;
   config.chunkFrames = 256;
-  config.volumePercent = rendererVolumeForUi(state.volumePercent);
+  config.volumePercent = 100;
 
   char error[32];
   if (!state.renderer.begin(stream, config, error, sizeof(error))) {
@@ -197,7 +180,6 @@ bool ensureState(const char *providerId, const char *path) {
   copyText(state.path, sizeof(state.path), path);
   state.sequence = sequence;
   state.loaded = true;
-  state.volumePercent = kDefaultVolume;
   return true;
 }
 
@@ -243,12 +225,14 @@ void drawMidiViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
   }
 
   AudioPlayerState playerState;
+  const DeviceControlSnapshot controls = deviceControlsSnapshot();
   playerState.title = runtime.title;
   playerState.subtitle = subtitle;
   playerState.detail = detail;
   playerState.playing = state.playing;
   playerState.pressedAction = state.pressedAction;
-  playerState.volumePercent = state.volumePercent;
+  playerState.volumePercent = controls.volume;
+  playerState.muted = controls.muted;
   playerState.positionMs = state.positionMs;
   playerState.durationMs = state.sequence.info.durationMs;
   playerComponent().draw(gfx, playerState, runtime.fullscreen);
@@ -271,15 +255,10 @@ bool touchMidiViewer(FileViewerRuntime &runtime, const TouchPoint &point) {
   case AudioPlayerAction::TogglePlayPause:
     return togglePlayback(runtime, state);
   case AudioPlayerAction::VolumeDown:
-    state.volumePercent =
-        state.volumePercent > kVolumeStep ? state.volumePercent - kVolumeStep : 0;
-    state.renderer.setVolumePercent(rendererVolumeForUi(state.volumePercent));
+    volumeDown();
     return true;
   case AudioPlayerAction::VolumeUp:
-    state.volumePercent = state.volumePercent + kVolumeStep < 100
-                              ? state.volumePercent + kVolumeStep
-                              : 100;
-    state.renderer.setVolumePercent(rendererVolumeForUi(state.volumePercent));
+    volumeUp();
     return true;
   case AudioPlayerAction::Seek: {
     state.positionMs = static_cast<uint32_t>((static_cast<uint64_t>(

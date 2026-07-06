@@ -5,7 +5,7 @@
 #include <Bounce2.h>
 #include <functional>
 
-/// Debounces one hardware button and emits click and long-press callbacks.
+/// Debounces one hardware button and emits single-click, double-click, long-press, and activity callbacks.
 class HwButton {
 public:
   HwButton(uint8_t pin, bool activeLow = true);

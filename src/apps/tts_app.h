@@ -57,7 +57,6 @@ private:
   tts::SynthesisResult lastResult;
   AudioPlaybackRenderer renderer;
   size_t playbackCursor = 0;
-  uint8_t volumePercent = 85;
   UiPressFeedback press;
 
   T9KeyboardComponent inputKeyboard;

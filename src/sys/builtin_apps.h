@@ -16,24 +16,19 @@ struct AppCatalogEntry {
   char icon[2];
 };
 
-/// Returns the runtime adapter for the contacts app.
-ActiveApp *contactLinksRuntime();
-/// Returns the launcher definition for the contacts app.
-const AppDefinition *contactLinksDefinition();
 /// Counts visible apps in one menu category after visibility filters are applied.
 size_t appCatalogCount(MenuCategory category);
-/// Copies the visible app at a menu-category index into out.
-bool appCatalogAtVisibleIndex(MenuCategory category, size_t index,
-                              AppCatalogEntry &out);
-/// Looks up an app by stable id across built-in and external app catalogs.
+/// Looks up the app shown in a launcher slot and writes it into `out`; returns false if no app exists there.
+bool tryGetVisibleAppAtIndex(MenuCategory category, size_t index,
+                             AppCatalogEntry &out);
+/// Looks up an app by stable id across built-in and external app catalogs, even
+/// when the app is hidden from the launcher because it is the quick-access app.
 bool findAppById(const char *id, AppCatalogEntry &out);
 /// Rebuilds cached catalog state after config, storage, or external apps change.
 void refreshAppCatalog();
-/// Consumes a pending file-manager request to launch a .pink executable.
-bool consumeFilesPinkLaunch(char *path, size_t pathSize);
+/// Takes the pending .pink executable launch path from the files app.
+bool takePendingPinkExecLaunchPath(char *path, size_t pathSize);
 /// Resets all app-owned runtime state.
 void resetApps();
-/// Resets only the contacts app runtime state.
-void resetContactLinks();
 
 #endif

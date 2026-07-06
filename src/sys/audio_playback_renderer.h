@@ -19,7 +19,7 @@ struct AudioPlaybackConfig {
   uint32_t sampleRate = 16000;
   /// Number of stereo frames written per renderer chunk.
   size_t chunkFrames = 512;
-  /// Output gain from 0 to 100 before device-control mute is applied.
+  /// Source gain from 0 to 100 before device output volume and mute are applied.
   uint8_t volumePercent = 80;
 };
 

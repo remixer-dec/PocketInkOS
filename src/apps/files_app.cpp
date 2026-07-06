@@ -1811,7 +1811,7 @@ bool FilesApp::update() {
                              pdfViewerPageCount(providerId, viewerPath) == 0);
     bool finished = false;
     if (!cacheReady || pdfViewerLoading(providerId, viewerPath)) {
-      ScopedInactivitySleepGuard sleepGuard;
+      LockscreenGuard sleepGuard;
       finished = pdfViewerContinueLoading(providerId, viewerPath,
                                           kPdfBackgroundIndexBudgetUs);
     }
@@ -1844,7 +1844,7 @@ bool FilesApp::update() {
       inactivitySleepKeepAwake();
     }
     if (wasLoading) {
-      ScopedInactivitySleepGuard sleepGuard;
+      LockscreenGuard sleepGuard;
       const bool stillActive = epubViewerContinueLoading(
           providerId, viewerPath, kEpubBackgroundIndexBudgetUs);
       const bool loading = epubViewerLoading(providerId, viewerPath);
@@ -1866,7 +1866,7 @@ bool FilesApp::update() {
       return false;
     }
     if (imageLoading) {
-      ScopedInactivitySleepGuard sleepGuard;
+      LockscreenGuard sleepGuard;
       epubViewerContinueImage(providerId, viewerPath, viewerOffset);
       markDirtyRegion(0, 0, 200, 200);
       return true;

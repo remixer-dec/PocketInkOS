@@ -26,6 +26,7 @@ struct AudioPlayerState {
   bool playing = false;
   AudioPlayerAction pressedAction = AudioPlayerAction::None;
   uint8_t volumePercent = 80;
+  bool muted = false;
   uint32_t positionMs = 0;
   uint32_t durationMs = 0;
 };

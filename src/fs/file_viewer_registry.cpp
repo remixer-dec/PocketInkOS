@@ -1,4 +1,5 @@
 #include "fs/file_viewer_registry.h"
+#include "fs/providers/audio_file_viewer.h"
 #include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/hex_file_viewer.h"
 #include "fs/providers/midi_file_viewer.h"
@@ -68,6 +69,7 @@ bool extensionMatches(const FileViewerExtension &viewer, const char *extension,
 }
 
 const FileViewerExtension *const VIEWERS[] = {
+    &AUDIO_FILE_VIEWER,
     &MIDI_FILE_VIEWER,
     &IMAGE_FILE_VIEWER,
     &SVG_FILE_VIEWER,

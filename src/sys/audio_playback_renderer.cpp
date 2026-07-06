@@ -1,6 +1,7 @@
 #include "sys/audio_playback_renderer.h"
 
 #include "sys/audio_power.h"
+#include "sys/device_controls.h"
 #include "sys/touch_input.h"
 
 #include <Arduino.h>
@@ -22,7 +23,7 @@ constexpr int kWsPin = 38;
 constexpr int kDataOutPin = 45;
 constexpr unsigned long kCodecPowerDelayMs = 50;
 constexpr unsigned long kAmpEnableDelayMs = 60;
-constexpr uint32_t kPlaybackTaskStackWords = 4096;
+constexpr uint32_t kPlaybackTaskStackBytes = 8192;
 constexpr UBaseType_t kPlaybackTaskPriority = 1;
 constexpr BaseType_t kPlaybackTaskCore = 1;
 constexpr unsigned long kTaskStopTimeoutMs = 300;
@@ -138,7 +139,7 @@ bool AudioPlaybackRenderer::begin(const AudioPlaybackStream &stream,
   playbackActive = true;
   taskRunning = true;
   TaskHandle_t createdTask = NULL;
-  if (xTaskCreatePinnedToCore(taskEntry, "audio-play", kPlaybackTaskStackWords,
+  if (xTaskCreatePinnedToCore(taskEntry, "audio-play", kPlaybackTaskStackBytes,
                               this, kPlaybackTaskPriority, &createdTask,
                               kPlaybackTaskCore) != pdPASS) {
     taskRunning = false;
@@ -172,7 +173,8 @@ bool AudioPlaybackRenderer::writeChunk(char *error, int errorSize) {
     return true;
   }
 
-  const uint32_t volume = playbackConfig.volumePercent;
+  const uint32_t volume =
+      deviceEffectiveOutputVolumePercent(playbackConfig.volumePercent);
   const size_t sampleCount = frames * 2U;
   uint16_t peak = 0;
   if (volume < 100U) {

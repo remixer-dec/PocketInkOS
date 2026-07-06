@@ -99,7 +99,8 @@ private:
   T &app;
 };
 
-/// Adapts an app object that only draws and manages its own session state.
+/// Adapts an app object that draws itself and exposes session state, while
+/// handling input through its own app-specific path instead of ActiveApp.
 template <typename T>
 class TouchlessAppScreen : public ActiveApp {
 public:
@@ -113,9 +114,10 @@ private:
   T &app;
 };
 
-/// Runs a parameterless app hook such as onEnter, onExit, launch, or reset.
+/// Pointer to a parameterless app hook such as onEnter, onExit, launch, or reset.
 typedef void (*AppCallback)();
-/// Reports whether an app should appear in the launcher.
+/// Reports whether an app should appear in the launcher, such as when the
+/// Files app is only available while an SD card is mounted.
 typedef bool (*AppVisibleHandler)();
 /// Handles a button event such as onMenu or onPowerLong and returns an AppEventResult like GoHome or Reboot.
 typedef AppEventResult (*AppEventHandler)();
