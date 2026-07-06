@@ -12,7 +12,7 @@
 #include "sys/environment_monitor.h"
 #include "sys/global.h"
 #include "sys/heap_debug.h"
-#include "sys/inactivity_sleep_guard.h"
+#include "sys/lockscreen_guard.h"
 #include "sys/power_control.h"
 #include "sys/pcf85063_clock.h"
 #include "sys/pink_executable.h"

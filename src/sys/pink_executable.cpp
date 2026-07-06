@@ -3,7 +3,7 @@
 #include "fs/file_provider.h"
 #include "sys/system_config.h"
 #include "sys/global.h"
-#include "sys/inactivity_sleep_guard.h"
+#include "sys/lockscreen_guard.h"
 #include "sys/sd_storage.h"
 #include "ui/icon_ascii_font.h"
 #include <Arduino.h>
@@ -388,21 +388,21 @@ void hostKeepAwake() { inactivitySleepKeepAwake(); }
 void hostDeepSleepPreventAcquire() {
   if (pinkSleepGuardDepth < 255U) {
     pinkSleepGuardDepth++;
-    inactivitySleepGuardAcquire();
+    lockscreenGuardAcquire();
   }
 }
 
 void hostDeepSleepPreventRelease() {
   if (pinkSleepGuardDepth > 0U) {
     pinkSleepGuardDepth--;
-    inactivitySleepGuardRelease();
+    lockscreenGuardRelease();
   }
 }
 
 void releasePinkSleepGuards() {
   while (pinkSleepGuardDepth > 0U) {
     pinkSleepGuardDepth--;
-    inactivitySleepGuardRelease();
+    lockscreenGuardRelease();
   }
 }
 

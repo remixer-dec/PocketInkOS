@@ -8,22 +8,27 @@
 /// Debounces one hardware button and emits single-click, double-click, long-press, and activity callbacks.
 class HwButton {
 public:
+  /// Creates a button wrapper for a GPIO pin.
   HwButton(uint8_t pin, bool activeLow = true);
 
-  // Initialization to be called in setup()
+  /// Initializes GPIO and debounce state.
   void begin();
 
-  // The update loop to be called in loop()
+  /// Polls the button and emits pending callbacks.
   void update();
 
-  // Callback setters
+  /// Registers a callback for a completed single click.
   void attachSingleClick(std::function<void()> callback);
+  /// Registers a callback for a completed double click.
   void attachDoubleClick(std::function<void()> callback);
+  /// Registers a callback fired when long press begins.
   void attachLongPressStart(std::function<void()> callback);
+  /// Registers a callback fired for any button activity.
   void attachActivity(std::function<void()> callback);
 
-  // Configuration settings
+  /// Sets the long-press threshold in milliseconds.
   void setLongPressMs(uint16_t ms);
+  /// Sets the maximum gap for double-click detection in milliseconds.
   void setDoubleClickMs(uint16_t ms);
 
 private:

@@ -6,6 +6,7 @@
 
 struct TouchPoint;
 
+/// Touch actions emitted by the audio player component.
 enum class AudioPlayerAction : uint8_t {
   None,
   TogglePlayPause,
@@ -14,11 +15,13 @@ enum class AudioPlayerAction : uint8_t {
   Seek,
 };
 
+/// Result of hit-testing the audio player component.
 struct AudioPlayerEvent {
   AudioPlayerAction action = AudioPlayerAction::None;
   uint16_t seekPermille = 0;
 };
 
+/// Render state for the audio player component.
 struct AudioPlayerState {
   const char *title = nullptr;
   const char *subtitle = nullptr;
@@ -31,10 +34,13 @@ struct AudioPlayerState {
   uint32_t durationMs = 0;
 };
 
+/// Draws and hit-tests the compact/fullscreen audio playback controls.
 class AudioPlayerComponent {
 public:
+  /// Draws the player in compact or fullscreen layout.
   void draw(Adafruit_GFX &gfx, const AudioPlayerState &state,
             bool fullscreen) const;
+  /// Maps a touch point to a player action.
   AudioPlayerEvent hitTest(const TouchPoint &point, bool fullscreen,
                            uint32_t durationMs) const;
 };

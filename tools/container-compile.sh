@@ -127,7 +127,7 @@ FILES=( \
   "$ROOT/src/sys/device_controls.cpp" \
   "$ROOT/src/sys/device_clock.cpp" \
   "$ROOT/src/sys/environment_monitor.cpp" \
-  "$ROOT/src/sys/inactivity_sleep_guard.cpp" \
+  "$ROOT/src/sys/lockscreen_guard.cpp" \
   "$ROOT/src/sys/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
   "$ROOT/src/sys/power_control.cpp" \

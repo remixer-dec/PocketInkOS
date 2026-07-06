@@ -1,4 +1,4 @@
-#include "sys/inactivity_sleep_guard.h"
+#include "sys/lockscreen_guard.h"
 
 #include <Arduino.h>
 
@@ -9,14 +9,14 @@ unsigned long lastKeepAwakeMs = 0;
 
 } // namespace
 
-void inactivitySleepGuardAcquire() {
+void lockscreenGuardAcquire() {
   if (sleepGuardDepth < 255U) {
     sleepGuardDepth++;
   }
   inactivitySleepKeepAwake();
 }
 
-void inactivitySleepGuardRelease() {
+void lockscreenGuardRelease() {
   if (sleepGuardDepth > 0U) {
     sleepGuardDepth--;
   }

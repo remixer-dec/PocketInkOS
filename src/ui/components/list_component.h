@@ -4,27 +4,32 @@
 #include "sys/touch_input.h"
 #include <stdint.h>
 
+/// Touch navigation behavior for compact list controls.
 enum class UiListNavMode : uint8_t {
   Scroll,
   Select,
   Split,
 };
 
+/// Result action from list hit testing.
 enum class UiListTouchAction : uint8_t {
   None,
   Scroll,
   Select,
 };
 
+/// List hit-test result.
 struct UiListTouchResult {
   UiListTouchAction action = UiListTouchAction::None;
   uint16_t index = 0;
 };
 
+/// Returns the largest valid scroll offset for a list.
 inline uint16_t uiListMaxOffset(uint16_t itemCount, uint8_t visibleCount) {
   return itemCount > visibleCount ? itemCount - visibleCount : 0;
 }
 
+/// Clamps a list scroll offset in place.
 inline void uiListClampOffset(uint16_t &offset, uint16_t itemCount,
                               uint8_t visibleCount) {
   const uint16_t maxOffset = uiListMaxOffset(itemCount, visibleCount);
@@ -33,6 +38,7 @@ inline void uiListClampOffset(uint16_t &offset, uint16_t itemCount,
   }
 }
 
+/// Scrolls a list offset by a signed row delta.
 inline bool uiListScrollBy(uint16_t &offset, uint16_t itemCount,
                            uint8_t visibleCount, int8_t delta) {
   const uint16_t previous = offset;
@@ -48,6 +54,7 @@ inline bool uiListScrollBy(uint16_t &offset, uint16_t itemCount,
   return offset != previous;
 }
 
+/// Maps a touch point to scroll or select behavior for a simple list.
 inline UiListTouchResult
 uiListHandleTouch(const TouchPoint &point, uint16_t itemCount,
                   uint8_t visibleCount, int16_t listY, int16_t rowHeight,

@@ -398,7 +398,6 @@ bool ShellController::handleQuitDialogTouch(const TouchPoint &point) {
 QuickSettingsActions ShellController::quickSettingsActions() {
   QuickSettingsActions actions;
   actions.context = this;
-  actions.showActionFeedback = showQuickSettingsActionFeedbackThunk;
   actions.renderPowerOff = renderPowerOffScreenThunk;
   actions.prepareForPowerTransition = prepareForPowerTransitionThunk;
   actions.saveRetainedContext = saveRetainedContextThunk;
@@ -407,11 +406,13 @@ QuickSettingsActions ShellController::quickSettingsActions() {
 }
 
 bool ShellController::handleQuickSettingsTouch(const TouchPoint &point) {
-  const bool handled = quickSettings.handleTouch(point, quickSettingsActions());
-  if (handled) {
-    dirty = true;
+  const PowerDialogAction action = quickSettings.handleTouch(point);
+  if (action != PowerDialogAction::None) {
+    showQuickSettingsActionFeedback(action);
+    quickSettings.runAction(action, quickSettingsActions());
   }
-  return handled;
+  dirty = true;
+  return true;
 }
 
 void ShellController::drawMenu() {
@@ -684,12 +685,6 @@ void ShellController::renderPowerOffScreen() {
   if (hooks.renderPowerOffScreen != nullptr) {
     hooks.renderPowerOffScreen(hooks.context);
   }
-}
-
-void ShellController::showQuickSettingsActionFeedbackThunk(
-    void *context, PowerDialogAction action) {
-  static_cast<ShellController *>(context)->showQuickSettingsActionFeedback(
-      action);
 }
 
 void ShellController::prepareForPowerTransitionThunk(void *context) {

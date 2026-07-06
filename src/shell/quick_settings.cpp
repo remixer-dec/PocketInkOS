@@ -27,32 +27,48 @@ PowerDialogSnapshot QuickSettingsController::snapshot() const {
   return result;
 }
 
-bool QuickSettingsController::handleTouch(const TouchPoint &point,
-                                          const QuickSettingsActions &actions) {
+PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) {
   if (!openFlag) {
-    return false;
+    return PowerDialogAction::None;
   }
   if (millis() - openedAt < 350) {
-    return true;
+    return PowerDialogAction::None;
   }
 
   const PowerDialogAction action = powerDialogHitAction(point, page);
   switch (action) {
   case PowerDialogAction::PreviousPage:
     page = previousPage();
-    return true;
+    return PowerDialogAction::None;
   case PowerDialogAction::NextPage:
     page = nextPage();
-    return true;
+    return PowerDialogAction::None;
+  case PowerDialogAction::None:
+    return PowerDialogAction::None;
   case PowerDialogAction::Reboot:
-    showActionFeedback(actions, action);
+  case PowerDialogAction::PowerOff:
+  case PowerDialogAction::DeepSleep:
+  case PowerDialogAction::WifiToggle:
+  case PowerDialogAction::BluetoothToggle:
+  case PowerDialogAction::CpuCycle:
+  case PowerDialogAction::VolumeDown:
+  case PowerDialogAction::VolumeMute:
+  case PowerDialogAction::VolumeUp:
+    return action;
+  }
+  return PowerDialogAction::None;
+}
+
+void QuickSettingsController::runAction(
+    PowerDialogAction action, const QuickSettingsActions &actions) const {
+  switch (action) {
+  case PowerDialogAction::Reboot:
     if (actions.prepareForPowerTransition != nullptr) {
       actions.prepareForPowerTransition(actions.context);
     }
     rebootDevice();
-    return true;
+    return;
   case PowerDialogAction::PowerOff:
-    showActionFeedback(actions, action);
     if (actions.renderPowerOff != nullptr) {
       actions.renderPowerOff(actions.context);
     }
@@ -60,50 +76,37 @@ bool QuickSettingsController::handleTouch(const TouchPoint &point,
       actions.prepareForPowerTransition(actions.context);
     }
     powerOffDevice();
-    return true;
+    return;
   case PowerDialogAction::DeepSleep:
     if (actions.saveRetainedContext != nullptr) {
       actions.saveRetainedContext(actions.context);
     }
-    showActionFeedback(actions, action);
     if (actions.enterSleepClock != nullptr) {
       actions.enterSleepClock(actions.context);
     }
-    return true;
+    return;
   case PowerDialogAction::WifiToggle:
-    showActionFeedback(actions, action);
     wifiToggle();
-    return true;
+    return;
   case PowerDialogAction::BluetoothToggle:
-    showActionFeedback(actions, action);
     toggleBluetooth();
-    return true;
+    return;
   case PowerDialogAction::CpuCycle:
-    showActionFeedback(actions, action);
     cycleCpuFrequency();
-    return true;
+    return;
   case PowerDialogAction::VolumeDown:
-    showActionFeedback(actions, action);
     volumeDown();
-    return true;
+    return;
   case PowerDialogAction::VolumeMute:
-    showActionFeedback(actions, action);
     toggleMute();
-    return true;
+    return;
   case PowerDialogAction::VolumeUp:
-    showActionFeedback(actions, action);
     volumeUp();
-    return true;
+    return;
+  case PowerDialogAction::PreviousPage:
+  case PowerDialogAction::NextPage:
   case PowerDialogAction::None:
-    return true;
-  }
-  return true;
-}
-
-void QuickSettingsController::showActionFeedback(
-    const QuickSettingsActions &actions, PowerDialogAction action) const {
-  if (actions.showActionFeedback != nullptr) {
-    actions.showActionFeedback(actions.context, action);
+    return;
   }
 }
 

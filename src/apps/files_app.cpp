@@ -3,7 +3,7 @@
 #include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
-#include "sys/inactivity_sleep_guard.h"
+#include "sys/lockscreen_guard.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
 
@@ -103,9 +103,9 @@ void filesViewerKeepAwake(void *) { inactivitySleepKeepAwake(); }
 
 void filesViewerSleepGuard(void *, bool active) {
   if (active) {
-    inactivitySleepGuardAcquire();
+    lockscreenGuardAcquire();
   } else {
-    inactivitySleepGuardRelease();
+    lockscreenGuardRelease();
   }
 }
 

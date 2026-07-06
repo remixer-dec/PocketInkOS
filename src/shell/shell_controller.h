@@ -9,6 +9,11 @@
 #include "ui/shell_layout.h"
 #include "ui/text_input_controller.h"
 
+/// Hooks from the sketch runtime into ShellController.
+///
+/// These keep platform-level behaviors, such as power transitions and home data
+/// refresh, outside the controller while still allowing the shell to coordinate
+/// them from button and quick-settings flows.
 struct ShellControllerHooks {
   void *context = nullptr;
   void (*refreshHome)(void *context) = nullptr;
@@ -18,37 +23,64 @@ struct ShellControllerHooks {
   void (*renderPowerOffScreen)(void *context) = nullptr;
 };
 
+/// Main coordinator for the firmware shell.
+///
+/// The sketch owns hardware services, then calls this controller for button
+/// events, touch dispatch, active app updates, retained context, and redraws.
+/// This keeps screen routing and app lifecycle in one place.
 class ShellController {
 public:
+  /// Binds shell coordination to the shared display, touch, and text services.
   ShellController(AppDisplay &display, TouchInput &touch,
                   TextInputController &textInput);
 
+  /// Installs runtime hooks used for power transitions and home refreshes.
   void setHooks(const ShellControllerHooks &hooks);
 
+  /// Exposes the active screen for code that must branch outside the controller.
   Screen currentScreen() const;
+  /// Lets the main loop redraw the status area when battery cadence requires it.
   bool shouldRedrawForBatteryRefresh() const;
+  /// Applies shell layout/config policy to the default inactivity timeout.
   unsigned long inactivityDeepSleepMs(unsigned long defaultMs) const;
 
+  /// Schedules a redraw after external state changes.
   void markDirty();
+  /// Repairs the current menu cursor after catalog/category changes.
   void clampMenu();
+  /// Central transition point for screen changes and app activation.
   void switchTo(Screen next, ActiveApp *nextApp = nullptr,
                 const AppDefinition *nextDefinition = nullptr);
 
+  /// Routes a single menu-button press through dialog, app, and menu behavior.
   void handleMenuButton();
+  /// Routes a double menu-button press through active app or shell defaults.
   void handleMenuDoubleButton();
+  /// Routes a long menu-button press through active app or shell defaults.
   void handleMenuLongButton();
+  /// Routes a single power-button press through app overrides or shell actions.
   void handlePowerSingleButton();
+  /// Routes a double power-button press through app overrides or shell actions.
   void handlePowerDoubleButton();
+  /// Opens quick settings or delegates long power press to the active app.
   void handlePowerLongButton();
 
+  /// Pulls pending touch input and routes it to the visible screen.
   bool dispatchTouch();
+  /// Gives the active app a loop tick and applies its event result.
   bool updateActiveApp();
+  /// Bridges file-manager .pink launch requests into app activation.
   bool handlePendingFilesPinkLaunch();
+  /// Revalidates active/menu state after built-in or .pink catalog changes.
   void handleCatalogChanged();
+  /// Updates the home clock without forcing redraws every loop iteration.
   void refreshHomeMinuteIfNeeded();
+  /// Performs the pending full or partial render work.
   void renderIfDirty();
 
+  /// Captures resumable shell state before deep sleep.
   void saveRetainedContextForSleep();
+  /// Restores resumable shell state after wake.
   void restoreRetainedContextAfterSleep();
 
 private:
@@ -109,8 +141,6 @@ private:
   void enterSleepClockDeepSleep();
   void renderPowerOffScreen();
 
-  static void showQuickSettingsActionFeedbackThunk(void *context,
-                                                   PowerDialogAction action);
   static void prepareForPowerTransitionThunk(void *context);
   static void enterSleepClockDeepSleepThunk(void *context);
   static void renderPowerOffScreenThunk(void *context);

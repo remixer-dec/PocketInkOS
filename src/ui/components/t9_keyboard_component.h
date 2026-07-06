@@ -4,18 +4,29 @@
 #include "ui/components/keyboard_component.h"
 #include <Adafruit_GFX.h>
 
+/// Draws and hit-tests a phone-style T9 keyboard.
 class T9KeyboardComponent {
 public:
+  /// Available T9 keyboard layouts.
   enum class Layout : uint8_t { Text, Numbers };
 
+  /// Draws the T9 keyboard for String-backed input.
   void draw(Adafruit_GFX &gfx, const String &text);
+  /// Draws the T9 keyboard with a maximum String length.
   void draw(Adafruit_GFX &gfx, const String &text, int maxLength);
+  /// Draws the T9 keyboard for char-buffer input.
   void draw(Adafruit_GFX &gfx, const char *text, int maxLength);
+  /// Handles touch input for String-backed text.
   KeyboardEvent hitTest(const TouchPoint &point, String &text);
+  /// Handles touch input for String-backed text with length limiting.
   KeyboardEvent hitTest(const TouchPoint &point, String &text, int maxLength);
+  /// Handles touch input for char-buffer text.
   KeyboardEvent hitTest(const TouchPoint &point, char *text, int capacity);
+  /// Switches between text and numeric layouts.
   void setLayout(Layout nextLayout);
+  /// Expires pending multi-tap state and returns true when redraw is needed.
   bool update();
+  /// Toggles letter casing.
   void toggleCaps();
 
 private:

@@ -6,36 +6,54 @@
 #include <Adafruit_GFX.h>
 #include <stdint.h>
 
+/// Calendar date selected by the date picker.
 struct DatePickerDate {
   int year = 1970;
   int month = 1;
   int day = 1;
 };
 
+/// Clock time selected by the time picker.
 struct TimePickerTime {
   uint8_t hour = 0;
   uint8_t minute = 0;
 };
 
+/// Draws and edits a small date picker with optional time selection.
 class DateTimePickerComponent {
 public:
+  /// Resets the picker to a selected date.
   void reset(const DatePickerDate &date);
+  /// Sets today's date and whether it should be highlighted.
   void setToday(const DatePickerDate &date, bool available);
+  /// Sets the selected time.
   void setTime(const TimePickerTime &time);
+  /// Enables or hides time selection controls.
   void setTimePickerEnabled(bool enabled);
 
+  /// Draws the picker.
   void draw(Adafruit_GFX &gfx);
+  /// Handles touch input and returns true when state changed.
   bool handleTouch(const TouchPoint &point);
+  /// Advances transient UI state and returns true when redraw is needed.
   bool update();
 
+  /// Returns the selected date.
   DatePickerDate selectedDate() const;
+  /// Returns the selected time.
   TimePickerTime selectedTime() const;
+  /// Returns true when time selection is enabled.
   bool timePickerEnabled() const;
 
+  /// Returns the number of days in a month.
   static int daysInMonth(int year, int month);
+  /// Returns weekday index for a Gregorian date.
   static int weekdayForDate(int year, int month, int day);
+  /// Converts days since Unix epoch to a date.
   static DatePickerDate dateFromUnixDays(int days);
+  /// Returns a short month label.
   static const char *monthName(int month);
+  /// Returns a short weekday label.
   static const char *weekdayName(int weekday);
 
 private:

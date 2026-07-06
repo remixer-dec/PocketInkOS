@@ -17,6 +17,7 @@ const sectionIndexOpenTargets = new Set();
 let apiLookupState = null;
 let apiLookupBubble = null;
 let referenceModeState = null;
+let clickedApiSymbolHref = "";
 
 function docsUrl(href) {
   if (!hasStaticShell) return null;
@@ -74,6 +75,22 @@ function storedTheme() {
 function saveTheme(theme) {
   try {
     localStorage.setItem("docs-theme", theme);
+  } catch {
+    // Storage can be unavailable in private or restricted contexts.
+  }
+}
+
+function storedReferenceMode() {
+  try {
+    return localStorage.getItem("docs-reference-mode") === "one" ? "one" : "all";
+  } catch {
+    return "all";
+  }
+}
+
+function saveReferenceMode(mode) {
+  try {
+    localStorage.setItem("docs-reference-mode", mode === "one" ? "one" : "all");
   } catch {
     // Storage can be unavailable in private or restricted contexts.
   }
@@ -209,6 +226,9 @@ function setSectionIndexActive(href, syncHash = false) {
   if (sectionIndexState.activeHref === href && !syncHash) return;
 
   sectionIndexState.activeHref = href || "";
+  if (clickedApiSymbolHref && clickedApiSymbolHref !== href) {
+    setClickedApiSymbol("");
+  }
   const activeTarget = href ? document.getElementById(decodeURIComponent(href.slice(1))) : null;
   const activeGroup = activeTarget?.closest?.("[data-api-group]");
   const activeChildGroup = activeTarget?.querySelector?.("[data-api-group]");
@@ -248,9 +268,12 @@ function findActiveSectionHref() {
   if (!sectionIndexState || !sectionIndexState.entries.length) return "";
 
   const threshold = Math.min(window.innerHeight * 0.24, 160);
-  let active = sectionIndexState.entries[0];
+  const visibleEntries = sectionIndexState.entries.filter(
+    (entry) => !entry.target.closest("[hidden]"),
+  );
+  let active = visibleEntries[0];
 
-  for (const entry of sectionIndexState.entries) {
+  for (const entry of visibleEntries) {
     const rect = entry.target.getBoundingClientRect();
     if (rect.top <= threshold) {
       active = entry;
@@ -262,6 +285,18 @@ function findActiveSectionHref() {
   }
 
   return active?.href || "";
+}
+
+function setClickedApiSymbol(href) {
+  const nextHref = href || "";
+  if (clickedApiSymbolHref === nextHref) return;
+
+  if (clickedApiSymbolHref) {
+    targetForHash(clickedApiSymbolHref)?.classList.remove("symbol-click-highlight");
+  }
+
+  clickedApiSymbolHref = nextHref;
+  targetForHash(clickedApiSymbolHref)?.classList.add("symbol-click-highlight");
 }
 
 function syncSectionIndexFromScroll() {
@@ -437,7 +472,7 @@ function setReferenceSymbolIndexActive(groupHref) {
   renderReferencePager();
 }
 
-function applyReferenceMode(mode, targetHref = "") {
+function applyReferenceMode(mode, targetHref = "", persist = true) {
   if (!referenceModeState) return;
 
   const nextMode = mode === "one" ? "one" : "all";
@@ -448,6 +483,7 @@ function applyReferenceMode(mode, targetHref = "") {
 
   referenceModeState.mode = nextMode;
   referenceModeState.activeGroupHref = nextGroupHref;
+  if (persist) saveReferenceMode(nextMode);
 
   const shell = document.querySelector("[data-static-docs]");
   if (shell) {
@@ -481,7 +517,7 @@ function applyReferenceMode(mode, targetHref = "") {
 function setupReferenceMode() {
   referenceModeState = collectReferenceModeState();
   if (!referenceModeState) return;
-  applyReferenceMode("all", window.location.hash);
+  applyReferenceMode(storedReferenceMode(), window.location.hash, false);
 }
 
 function ensureApiLookupBubble() {
@@ -817,6 +853,10 @@ if (hasStaticShell) {
     if (!link) return;
 
     const href = link.getAttribute("href");
+    if (link.closest(".symbol-index")) {
+      setClickedApiSymbol(href);
+    }
+
     if (href) {
       lockSectionIndexScrollSync(href);
       setSectionIndexActive(href, false);
@@ -844,16 +884,11 @@ if (hasStaticShell) {
 
     event.preventDefault();
     const href = link.getAttribute("href");
+    const targetHref = resolveReferenceTargetHref(href);
+    lockSectionIndexScrollSync(targetHref || href);
     applyReferenceMode("one", href);
     setupSectionIndex();
-    const target = href ? document.querySelector(href) : null;
-    if (target) {
-      target.scrollIntoView({ block: "start" });
-      const url = new URL(window.location.href);
-      url.hash = target.id;
-      window.history.pushState(null, "", url.href);
-      setSectionIndexActive(`#${target.id}`, false);
-    }
+    jumpToHashTarget(targetForHash(href) ? href : targetHref);
   });
 
   document.addEventListener("click", (event) => {
@@ -908,6 +943,9 @@ if (hasStaticShell) {
   document.addEventListener("click", (event) => {
     if (event.target.closest(".api-signature code")) {
       return;
+    }
+    if (!event.target.closest(".symbol-index")) {
+      setClickedApiSymbol("");
     }
     hideApiLookup();
   });

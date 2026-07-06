@@ -1,12 +1,12 @@
-#ifndef INACTIVITY_SLEEP_GUARD_H
-#define INACTIVITY_SLEEP_GUARD_H
+#ifndef LOCKSCREEN_GUARD_H
+#define LOCKSCREEN_GUARD_H
 
 #include <stdint.h>
 
 /// Adds one active hold that prevents inactivity-triggered sleep.
-void inactivitySleepGuardAcquire();
+void lockscreenGuardAcquire();
 /// Releases one inactivity-sleep hold.
-void inactivitySleepGuardRelease();
+void lockscreenGuardRelease();
 /// Resets the inactivity timer after user activity or foreground work.
 void inactivitySleepKeepAwake();
 /// Returns true when sleep is blocked by holds or recent keep-awake activity.
@@ -16,9 +16,9 @@ bool inactivitySleepBlocked(uint32_t graceMs = 0);
 class LockscreenGuard {
 public:
   /// Acquires one lockscreen hold.
-  LockscreenGuard() { inactivitySleepGuardAcquire(); }
+  LockscreenGuard() { lockscreenGuardAcquire(); }
   /// Releases the lockscreen hold acquired by the constructor.
-  ~LockscreenGuard() { inactivitySleepGuardRelease(); }
+  ~LockscreenGuard() { lockscreenGuardRelease(); }
 
   LockscreenGuard(const LockscreenGuard &) = delete;
   LockscreenGuard &operator=(const LockscreenGuard &) = delete;

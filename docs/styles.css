@@ -710,12 +710,29 @@ code {
 }
 
 .api-symbol strong {
-  display: block;
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
   margin-bottom: 8px;
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+.api-symbol strong::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  width: 0;
+  border-bottom: 2px solid currentColor;
+  transition: width 260ms ease;
+}
+
+.api-symbol.symbol-click-highlight strong::after {
+  width: 100%;
+}
+
 .paper-theme .api-symbol strong {
   text-transform: none;
   font-variant: small-caps;
@@ -819,11 +836,15 @@ code {
 .reference-file-card {
   display: grid;
   gap: 6px;
+  align-content: center;
+  min-height: 82px;
+  max-height: 82px;
   min-width: 0;
   border: 2px solid var(--line);
-  border-radius: 18px;
+  border-radius: 8px;
   background: var(--paper-strong);
   padding: 16px;
+  overflow: hidden;
   text-decoration: none;
 }
 
@@ -836,8 +857,13 @@ code {
 }
 
 .reference-file-card strong {
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 0.92rem;
   line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .reference-file-card.next {
