@@ -4,10 +4,14 @@
 
 static const uint16_t ZEBRA_FRAME_MS = 90;
 static const uint16_t NOISE_FRAME_MS = 120;
+static const uint16_t QUICK_FRAME_MS = 120;
+static const uint8_t QUICK_BLINK_STEPS = 10;
 static const uint8_t ZEBRA_ITERATIONS = 10;
 static const uint8_t NOISE_ITERATIONS = 20;
 
 void DeghostApp::reset() {
+  mode = MODE_SELECT;
+  pendingEvent = AppEventResult::Unhandled;
   running = false;
   finished = false;
   stepIndex = 0;
@@ -19,10 +23,14 @@ void DeghostApp::reset() {
 
 void DeghostApp::start(AppDisplay &targetDisplay) {
   display = &targetDisplay;
-  beginSequence();
+  if (display != nullptr) {
+    display->requestFullRefresh();
+  }
 }
 
-void DeghostApp::beginSequence() {
+void DeghostApp::beginSequence(Mode nextMode) {
+  mode = nextMode;
+  pendingEvent = AppEventResult::Unhandled;
   running = true;
   finished = false;
   stepIndex = 0;
@@ -39,6 +47,9 @@ void DeghostApp::advanceStep() {
   if (stepIndex + 1 >= stepCount()) {
     running = false;
     finished = true;
+    if (mode == MODE_QUICK) {
+      pendingEvent = AppEventResult::GoMenu;
+    }
     return;
   }
 
@@ -88,21 +99,54 @@ bool DeghostApp::update() {
 }
 
 bool DeghostApp::handleTouch(const TouchPoint &point) {
-  (void)point;
   if (running) {
     return false;
   }
-  beginSequence();
+  if (mode == MODE_SELECT) {
+    if (containsQuickButton(point)) {
+      beginSequence(MODE_QUICK);
+      return true;
+    }
+    if (containsSlowButton(point)) {
+      beginSequence(MODE_SLOW);
+      return true;
+    }
+    return false;
+  }
+  if (finished && mode == MODE_SLOW) {
+    beginSequence(MODE_SLOW);
+    return true;
+  }
+  mode = MODE_SELECT;
+  if (display != nullptr) {
+    display->requestFullRefresh();
+  }
   return true;
 }
 
+AppEventResult DeghostApp::handleBackButton() {
+  if (running) {
+    return AppEventResult::QuitRequested;
+  }
+  return AppEventResult::GoMenu;
+}
+
 bool DeghostApp::handlePowerButton() {
-  if (!running) {
-    beginSequence();
+  if (!running && finished && mode == MODE_SLOW) {
+    beginSequence(MODE_SLOW);
     return true;
   }
-  advanceStep();
-  return true;
+  if (running) {
+    advanceStep();
+    return true;
+  }
+  return false;
+}
+
+AppEventResult DeghostApp::consumePendingEvent() {
+  AppEventResult result = pendingEvent;
+  pendingEvent = AppEventResult::Unhandled;
+  return result;
 }
 
 bool DeghostApp::hasActiveSession() const { return running; }
@@ -113,32 +157,98 @@ void DeghostApp::draw(Adafruit_GFX &gfx) {
     return;
   }
 
-  gfx.fillScreen(0);
-  gfx.setTextColor(1);
-  gfx.setTextSize(2);
-  int16_t titleX;
-  int16_t titleY;
-  uint16_t titleW;
-  uint16_t titleH;
-  const char *title = "DEGHOST";
-  gfx.getTextBounds(title, 0, 0, &titleX, &titleY, &titleW, &titleH);
-  gfx.setCursor((EPD_WIDTH - static_cast<int>(titleW)) / 2 - titleX, 70);
-  gfx.print(title);
+  if (mode == MODE_SELECT) {
+    drawModeSelect(gfx);
+    return;
+  }
 
-  gfx.setTextSize(1);
-  const char *status = finished ? "Done. Tap to run again." : "Tap to start.";
-  int16_t statusX;
-  int16_t statusY;
-  uint16_t statusW;
-  uint16_t statusH;
-  gfx.getTextBounds(status, 0, 0, &statusX, &statusY, &statusW, &statusH);
-  gfx.setCursor((EPD_WIDTH - static_cast<int>(statusW)) / 2 - statusX, 104);
-  gfx.print(status);
+  drawFinished(gfx);
 }
 
-uint8_t DeghostApp::stepCount() const { return 14; }
+bool DeghostApp::containsQuickButton(const TouchPoint &point) const {
+  static const int16_t buttonW = 72;
+  static const int16_t buttonH = 42;
+  static const int16_t gap = 16;
+  static const int16_t y = 112;
+  const int16_t x = (EPD_WIDTH - buttonW * 2 - gap) / 2;
+  return point.x >= x && point.x < x + buttonW && point.y >= y &&
+         point.y < y + buttonH;
+}
+
+bool DeghostApp::containsSlowButton(const TouchPoint &point) const {
+  static const int16_t buttonW = 72;
+  static const int16_t buttonH = 42;
+  static const int16_t gap = 16;
+  static const int16_t y = 112;
+  const int16_t x = (EPD_WIDTH - buttonW * 2 - gap) / 2 + buttonW + gap;
+  return point.x >= x && point.x < x + buttonW && point.y >= y &&
+         point.y < y + buttonH;
+}
+
+void DeghostApp::drawCenteredText(Adafruit_GFX &gfx, const char *text,
+                                  int16_t y, uint8_t size) {
+  gfx.setTextSize(size);
+  int16_t textX;
+  int16_t textY;
+  uint16_t textW;
+  uint16_t textH;
+  gfx.getTextBounds(text, 0, 0, &textX, &textY, &textW, &textH);
+  gfx.setCursor((EPD_WIDTH - static_cast<int>(textW)) / 2 - textX, y);
+  gfx.print(text);
+}
+
+void DeghostApp::drawModeButton(Adafruit_GFX &gfx, int16_t x, int16_t y,
+                                int16_t w, int16_t h, const char *label) {
+  gfx.drawRect(x, y, w, h, 1);
+  gfx.setTextSize(1);
+  int16_t textX;
+  int16_t textY;
+  uint16_t textW;
+  uint16_t textH;
+  gfx.getTextBounds(label, 0, 0, &textX, &textY, &textW, &textH);
+  gfx.setCursor(x + (w - static_cast<int>(textW)) / 2 - textX,
+                y + (h - static_cast<int>(textH)) / 2 - textY);
+  gfx.print(label);
+}
+
+void DeghostApp::drawModeSelect(Adafruit_GFX &gfx) {
+  static const int16_t buttonW = 72;
+  static const int16_t buttonH = 42;
+  static const int16_t gap = 16;
+  static const int16_t buttonY = 112;
+  const int16_t buttonX = (EPD_WIDTH - buttonW * 2 - gap) / 2;
+
+  gfx.fillScreen(0);
+  gfx.setTextColor(1);
+  drawCenteredText(gfx, "DEGHOST", 64, 2);
+  drawCenteredText(gfx, "Select mode", 92, 1);
+  drawModeButton(gfx, buttonX, buttonY, buttonW, buttonH, "QUICK");
+  drawModeButton(gfx, buttonX + buttonW + gap, buttonY, buttonW, buttonH,
+                 "SLOW");
+}
+
+void DeghostApp::drawFinished(Adafruit_GFX &gfx) {
+  gfx.fillScreen(0);
+  gfx.setTextColor(1);
+  drawCenteredText(gfx, "DEGHOST", 70, 2);
+  drawCenteredText(gfx, "Done.", 104, 1);
+  if (mode == MODE_SLOW) {
+    drawCenteredText(gfx, "PWR repeat", 124, 1);
+    drawCenteredText(gfx, "BACK quit", 140, 1);
+  }
+}
+
+uint8_t DeghostApp::stepCount() const {
+  if (mode == MODE_QUICK) {
+    return QUICK_BLINK_STEPS;
+  }
+  return 14;
+}
 
 DeghostApp::Pattern DeghostApp::patternForStep(uint8_t index) const {
+  if (mode == MODE_QUICK) {
+    return index % 2 == 0 ? PATTERN_BLACK : PATTERN_WHITE;
+  }
   switch (index) {
   case 0:
     return PATTERN_WHITE;
@@ -172,6 +282,9 @@ DeghostApp::Pattern DeghostApp::patternForStep(uint8_t index) const {
 }
 
 uint16_t DeghostApp::holdMsForStep(uint8_t index) const {
+  if (mode == MODE_QUICK) {
+    return QUICK_FRAME_MS;
+  }
   switch (index) {
   case 0:
   case 1:
