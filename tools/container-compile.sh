@@ -144,8 +144,10 @@ FILES=( \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \
   "$ROOT/src/apps/qr_app.cpp" \
   "$ROOT/src/apps/gfx_app.cpp" \
-  "$ROOT/src/ui/shell_layout.cpp" \
-  "$ROOT/src/ui/components/hw_button.cpp" \
+  "$ROOT/src/shell/shell_home_layout.cpp" \
+  "$ROOT/src/shell/shell_menu_layout.cpp" \
+  "$ROOT/src/shell/shell_dialog_layout.cpp" \
+  "$ROOT/src/sys/hw_button.cpp" \
   "$ROOT/src/ui/components/touch_button.cpp" \
   "$ROOT/src/ui/status_bar.cpp" \
   "$ROOT/src/games/sudoku_app.cpp" \

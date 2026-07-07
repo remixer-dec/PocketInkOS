@@ -173,6 +173,9 @@ AppEventResult handlePaintPower() {
 AppEventResult handleDeghostPower() {
   return dirtyIfHandled(deghostApp.handlePowerButton());
 }
+AppEventResult handleDeghostMenu() {
+  return deghostApp.handleBackButton();
+}
 AppEventResult handleGfxPower() {
   return dirtyIfHandled(gfxApp.handlePowerButton());
 }
@@ -379,8 +382,8 @@ AppBehavior paintBehavior() {
 AppBehavior deghostBehavior() {
   AppBehavior behavior;
   behavior.onEnter = startDeghost;
-  behavior.onMenu = requestQuit;
-  behavior.onMenuLong = requestQuit;
+  behavior.onMenu = handleDeghostMenu;
+  behavior.onMenuLong = handleDeghostMenu;
   behavior.onPower = handleDeghostPower;
   return behavior;
 }

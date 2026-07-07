@@ -51,6 +51,9 @@ public:
   virtual void draw(Adafruit_GFX &gfx) = 0;
   virtual bool handleTouch(const TouchPoint &point) = 0;
   virtual bool update() { return false; }
+  virtual AppEventResult consumePendingEvent() {
+    return AppEventResult::Unhandled;
+  }
   virtual bool consumeDirtyRegion(int16_t *, int16_t *, int16_t *, int16_t *) {
     return false;
   }
@@ -71,6 +74,17 @@ bool consumeDirtyRegion(T &, int16_t *, int16_t *, int16_t *, int16_t *, ...) {
   return false;
 }
 
+template <typename T>
+auto consumePendingEvent(T &app, int)
+    -> decltype(app.consumePendingEvent(), AppEventResult()) {
+  return app.consumePendingEvent();
+}
+
+template <typename T>
+AppEventResult consumePendingEvent(T &, ...) {
+  return AppEventResult::Unhandled;
+}
+
 } // namespace app_runtime_detail
 
 /// Adapts an app object with touch support to the ActiveApp runtime contract.
@@ -88,6 +102,9 @@ public:
       return app.update();
     }
     return false;
+  }
+  AppEventResult consumePendingEvent() override {
+    return app_runtime_detail::consumePendingEvent(app, 0);
   }
   bool consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w,
                           int16_t *h) override {

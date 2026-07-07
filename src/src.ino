@@ -20,8 +20,9 @@
 #include "sys/sd_storage.h"
 #include "sys/usb_status.h"
 #include "shell/connectivity.h"
+#include "shell/shell_dialog_layout.h"
+#include "shell/shell_home_layout.h"
 #include "shell/shell_controller.h"
-#include "ui/shell_layout.h"
 #include <Arduino.h>
 #include <stdint.h>
 #include <stdio.h>

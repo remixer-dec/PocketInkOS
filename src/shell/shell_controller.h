@@ -2,11 +2,12 @@
 #define SHELL_CONTROLLER_H
 
 #include "shell/quick_settings.h"
+#include "shell/shell_dialog_layout.h"
+#include "shell/shell_home_layout.h"
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
 #include "sys/builtin_apps.h"
 #include "sys/touch_input.h"
-#include "ui/shell_layout.h"
 #include "ui/text_input_controller.h"
 
 /// Hooks from the sketch runtime into ShellController.

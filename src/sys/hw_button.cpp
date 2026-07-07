@@ -1,4 +1,4 @@
-#include "ui/components/hw_button.h"
+#include "sys/hw_button.h"
 
 HwButton::HwButton(uint8_t pin, bool activeLow)
     : _pin(pin), _activeLow(activeLow) {}

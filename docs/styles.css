@@ -644,7 +644,7 @@ code {
   scroll-margin-top: 92px;
 }
 
-.paper-theme .api-group:nth-of-type(n + 2) {
+.paper-theme:not([data-reference-mode="one"]) .api-reference > .api-group + .api-group {
   margin-top: 100px;
 }
 

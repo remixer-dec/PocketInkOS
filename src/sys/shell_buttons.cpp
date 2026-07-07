@@ -1,6 +1,6 @@
 #include "sys/shell_buttons.h"
 #include "sys/global.h"
-#include "ui/components/hw_button.h"
+#include "sys/hw_button.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdint.h>

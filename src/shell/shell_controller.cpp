@@ -1,5 +1,8 @@
 #include "shell/shell_controller.h"
 #include "shell/connectivity.h"
+#include "shell/shell_dialog_layout.h"
+#include "shell/shell_home_layout.h"
+#include "shell/shell_menu_layout.h"
 #include "shell/shell_context.h"
 #include "sys/battery_monitor.h"
 #include "sys/device_clock.h"
@@ -10,7 +13,6 @@
 #include "sys/sd_storage.h"
 #include "sys/system_config.h"
 #include "ui/components/menu_button_consumer.h"
-#include "ui/shell_layout.h"
 #include <Arduino.h>
 #include <cstring>
 
@@ -630,11 +632,19 @@ void ShellController::showQuickSettingsActionFeedback(PowerDialogAction action) 
 }
 
 bool ShellController::updateActiveApp() {
-  if (activeApp != nullptr && activeApp->update()) {
-    dirty = true;
-    return true;
+  if (activeApp == nullptr) {
+    return false;
   }
-  return false;
+
+  bool handled = false;
+  if (activeApp->update()) {
+    dirty = true;
+    handled = true;
+  }
+  if (applyAppEventResult(activeApp->consumePendingEvent())) {
+    handled = true;
+  }
+  return handled;
 }
 
 void ShellController::handleCatalogChanged() {

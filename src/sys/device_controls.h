@@ -10,7 +10,7 @@ struct DeviceControlSnapshot {
   /// Current configured CPU clock in MHz.
   uint16_t cpuMhz = 240;
   /// User volume from 0 to 100.
-  uint8_t volume = 60;
+  uint8_t volume = 40;
   /// True when audio output should be suppressed without changing volume.
   bool muted = false;
 };

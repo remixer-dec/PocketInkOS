@@ -2,6 +2,7 @@
 #include "sys/system_config.h"
 
 #include <Arduino.h>
+#include <math.h>
 #include <stdio.h>
 
 namespace {
@@ -9,11 +10,14 @@ namespace {
 static const uint16_t CPU_STEPS[] = {80, 160, 240};
 static const uint8_t CPU_STEP_COUNT = sizeof(CPU_STEPS) / sizeof(CPU_STEPS[0]);
 static const uint8_t VOLUME_STEP = 10;
-static const uint8_t DEFAULT_VOLUME = 60;
+static const uint8_t DEFAULT_VOLUME = 40;
+static const uint8_t DEFAULT_OUTPUT_VOLUME = 10;
+static const float VOLUME_CURVE_EXPONENT = 2.5129f;
 
 bool bluetoothEnabled = false;
 uint8_t cpuStep = 2;
 volatile uint8_t volumeLevel = DEFAULT_VOLUME;
+volatile uint8_t outputVolumeLevel = DEFAULT_OUTPUT_VOLUME;
 volatile bool muted = false;
 
 uint8_t cpuStepIndexForMhz(uint16_t mhz) {
@@ -45,6 +49,27 @@ uint8_t clampPercent(uint8_t percent) {
   return percent > 100U ? 100U : percent;
 }
 
+// Preserves the pre-unified player calibration: UI 40 maps to ~10% PCM gain.
+uint8_t calibratedOutputVolume(uint8_t uiVolume) {
+  if (uiVolume == 0) {
+    return 0;
+  }
+  if (uiVolume >= 100) {
+    return 100;
+  }
+
+  const float normalized = static_cast<float>(uiVolume) / 100.0f;
+  const int mapped =
+      static_cast<int>(powf(normalized, VOLUME_CURVE_EXPONENT) * 100.0f +
+                       0.5f);
+  return static_cast<uint8_t>(mapped < 1 ? 1 : mapped);
+}
+
+void setVolumeLevel(uint8_t uiVolume) {
+  volumeLevel = clampPercent(uiVolume);
+  outputVolumeLevel = calibratedOutputVolume(volumeLevel);
+}
+
 uint16_t currentCpuMhz() {
 #if defined(ARDUINO_ARCH_ESP32)
   return static_cast<uint16_t>(getCpuFrequencyMhz());
@@ -57,7 +82,7 @@ uint16_t currentCpuMhz() {
 
 void deviceControlsBegin() {
   cpuStep = cpuStepIndexForMhz(currentSystemConfig().cpu.mhz);
-  volumeLevel = DEFAULT_VOLUME;
+  setVolumeLevel(DEFAULT_VOLUME);
   muted = false;
   applyBluetoothState();
   applyCpuFrequency();
@@ -73,7 +98,7 @@ DeviceControlSnapshot deviceControlsSnapshot() {
 }
 
 void deviceControlsRestoreAudio(uint8_t volume, bool muteState) {
-  volumeLevel = clampPercent(volume);
+  setVolumeLevel(volume);
   muted = muteState;
 }
 
@@ -92,24 +117,26 @@ void cycleCpuFrequency() {
 }
 
 uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent) {
-  if (muted || volumeLevel == 0 || sourceVolumePercent == 0) {
+  const uint8_t output = outputVolumeLevel;
+  if (muted || output == 0 || sourceVolumePercent == 0) {
     return 0;
   }
   const uint8_t source = clampPercent(sourceVolumePercent);
-  return static_cast<uint8_t>((static_cast<uint16_t>(source) * volumeLevel +
-                               50U) /
-                              100U);
+  return static_cast<uint8_t>(
+      (static_cast<uint16_t>(source) * output + 50U) / 100U);
 }
 
 void volumeDown() {
-  volumeLevel = volumeLevel > VOLUME_STEP ? volumeLevel - VOLUME_STEP : 0;
+  const uint8_t current = volumeLevel;
+  setVolumeLevel(current > VOLUME_STEP ? current - VOLUME_STEP : 0);
   if (volumeLevel > 0) {
     muted = false;
   }
 }
 
 void volumeUp() {
-  volumeLevel = volumeLevel + VOLUME_STEP < 100 ? volumeLevel + VOLUME_STEP : 100;
+  const uint8_t current = volumeLevel;
+  setVolumeLevel(current + VOLUME_STEP < 100 ? current + VOLUME_STEP : 100);
   if (volumeLevel > 0) {
     muted = false;
   }
