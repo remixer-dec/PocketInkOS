@@ -1,7 +1,6 @@
 #ifndef QR_APP_H
 #define QR_APP_H
 
-#include "ui/components/menu_button_consumer.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
@@ -10,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-class QrApp : public MenuButtonConsumer {
+class QrApp {
 public:
   void reset();
   void draw(Adafruit_GFX &gfx);

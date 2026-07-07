@@ -1,6 +1,7 @@
 #include "sys/shell_buttons.h"
 #include "sys/global.h"
 #include "sys/hw_button.h"
+#include "sys/power_control.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdint.h>
@@ -11,6 +12,7 @@ HwButton mainButton(BOOT_BUTTON_PIN);
 HwButton backButton(PWR_BUTTON_PIN);
 TaskHandle_t buttonTaskHandle = NULL;
 ShellButtonHandlers activeHandlers;
+static const uint16_t kEmergencyPowerOffHoldMs = 10000;
 
 volatile uint8_t pendingMenuClicks = 0;
 volatile uint8_t pendingMenuDoubleClicks = 0;
@@ -19,6 +21,7 @@ volatile uint8_t pendingPowerClicks = 0;
 volatile uint8_t pendingPowerDoubleClicks = 0;
 volatile uint8_t pendingPowerLongPresses = 0;
 volatile uint8_t pendingButtonActivity = 0;
+volatile bool emergencyPowerOffStarted = false;
 
 void queueButtonEvent(volatile uint8_t &counter) {
   if (counter < 255) {
@@ -38,6 +41,14 @@ void call(ShellButtonCallback callback) {
   if (callback != nullptr) {
     callback();
   }
+}
+
+void emergencyPowerOff() {
+  if (emergencyPowerOffStarted) {
+    return;
+  }
+  emergencyPowerOffStarted = true;
+  emergencyPowerOffDevice();
 }
 
 void buttonTask(void *) {
@@ -70,6 +81,7 @@ void shellButtonsBegin(const ShellButtonHandlers &handlers) {
       []() { queueButtonEvent(pendingPowerDoubleClicks); });
   backButton.attachLongPressStart(
       []() { queueButtonEvent(pendingPowerLongPresses); });
+  backButton.attachHold(emergencyPowerOff, kEmergencyPowerOffHoldMs);
   backButton.attachActivity([]() { queueButtonEvent(pendingButtonActivity); });
 
   if (buttonTaskHandle == NULL) {

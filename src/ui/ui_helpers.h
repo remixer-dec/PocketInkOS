@@ -61,12 +61,12 @@ inline bool uiTouchContains(const UiRect &rect, const TouchPoint &point,
 
 /// Draws the common compact monochrome text button used across shell screens.
 inline void uiDrawButton(Adafruit_GFX &gfx, const UiRect &rect,
-                         const char *label, bool selected = false,
+                         const char *label, bool pressed = false,
                          uint8_t textSize = 1) {
   TouchButtonContent content;
   content.text = label;
   content.textSize = textSize;
-  TouchButton(rect, content).draw(gfx, selected);
+  TouchButton(rect, content).draw(gfx, pressed);
 }
 
 #endif

@@ -12,7 +12,7 @@
 #include "sys/power_control.h"
 #include "sys/sd_storage.h"
 #include "sys/system_config.h"
-#include "ui/components/menu_button_consumer.h"
+#include "sys/usb_status.h"
 #include <Arduino.h>
 #include <cstring>
 
@@ -217,10 +217,6 @@ void ShellController::handleMenuButton() {
       handleAppEvent(activeDefinition->behavior.onMenu)) {
     return;
   }
-  if (handleActiveMenuButton()) {
-    dirty = true;
-    return;
-  }
   if (textInput.toggleCaps(screen)) {
     dirty = true;
     return;
@@ -244,10 +240,6 @@ void ShellController::handleMenuDoubleButton() {
       handleAppEvent(activeDefinition->behavior.onMenuDouble)) {
     return;
   }
-  if (handleActiveMenuDoubleButton()) {
-    dirty = true;
-    return;
-  }
   if (textInput.isScreen(screen)) {
     switchKeyboardMode();
   }
@@ -263,10 +255,6 @@ void ShellController::handleMenuLongButton() {
   }
   if (activeDefinition != nullptr &&
       handleAppEvent(activeDefinition->behavior.onMenuLong)) {
-    return;
-  }
-  if (handleActiveMenuLongButton()) {
-    dirty = true;
     return;
   }
   if (textInput.isScreen(screen)) {
@@ -368,6 +356,7 @@ ShellData ShellController::currentShellData(char *dateText, size_t dateSize,
   data.status.timeText = timeText;
   data.status.battery = &battery;
   data.status.wifiIcon = wifiStatusIcon();
+  data.status.usbConnected = usbConnected();
   data.battery = &battery;
   data.environment = &env;
   data.sd = &sd;
@@ -497,7 +486,6 @@ void ShellController::drawActiveScreen() {
   case SCREEN_HOME:
     drawHome();
     break;
-  case SCREEN_KEYBOARD:
   case SCREEN_T9_KEYBOARD:
   case SCREEN_QWERTY_ZOOM_KEYBOARD:
     textInput.draw(display, screen);
@@ -537,7 +525,6 @@ bool ShellController::handleScreenTouch(const TouchPoint &point) {
   }
 
   switch (screen) {
-  case SCREEN_KEYBOARD:
   case SCREEN_T9_KEYBOARD:
   case SCREEN_QWERTY_ZOOM_KEYBOARD:
     return textInput.handleTouch(screen, point);

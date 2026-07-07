@@ -12,8 +12,6 @@ static const int BUTTON_X = 4;
 static const int BUTTON_Y = 48;
 static const int BUTTON_GAP = 4;
 static const uint8_t CALC_TEXT_SIZE = 2;
-static const unsigned long PRESS_HIGHLIGHT_MS = 180;
-static const int8_t NO_BUTTON = -1;
 static const int8_t EQUALS_BUTTON_ID = 20;
 static const char *BUTTONS[5][4] = {{"DEL", "%", "^", "/"},
                                     {"7", "8", "9", "*"},
@@ -137,8 +135,7 @@ private:
 
 void CalculatorApp::reset() {
   clear();
-  pressedButton = NO_BUTTON;
-  pressedUntil = 0;
+  press.clear();
 }
 
 bool CalculatorApp::hasActiveSession() const { return expression[0] != '\0'; }
@@ -167,7 +164,7 @@ void CalculatorApp::draw(Adafruit_GFX &gfx) {
   gfx.setCursor(DISPLAY_RECT.x + 6,
                 DISPLAY_RECT.y + (DISPLAY_RECT.h - 8 * CALC_TEXT_SIZE) / 2);
   gfx.print(displayText);
-  uiDrawButton(gfx, EQUALS_BUTTON, "=", isButtonPressed(EQUALS_BUTTON_ID),
+  uiDrawButton(gfx, EQUALS_BUTTON, "=", press.isPressed(EQUALS_BUTTON_ID),
                CALC_TEXT_SIZE);
 
   for (int row = 0; row < 5; row++) {
@@ -176,7 +173,7 @@ void CalculatorApp::draw(Adafruit_GFX &gfx) {
                      static_cast<int16_t>(BUTTON_Y + row * (BUTTON_H + BUTTON_GAP)),
                      BUTTON_W, BUTTON_H};
       int8_t id = row * 4 + col;
-      uiDrawButton(gfx, rect, BUTTONS[row][col], isButtonPressed(id),
+      uiDrawButton(gfx, rect, BUTTONS[row][col], press.isPressed(id),
                    CALC_TEXT_SIZE);
     }
   }
@@ -184,7 +181,7 @@ void CalculatorApp::draw(Adafruit_GFX &gfx) {
 
 bool CalculatorApp::handleTouch(const TouchPoint &point) {
   if (uiTouchContains(EQUALS_BUTTON, point)) {
-    pressButton(EQUALS_BUTTON_ID);
+    press.press(EQUALS_BUTTON_ID);
     calculate();
     return true;
   }
@@ -196,7 +193,7 @@ bool CalculatorApp::handleTouch(const TouchPoint &point) {
       if (!uiTouchContains(rect, point)) {
         continue;
       }
-      pressButton(row * 4 + col);
+      press.press(row * 4 + col);
       const char *label = BUTTONS[row][col];
       if (strcmp(label, "DEL") == 0) {
         backspace();
@@ -209,14 +206,7 @@ bool CalculatorApp::handleTouch(const TouchPoint &point) {
   return false;
 }
 
-bool CalculatorApp::update() {
-  if (pressedButton == NO_BUTTON || millis() < pressedUntil) {
-    return false;
-  }
-  pressedButton = NO_BUTTON;
-  pressedUntil = 0;
-  return true;
-}
+bool CalculatorApp::update() { return press.update(); }
 
 void CalculatorApp::append(char c) {
   if (c == '.' && !canAppendDot()) {
@@ -287,15 +277,6 @@ bool CalculatorApp::parseExpression(const char *text, double &value) const {
   }
   ExpressionParser parser(text);
   return parser.parse(value);
-}
-
-void CalculatorApp::pressButton(int8_t id) {
-  pressedButton = id;
-  pressedUntil = millis() + PRESS_HIGHLIGHT_MS;
-}
-
-bool CalculatorApp::isButtonPressed(int8_t id) const {
-  return pressedButton == id && millis() < pressedUntil;
 }
 
 bool CalculatorApp::canAppendDot() const {

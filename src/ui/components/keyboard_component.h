@@ -21,31 +21,17 @@ struct KeyboardEvent {
   char value;
 };
 
-/// Draws and hit-tests the compact QWERTY keyboard.
+/// Shared contract for keyboard components backed by external text state.
 class KeyboardComponent {
 public:
-  /// Draws keyboard input and keys.
-  void draw(Adafruit_GFX &gfx, const String &text);
-  /// Draws keyboard input and keys with a maximum input length.
-  void draw(Adafruit_GFX &gfx, const String &text, int maxLength);
-  /// Draws only the input field.
-  void drawInput(Adafruit_GFX &gfx, const String &text);
-  /// Draws only the input field with a maximum input length.
-  void drawInput(Adafruit_GFX &gfx, const String &text, int maxLength);
-  /// Maps a touch point to a keyboard event.
-  KeyboardEvent hitTest(const TouchPoint &point);
-  /// Maps a touch point to a keyboard event with length limiting.
-  KeyboardEvent hitTest(const TouchPoint &point, int currentLength,
-                        int maxLength);
-  /// Toggles letter casing.
-  void toggleCaps();
+  virtual ~KeyboardComponent() = default;
 
-private:
-  bool caps = false;
-  int inputLimit = 0;
-
-  KeyboardEvent hitRow(const TouchPoint &point, const char *keys, int count,
-                       int x, int y, int keyW) const;
+  virtual void draw(Adafruit_GFX &gfx, const String &text) = 0;
+  virtual void draw(Adafruit_GFX &gfx, const String &text, int maxLength) = 0;
+  virtual KeyboardEvent hitTest(const TouchPoint &point) = 0;
+  virtual KeyboardEvent hitTest(const TouchPoint &point, int currentLength,
+                                int maxLength) = 0;
+  virtual void toggleCaps() = 0;
 };
 
 #endif

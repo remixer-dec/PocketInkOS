@@ -1,5 +1,6 @@
 #include "apps/qr_app.h"
 #include "sys/rtc_context.h"
+#include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -13,6 +14,11 @@ static const int8_t TEXT_BUTTON_ID = 0;
 static const int8_t HTTP_BUTTON_ID = 1;
 static const int8_t HTTPS_BUTTON_ID = 2;
 static const int8_t INPUT_BUTTON_ID = 3;
+static const SelectButtonOption MODE_BUTTONS[] = {
+    {TEXT_BUTTON, "TEXT", TEXT_BUTTON_ID},
+    {HTTP_BUTTON, "HTTP", HTTP_BUTTON_ID},
+    {HTTPS_BUTTON, "HTTPS", HTTPS_BUTTON_ID},
+};
 static const int DATA_CODEWORDS = 48;
 static const int ECC_CODEWORDS = 26;
 static const int BLOCKS = 2;
@@ -74,7 +80,6 @@ void QrApp::reset() {
   mode = MODE_TEXT;
   inputText = "";
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
   hasQr = false;
   press.clear();
@@ -143,11 +148,6 @@ void QrApp::restoreContext(const uint8_t *buffer, size_t length) {
   keyboardOpen = savedKeyboardOpen != 0;
   keyboardMode =
       savedKeyboardMode ? KEYBOARD_QWERTY_ZOOM : KEYBOARD_T9;
-  if (keyboardOpen) {
-    setActiveMenuButtonConsumer(this);
-  } else {
-    clearActiveMenuButtonConsumer(this);
-  }
   hasQr = false;
   memset(modules, 0, sizeof(modules));
   if (savedHasQr) {
@@ -188,7 +188,6 @@ bool QrApp::handleMenuLongButton() {
     return false;
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   return true;
 }
 
@@ -220,22 +219,17 @@ bool QrApp::handleTouch(const TouchPoint &point) {
     hasQr = false;
     return true;
   }
-  if (uiTouchContains(TEXT_BUTTON, point)) {
-    press.press(TEXT_BUTTON_ID);
-    mode = MODE_TEXT;
-    inputText = "";
-    return true;
-  }
-  if (uiTouchContains(HTTP_BUTTON, point)) {
-    press.press(HTTP_BUTTON_ID);
-    mode = MODE_HTTP;
-    inputText = "http://";
-    return true;
-  }
-  if (uiTouchContains(HTTPS_BUTTON, point)) {
-    press.press(HTTPS_BUTTON_ID);
-    mode = MODE_HTTPS;
-    inputText = "https://";
+  int8_t nextMode = -1;
+  if (SelectButtonGroup(MODE_BUTTONS, 3).hitTest(point, nextMode)) {
+    press.press(nextMode);
+    mode = static_cast<Mode>(nextMode);
+    if (mode == MODE_TEXT) {
+      inputText = "";
+    } else if (mode == MODE_HTTP) {
+      inputText = "http://";
+    } else {
+      inputText = "https://";
+    }
     return true;
   }
   if (uiTouchContains(INPUT_BUTTON, point)) {
@@ -257,7 +251,6 @@ void QrApp::openKeyboard() {
   }
   keyboardOpen = true;
   keyboardMode = KEYBOARD_T9;
-  setActiveMenuButtonConsumer(this);
 }
 
 void QrApp::drawKeyboard(Adafruit_GFX &gfx) {
@@ -295,7 +288,6 @@ void QrApp::submit() {
   char payload[MAX_PAYLOAD + 1];
   buildPayload(payload, sizeof(payload));
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   hasQr = encodeQr(payload);
 }
 
@@ -309,12 +301,8 @@ void QrApp::drawMenu(Adafruit_GFX &gfx) {
   gfx.getTextBounds("QR", 0, 0, &x, &y, &w, &h);
   gfx.setCursor((200 - static_cast<int>(w)) / 2 - x, 16);
   gfx.print("QR");
-  uiDrawButton(gfx, TEXT_BUTTON, "TEXT",
-               mode == MODE_TEXT || press.isPressed(TEXT_BUTTON_ID));
-  uiDrawButton(gfx, HTTP_BUTTON, "HTTP",
-               mode == MODE_HTTP || press.isPressed(HTTP_BUTTON_ID));
-  uiDrawButton(gfx, HTTPS_BUTTON, "HTTPS",
-               mode == MODE_HTTPS || press.isPressed(HTTPS_BUTTON_ID));
+  SelectButtonGroup(MODE_BUTTONS, 3)
+      .draw(gfx, static_cast<int8_t>(mode), &press);
   uiDrawButton(gfx, INPUT_BUTTON, "INPUT", press.isPressed(INPUT_BUTTON_ID));
   gfx.setTextSize(1);
   gfx.setCursor(10, 134);

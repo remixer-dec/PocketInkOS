@@ -297,7 +297,6 @@ void TtsApp::openKeyboard() {
   keyboardMode = KEYBOARD_T9;
   textBeforeKeyboard = inputText;
   inputKeyboard.setLayout(T9KeyboardComponent::Layout::Text);
-  setActiveMenuButtonConsumer(this);
   ttsAppLog("[tts-app] keyboard open text_len=%u\n",
             static_cast<unsigned>(inputText.length()));
 }
@@ -312,7 +311,6 @@ void TtsApp::openIterationKeyboard() {
   keyboardOpen = true;
   keyboardMode = KEYBOARD_NUMBERS;
   inputKeyboard.setLayout(T9KeyboardComponent::Layout::Numbers);
-  setActiveMenuButtonConsumer(this);
   ttsAppLog("[tts-app] gl iters edit value=%u\n",
             static_cast<unsigned>(griffinLimIterations));
 }
@@ -324,7 +322,6 @@ void TtsApp::closeKeyboard() {
   }
   keyboardOpen = false;
   inputKeyboard.setLayout(T9KeyboardComponent::Layout::Text);
-  clearActiveMenuButtonConsumer(this);
 }
 
 void TtsApp::applyIterationText() {

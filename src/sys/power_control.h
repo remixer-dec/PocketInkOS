@@ -15,6 +15,8 @@ void disableWirelessForSleep();
 void rebootDevice();
 /// Powers the device down after preparing peripherals for shutdown.
 void powerOffDevice();
+/// Powers down through the shortest path for emergency button holds.
+void emergencyPowerOffDevice();
 /// Enters deep sleep, optionally keeping e-paper powered for display retention.
 void enterDeepSleep(uint64_t timerWakeupUs = 0, bool keepEpdPowerOn = false);
 /// Reports whether the current boot was caused by a deep-sleep timer wake.

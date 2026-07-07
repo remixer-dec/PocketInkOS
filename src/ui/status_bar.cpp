@@ -4,9 +4,10 @@
 
 namespace {
 
-static const int16_t kStatusBarHeight = 16;
-static const int16_t kStatusTextY = 4;
-static const int16_t kStatusIconY = 11;
+static const int16_t kStatusBarHeight = 20;
+static const int16_t kStatusDividerY = kStatusBarHeight - 3;
+static const int16_t kStatusTextY = 5;
+static const int16_t kStatusIconY = 14;
 
 char batteryIconCharForPercentage(int percentage) {
   if (percentage >= 90) {
@@ -66,15 +67,17 @@ void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
     display.print(status.dateText);
   }
 
-  display.setFont(&iconASCII8pt7b);
+  display.setFont(&iconASCII12pt7b);
   display.setTextSize(1);
 
-  int16_t cursorX = EPD_WIDTH - 6;
+  int16_t cursorX = EPD_WIDTH - 2;
   const int16_t spacing = 5;
   const char batteryGlyph =
-      status.battery != nullptr && status.battery->valid
-          ? batteryIconCharForPercentage(status.battery->percentage)
-          : 'E';
+      status.usbConnected
+          ? 'A'
+          : (status.battery != nullptr && status.battery->valid
+                 ? batteryIconCharForPercentage(status.battery->percentage)
+                 : 'E');
   const bool hasWifi = status.wifiIcon != '\0';
   const int16_t batteryW = glyphWidth(display, batteryGlyph);
   const int16_t wifiW = hasWifi ? glyphWidth(display, status.wifiIcon) : 0;
@@ -85,7 +88,7 @@ void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
     display.setFont();
     drawRightAlignedText(display, status.timeText, kStatusTextY,
                          iconLeftX - 4);
-    display.setFont(&iconASCII8pt7b);
+    display.setFont(&iconASCII12pt7b);
   }
 
   drawGlyph(display, batteryGlyph, cursorX);
@@ -95,6 +98,5 @@ void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
   }
 
   display.setFont();
-  display.drawLine(0, kStatusBarHeight - 1, EPD_WIDTH - 1,
-                   kStatusBarHeight - 1, 1);
+  display.drawLine(0, kStatusDividerY, EPD_WIDTH - 1, kStatusDividerY, 1);
 }

@@ -136,7 +136,6 @@ FILES=( \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/sys/shell_buttons.cpp" \
-  "$ROOT/src/ui/components/keyboard_component.cpp" \
   "$ROOT/src/ui/components/audio_player_component.cpp" \
   "$ROOT/src/ui/components/date_time_picker_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \

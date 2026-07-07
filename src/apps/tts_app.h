@@ -4,7 +4,6 @@
 #include "sys/audio_playback_renderer.h"
 #include "sys/touch_input.h"
 #include "tts/inflect_tts_wrapper.h"
-#include "ui/components/menu_button_consumer.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
@@ -13,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-class TtsApp : public MenuButtonConsumer {
+class TtsApp {
 public:
   enum class State : uint8_t { Idle, Synthesizing, Ready, Playing, Error };
 

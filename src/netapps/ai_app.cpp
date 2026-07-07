@@ -245,7 +245,6 @@ void AiApp::reset() {
     copyText(transcript, TRANSCRIPT_MAX, kWelcomeText);
     transcriptLen = strlen(transcript);
   }
-  clearActiveMenuButtonConsumer(this);
 }
 
 void AiApp::release() {
@@ -337,7 +336,6 @@ bool AiApp::handleTouch(const TouchPoint &point) {
 bool AiApp::openKeyboardFromButton() {
   if (keyboardOpen) {
     keyboardOpen = false;
-    clearActiveMenuButtonConsumer(this);
     return true;
   }
   if (state == STATE_CONNECTING || state == STATE_STREAMING) {
@@ -388,7 +386,6 @@ bool AiApp::handleMenuLongButton() {
     return false;
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   return true;
 }
 
@@ -407,7 +404,6 @@ void AiApp::openKeyboard() {
   inputText = "";
   keyboardMode = KEYBOARD_T9;
   keyboardOpen = true;
-  setActiveMenuButtonConsumer(this);
 }
 
 void AiApp::submitPrompt() {
@@ -450,7 +446,6 @@ void AiApp::submitPrompt() {
   chunkLine[0] = '\0';
   requestStartedAt = millis();
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   state = STATE_CONNECTING;
   setStatus("Connecting...");
 }
@@ -486,7 +481,6 @@ void AiApp::submitVoicePrompt() {
   chunkLine[0] = '\0';
   requestStartedAt = millis();
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   state = STATE_CONNECTING;
   setStatus("Connecting...");
 }

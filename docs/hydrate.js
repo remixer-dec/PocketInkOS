@@ -82,9 +82,9 @@ function saveTheme(theme) {
 
 function storedReferenceMode() {
   try {
-    return localStorage.getItem("docs-reference-mode") === "one" ? "one" : "all";
+    return localStorage.getItem("docs-reference-mode") === "all" ? "all" : "one";
   } catch {
-    return "all";
+    return "one";
   }
 }
 
@@ -179,6 +179,13 @@ function collectSectionIndexState() {
   };
 }
 
+function isReferenceSectionEntry(entry) {
+  return (
+    entry?.target?.classList?.contains("api-doc-section") ||
+    entry?.link?.matches?.("summary[data-section-target]")
+  );
+}
+
 function openSectionIndexAncestors(link) {
   let disclosure = link?.closest("details");
   while (disclosure) {
@@ -269,7 +276,9 @@ function findActiveSectionHref() {
 
   const threshold = Math.min(window.innerHeight * 0.24, 160);
   const visibleEntries = sectionIndexState.entries.filter(
-    (entry) => !entry.target.closest("[hidden]"),
+    (entry) =>
+      !entry.target.closest("[hidden]") &&
+      (referenceModeState?.mode !== "one" || !isReferenceSectionEntry(entry)),
   );
   let active = visibleEntries[0];
 
@@ -472,6 +481,32 @@ function setReferenceSymbolIndexActive(groupHref) {
   renderReferencePager();
 }
 
+function syncReferenceModeSwitch(nextDoc) {
+  const currentSwitch = document.querySelector("[data-reference-mode-switch]");
+  const nextSwitch = nextDoc.querySelector("[data-reference-mode-switch]");
+
+  if (currentSwitch && nextSwitch) {
+    currentSwitch.replaceWith(nextSwitch.cloneNode(true));
+    return;
+  }
+
+  if (currentSwitch) {
+    currentSwitch.remove();
+    return;
+  }
+
+  if (!nextSwitch) return;
+
+  const themeSwitch = document.querySelector(".theme-switch");
+  const shell = document.querySelector("[data-static-docs]");
+  if (themeSwitch) {
+    themeSwitch.insertAdjacentElement("afterend", nextSwitch.cloneNode(true));
+    return;
+  }
+
+  shell?.prepend(nextSwitch.cloneNode(true));
+}
+
 function applyReferenceMode(mode, targetHref = "", persist = true) {
   if (!referenceModeState) return;
 
@@ -629,9 +664,25 @@ function showApiLookup(entry, anchorRect) {
   const bubble = ensureApiLookupBubble();
   bubble.replaceChildren();
 
+  const header = document.createElement("div");
+  header.className = "api-lookup-header";
+
   const title = document.createElement("strong");
   title.textContent = `${entry.kind} ${entry.name}`;
-  bubble.appendChild(title);
+  header.appendChild(title);
+
+  const definitionHref = entry.anchor || entry.href || "";
+  if (definitionHref) {
+    const definitionLink = document.createElement("a");
+    definitionLink.className = "api-lookup-definition-link";
+    definitionLink.href = definitionHref;
+    definitionLink.dataset.apiLookupDefinitionLink = "true";
+    definitionLink.setAttribute("aria-label", `Go to ${entry.name} definition`);
+    definitionLink.textContent = "i";
+    header.appendChild(definitionLink);
+  }
+
+  bubble.appendChild(header);
 
   if (entry.owner) {
     const owner = document.createElement("p");
@@ -653,6 +704,7 @@ function showApiLookup(entry, anchorRect) {
   }
 
   const signature = document.createElement("pre");
+  signature.className = "api-signature api-lookup-signature";
   const code = document.createElement("code");
   code.textContent = entry.definition;
   signature.appendChild(code);
@@ -745,7 +797,9 @@ function replacePage(nextDoc) {
   syncHead(nextDoc);
   unmountViewers(currentFrame);
   hideApiLookup();
+  syncReferenceModeSwitch(nextDoc);
   currentShell.className = nextShell.className;
+  currentShell.removeAttribute("data-reference-mode");
   currentFrame.replaceWith(nextFrame.cloneNode(true));
   applyTheme(activeTheme, false);
 }
@@ -941,7 +995,26 @@ if (hasStaticShell) {
   });
 
   document.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-api-lookup-definition-link]");
+    if (!link || !apiLookupState) return;
+
+    const href = link.getAttribute("href");
+    if (!href) return;
+
+    event.preventDefault();
+    hideApiLookup();
+    if (referenceModeState?.mode === "one") {
+      applyReferenceMode("one", href);
+      setupSectionIndex();
+    }
+    jumpToHashTarget(href);
+  });
+
+  document.addEventListener("click", (event) => {
     if (event.target.closest(".api-signature code")) {
+      return;
+    }
+    if (event.target.closest(".api-lookup-bubble")) {
       return;
     }
     if (!event.target.closest(".symbol-index")) {

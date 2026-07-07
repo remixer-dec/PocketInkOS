@@ -4,9 +4,8 @@
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
 #include "sys/touch_input.h"
-#include "ui/components/keyboard_component.h"
-#include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include <Arduino.h>
 
 /// Shared controller for the firmware text-entry modes.
@@ -30,7 +29,6 @@ public:
 private:
   static const uint8_t MAX_TEXT_LENGTH = 64;
 
-  KeyboardComponent keyboard;
   QwertyZoomKeyboardComponent qwertyZoomKeyboard;
   T9KeyboardComponent t9Keyboard;
   String text;

@@ -1,5 +1,6 @@
 #include "games/tictactoe_app.h"
 #include "sys/rtc_context.h"
+#include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -13,6 +14,10 @@ static const UiRect NEW_BUTTON = {130, 28, 56, 18};
 static const int8_t CPU_BUTTON_ID = 0;
 static const int8_t PVP_BUTTON_ID = 1;
 static const int8_t NEW_BUTTON_ID = 2;
+static const SelectButtonOption PLAYER_BUTTONS[] = {
+    {CPU_BUTTON, "CPU", CPU_BUTTON_ID},
+    {PVP_BUTTON, "PVP", PVP_BUTTON_ID},
+};
 static const uint8_t TICTACTOE_CONTEXT_VERSION = 1;
 
 void TicTacToeApp::reset() {
@@ -48,10 +53,8 @@ void TicTacToeApp::draw(Adafruit_GFX &gfx) {
     gfx.print(turn);
   }
 
-  uiDrawButton(gfx, CPU_BUTTON, "CPU",
-               vsCpu || press.isPressed(CPU_BUTTON_ID));
-  uiDrawButton(gfx, PVP_BUTTON, "PVP",
-               !vsCpu || press.isPressed(PVP_BUTTON_ID));
+  SelectButtonGroup(PLAYER_BUTTONS, 2)
+      .draw(gfx, vsCpu ? CPU_BUTTON_ID : PVP_BUTTON_ID, &press);
   uiDrawButton(gfx, NEW_BUTTON, "NEW", press.isPressed(NEW_BUTTON_ID));
 
   drawBoard(gfx);
@@ -86,15 +89,10 @@ void TicTacToeApp::drawMark(Adafruit_GFX &gfx, int cell, char mark) {
 }
 
 bool TicTacToeApp::handleTouch(const TouchPoint &point) {
-  if (uiTouchContains(CPU_BUTTON, point)) {
-    press.press(CPU_BUTTON_ID);
-    vsCpu = true;
-    resetBoard();
-    return true;
-  }
-  if (uiTouchContains(PVP_BUTTON, point)) {
-    press.press(PVP_BUTTON_ID);
-    vsCpu = false;
+  int8_t playerMode = -1;
+  if (SelectButtonGroup(PLAYER_BUTTONS, 2).hitTest(point, playerMode)) {
+    press.press(playerMode);
+    vsCpu = playerMode == CPU_BUTTON_ID;
     resetBoard();
     return true;
   }

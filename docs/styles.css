@@ -36,11 +36,8 @@ body {
 }
 
 html[data-theme="ink"] body {
-  background:
-    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.1) 1px, transparent 0) 0
-      0 / 18px 18px,
-    var(--paper);
-  color: var(--ink);
+  background: #000;
+  color: var(--paper-strong);
 }
 
 button,
@@ -644,8 +641,16 @@ code {
   scroll-margin-top: 92px;
 }
 
-.paper-theme:not([data-reference-mode="one"]) .api-reference > .api-group + .api-group {
+[data-static-docs].paper-theme:not([data-reference-mode="one"]) .api-reference > .api-group + .api-group {
   margin-top: 100px;
+}
+
+.api-group[hidden] {
+  display: none;
+}
+
+[data-reference-mode="one"] .api-reference > .api-group {
+  margin-top: 0;
 }
 
 .api-group-header {
@@ -683,10 +688,27 @@ code {
   color: #000;
 }
 
-.api-group > p {
+.api-group-doc {
+  display: block;
+  box-sizing: content-box;
   margin: 0;
   max-width: none;
-  padding: 14px 14px 0;
+  font-family: var(--ui);
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+
+.paper-theme .api-group-doc {
+  min-width: fit-content;
+  padding: 20px;
+  border: 16px solid #000;
+  border-bottom: 64px solid #000;
+}
+
+.ink-theme .api-group-doc {
+  background: #fff;
+  color: #000;
+  padding: 20px;
 }
 
 .api-symbol-list {
@@ -780,7 +802,14 @@ code {
   color: var(--ink);
   box-shadow: 0 0 90px 10px black;
   padding: 12px;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.api-lookup-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .api-lookup-bubble strong,
@@ -790,10 +819,31 @@ code {
 }
 
 .api-lookup-bubble strong {
+  min-width: 0;
   margin-bottom: 8px;
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.api-lookup-header strong {
+  margin-bottom: 0;
+}
+
+.api-lookup-definition-link {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-family: var(--ui);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
 }
 
 .api-lookup-context,
@@ -818,6 +868,7 @@ code {
   border: 1px solid var(--line);
   background: var(--paper);
   overflow: auto;
+  white-space: pre;
 }
 
 .api-lookup-bubble pre code {
@@ -825,6 +876,7 @@ code {
   background: transparent;
   font-family: var(--mono);
   padding: 10px;
+  white-space: inherit;
 }
 
 .reference-file-pager {

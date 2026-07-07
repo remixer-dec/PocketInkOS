@@ -166,6 +166,10 @@ void rebootDevice() { ESP.restart(); }
 
 void powerOffDevice() {
   disableWirelessForSleep();
+  emergencyPowerOffDevice();
+}
+
+void emergencyPowerOffDevice() {
   holdSleepRails(false);
   releasePowerLatch();
   delay(250);

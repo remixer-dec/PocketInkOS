@@ -14,6 +14,7 @@ struct StatusBarSnapshot {
   const char *timeText;
   const BatterySnapshot *battery;
   char wifiIcon;
+  bool usbConnected;
 };
 
 /// Draws date/time, battery, and connectivity indicators into the display.

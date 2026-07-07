@@ -95,7 +95,6 @@ void WordleApp::reset() {
   inputText = "";
   row = 0;
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
   press.clear();
   pendingAction = PENDING_NONE;
@@ -184,7 +183,6 @@ bool WordleApp::openKeyboardFromButton() {
   }
   if (keyboardOpen) {
     keyboardOpen = false;
-    clearActiveMenuButtonConsumer(this);
     return true;
   }
   openKeyboard();
@@ -277,7 +275,6 @@ void WordleApp::restoreContext(const uint8_t *buffer, size_t length) {
   inputText = "";
   keyboardOpen = false;
   keyboardMode = KEYBOARD_T9;
-  clearActiveMenuButtonConsumer(this);
 }
 
 bool WordleApp::handleMenuButton() {
@@ -306,7 +303,6 @@ bool WordleApp::handleMenuLongButton() {
     return false;
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   return true;
 }
 
@@ -319,7 +315,6 @@ void WordleApp::startPlayerGame() {
   state = STATE_ENTER_WORD;
   inputText = "";
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
 }
 
 void WordleApp::beginGuessing(const char *word) {
@@ -337,7 +332,6 @@ void WordleApp::beginGuessing(const char *word) {
   inputText = "";
   row = 0;
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   state = STATE_GUESSING;
 }
 
@@ -427,7 +421,6 @@ void WordleApp::openKeyboard() {
   inputText = "";
   keyboardMode = KEYBOARD_T9;
   keyboardOpen = true;
-  setActiveMenuButtonConsumer(this);
 }
 
 void WordleApp::drawKeyboard(Adafruit_GFX &gfx) {
@@ -463,7 +456,6 @@ void WordleApp::submit() {
     inputText = "";
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
 }
 
 void WordleApp::copyCurrentWord(char *word) const {

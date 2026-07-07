@@ -50,6 +50,8 @@ static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
 bool batteryShutdownStarted = false;
 bool inactivitySleepStarted = false;
 bool lowPowerSleepClockWake = false;
+bool usbConnectionKnown = false;
+bool lastUsbConnected = false;
 unsigned long lastBatteryRefreshAt = 0;
 unsigned long lastUserActivityAt = 0;
 
@@ -63,6 +65,7 @@ void shutdownForLowBattery();
 void renderLowBatteryScreen();
 void renderPowerOffScreen();
 void renderSleepClockScreen(bool partialUpdate = false);
+void refreshUsbConnectionState();
 void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock);
 uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix);
 uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds);
@@ -133,11 +136,28 @@ void refreshBatteryAndCheckCutoff() {
   }
 }
 
+void refreshUsbConnectionState() {
+  const bool connected = usbConnected();
+  if (!usbConnectionKnown) {
+    usbConnectionKnown = true;
+    lastUsbConnected = connected;
+    return;
+  }
+  if (connected == lastUsbConnected) {
+    return;
+  }
+  lastUsbConnected = connected;
+  if (connected) {
+    noteUserActivity();
+  }
+  shell.markDirty();
+}
+
 void enterInactivityDeepSleep() {
   if (batteryShutdownStarted || inactivitySleepStarted) {
     return;
   }
-  if (usbDataConnected()) {
+  if (usbConnected()) {
     noteUserActivity();
     return;
   }
@@ -156,6 +176,10 @@ unsigned long inactivityDeepSleepMs() {
 
 void checkInactivitySleep() {
   if (batteryShutdownStarted || inactivitySleepStarted) {
+    return;
+  }
+  if (usbConnected()) {
+    noteUserActivity();
     return;
   }
   if (millis() - lastUserActivityAt >= inactivityDeepSleepMs()) {
@@ -474,6 +498,8 @@ void loop() {
     delay(1);
     return;
   }
+
+  refreshUsbConnectionState();
 
   checkInactivitySleep();
   if (inactivitySleepStarted) {

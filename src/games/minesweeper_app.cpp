@@ -1,4 +1,5 @@
 #include "games/minesweeper_app.h"
+#include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
 
 #include <stdint.h>
@@ -10,6 +11,12 @@ static const int CELL_SIZE = 34;
 static const int MODE_Y = 188;
 static const UiRect OPEN_BUTTON = {16, MODE_Y, 76, 12};
 static const UiRect FLAG_BUTTON = {108, MODE_Y, 76, 12};
+static const int8_t OPEN_MODE_ID = 0;
+static const int8_t FLAG_MODE_ID = 1;
+static const SelectButtonOption MODE_BUTTONS[] = {
+    {OPEN_BUTTON, "OPEN", OPEN_MODE_ID},
+    {FLAG_BUTTON, "FLAG", FLAG_MODE_ID},
+};
 static const uint8_t MINESWEEPER_CONTEXT_VERSION = 1;
 
 static uint32_t packMask(const bool cells[], int count) {
@@ -107,17 +114,14 @@ void MinesweeperApp::draw(Adafruit_GFX &gfx) {
     }
   }
 
-  uiDrawButton(gfx, OPEN_BUTTON, "OPEN", !flagMode);
-  uiDrawButton(gfx, FLAG_BUTTON, "FLAG", flagMode);
+  SelectButtonGroup(MODE_BUTTONS, 2)
+      .draw(gfx, flagMode ? FLAG_MODE_ID : OPEN_MODE_ID);
 }
 
 bool MinesweeperApp::handleTouch(const TouchPoint &point) {
-  if (uiTouchContains(OPEN_BUTTON, point)) {
-    flagMode = false;
-    return true;
-  }
-  if (uiTouchContains(FLAG_BUTTON, point)) {
-    flagMode = true;
+  int8_t mode = -1;
+  if (SelectButtonGroup(MODE_BUTTONS, 2).hitTest(point, mode)) {
+    flagMode = mode == FLAG_MODE_ID;
     return true;
   }
 

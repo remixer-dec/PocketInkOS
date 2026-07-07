@@ -9,6 +9,7 @@
 #include "sys/system_config.h"
 #include "ui/icon_ascii_font.h"
 #include "ui/components/list_component.h"
+#include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -415,7 +416,7 @@ void WifiApp::reset() {
   view = VIEW_NETWORKS;
   popupOpen = false;
   popupConfirm = false;
-  pressedButton = -1;
+  press.clear();
   devicePopupOpen = false;
   passwordInput[0] = '\0';
   networkScanState = SCAN_IDLE;
@@ -463,11 +464,13 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
   } else {
     drawNetworks(gfx);
   }
-  pressedButton = -1;
 }
 
 bool WifiApp::update() {
   bool dirty = wifiManager.update();
+  if (press.update()) {
+    dirty = true;
+  }
 
   if (networkScanState != SCAN_RUNNING) {
     releasePingSlotsIfIdle();
@@ -552,7 +555,6 @@ bool WifiApp::update() {
 }
 
 bool WifiApp::handleTouch(const TouchPoint &point) {
-  pressedButton = -1;
   if (view == VIEW_PASSWORD) {
     handlePasswordTouch(point);
   } else if (view == VIEW_DEVICES) {
@@ -928,11 +930,11 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   if (scanRequested && !scanDone && displayState() != WIFI_DISPLAY_OFF) {
     drawLoadingIndicator(gfx, 0, 0);
     if (displayState() != WIFI_DISPLAY_OFF) {
-      uiDrawButton(gfx, SCAN_BUTTON, "SCAN", pressedButton == 0);
+      uiDrawButton(gfx, SCAN_BUTTON, "SCAN", press.isPressed(0));
     }
     uiDrawButton(gfx, WIFI_TOGGLE_BUTTON,
                  displayState() == WIFI_DISPLAY_OFF ? "ON" : "OFF",
-                 pressedButton == 1);
+                 press.isPressed(1));
     if (popupOpen) {
       drawPopup(gfx);
     }
@@ -989,11 +991,11 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   }
 
   if (displayState() != WIFI_DISPLAY_OFF) {
-    uiDrawButton(gfx, SCAN_BUTTON, "SCAN", pressedButton == 0);
+    uiDrawButton(gfx, SCAN_BUTTON, "SCAN", press.isPressed(0));
   }
   uiDrawButton(gfx, WIFI_TOGGLE_BUTTON,
                displayState() == WIFI_DISPLAY_OFF ? "ON" : "OFF",
-               pressedButton == 1);
+               press.isPressed(1));
   if (popupOpen) {
     drawPopup(gfx);
   }
@@ -1133,7 +1135,7 @@ void WifiApp::drawPopup(Adafruit_GFX &gfx) {
 }
 
 void WifiApp::drawPassword(Adafruit_GFX &gfx) {
-  uiDrawButton(gfx, PASSWORD_CANCEL_BUTTON, "CANCEL", pressedButton == 6);
+  uiDrawButton(gfx, PASSWORD_CANCEL_BUTTON, "CANCEL", press.isPressed(6));
   gfx.setTextSize(1);
   gfx.setCursor(68, 10);
   gfx.print("Password");
@@ -1170,9 +1172,13 @@ void WifiApp::drawDeviceTabs(Adafruit_GFX &gfx) {
 
   UiRect tab1 = {tab1X, TAB_Y, TAB_W, TAB_H};
   UiRect tab2 = {tab2X, TAB_Y, TAB_W, TAB_H};
+  const SelectButtonOption tabs[] = {
+      {tab1, "INFO", static_cast<int8_t>(TAB_INFO)},
+      {tab2, "SCAN", static_cast<int8_t>(TAB_NETSCAN)},
+  };
 
-  uiDrawButton(gfx, tab1, "INFO", deviceTab == TAB_INFO, 1);
-  uiDrawButton(gfx, tab2, "SCAN", deviceTab == TAB_NETSCAN, 1);
+  SelectButtonGroup(tabs, 2).draw(gfx, static_cast<int8_t>(deviceTab),
+                                  nullptr, 1);
 
   gfx.drawLine(0, CONTENT_Y - 1, EPD_WIDTH - 1, CONTENT_Y - 1, 1);
 }
@@ -1223,7 +1229,7 @@ void WifiApp::drawInfoTab(Adafruit_GFX &gfx) {
     gfx.print(value);
   }
 
-  uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", pressedButton == 4);
+  uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
 }
 
 void WifiApp::drawNetworkDeviceRow(Adafruit_GFX &gfx, uint16_t index,
@@ -1275,8 +1281,8 @@ void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
     gfx.getTextBounds(msg, 0, 0, &tx, &ty, &tw, &th);
     gfx.setCursor((EPD_WIDTH - static_cast<int16_t>(tw)) / 2 - tx, 80);
     gfx.print(msg);
-    uiDrawButton(gfx, DEVICE_SCAN_BUTTON, "SCAN", pressedButton == 5);
-    uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", pressedButton == 4);
+    uiDrawButton(gfx, DEVICE_SCAN_BUTTON, "SCAN", press.isPressed(5));
+    uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
     return;
   }
 
@@ -1291,7 +1297,7 @@ void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
       drawNetworkDeviceRow(gfx, idx, i);
     }
     drawLoadingIndicator(gfx, 0, 0);
-    uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", pressedButton == 4);
+    uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
     return;
   }
 
@@ -1320,8 +1326,8 @@ void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
   gfx.print("Found: ");
   gfx.print(static_cast<int>(networkScanDeviceCount));
 
-  uiDrawButton(gfx, DEVICE_SCAN_BUTTON, "SCAN", pressedButton == 5);
-  uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", pressedButton == 4);
+  uiDrawButton(gfx, DEVICE_SCAN_BUTTON, "SCAN", press.isPressed(5));
+  uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
 }
 
 void WifiApp::drawDevicePopup(Adafruit_GFX &gfx) {
@@ -1358,8 +1364,8 @@ void WifiApp::drawDevicePopup(Adafruit_GFX &gfx) {
 
   UiRect quickBtn = devicePopupButtonRect(0, 2);
   UiRect fullBtn = devicePopupButtonRect(1, 2);
-  uiDrawButton(gfx, quickBtn, "QUICK", pressedButton == 2);
-  uiDrawButton(gfx, fullBtn, "FULL", pressedButton == 3);
+  uiDrawButton(gfx, quickBtn, "QUICK", press.isPressed(2));
+  uiDrawButton(gfx, fullBtn, "FULL", press.isPressed(3));
 }
 
 void WifiApp::drawPortProgress(Adafruit_GFX &gfx, int16_t x, int16_t y,
@@ -1446,8 +1452,9 @@ void WifiApp::drawPortScan(Adafruit_GFX &gfx) {
     gfx.setTextColor(1);
   }
 
-  uiDrawButton(gfx, DEVICE_BACK_BUTTON, portScanState == PORT_DONE ? "DONE" : "CANCEL",
-               pressedButton == 4);
+  uiDrawButton(gfx, DEVICE_BACK_BUTTON,
+               portScanState == PORT_DONE ? "DONE" : "CANCEL",
+               press.isPressed(4));
 }
 
 void WifiApp::drawStatusIcon(Adafruit_GFX &gfx, int16_t x, int16_t y) const {
@@ -1686,12 +1693,12 @@ void WifiApp::advancePortScan() {
 
 void WifiApp::handleNetworkTouch(const TouchPoint &point) {
   if (displayState() != WIFI_DISPLAY_OFF && uiContains(SCAN_BUTTON, point)) {
-    pressedButton = 0;
+    press.press(0);
     scanNetworks();
     return;
   }
   if (uiContains(WIFI_TOGGLE_BUTTON, point)) {
-    pressedButton = 1;
+    press.press(1);
     if (displayState() == WIFI_DISPLAY_OFF) {
       connect();
     } else {
@@ -1699,7 +1706,6 @@ void WifiApp::handleNetworkTouch(const TouchPoint &point) {
     }
     return;
   }
-  pressedButton = -1;
   const uint8_t savedCount = savedNetworkCount();
   const uint16_t total = savedCount + visibleScanNetworkCount();
   if (point.x >= NETWORK_LIST_SPLIT_X && point.y >= 16 && point.y < 170) {
@@ -1769,7 +1775,7 @@ void WifiApp::handlePopupTouch(const TouchPoint &point) {
 
 void WifiApp::handlePasswordTouch(const TouchPoint &point) {
   if (uiContains(PASSWORD_CANCEL_BUTTON, point)) {
-    pressedButton = 6;
+    press.press(6);
     view = VIEW_NETWORKS;
     return;
   }
@@ -1811,11 +1817,14 @@ void WifiApp::handleDeviceTabsTouch(const TouchPoint &point) {
   int16_t tab2X = tab1X + TAB_W + TAB_GAP;
   UiRect tab1 = {tab1X, TAB_Y, TAB_W, TAB_H};
   UiRect tab2 = {tab2X, TAB_Y, TAB_W, TAB_H};
+  const SelectButtonOption tabs[] = {
+      {tab1, "INFO", static_cast<int8_t>(TAB_INFO)},
+      {tab2, "SCAN", static_cast<int8_t>(TAB_NETSCAN)},
+  };
 
-  if (uiContains(tab1, point)) {
-    deviceTab = TAB_INFO;
-  } else if (uiContains(tab2, point)) {
-    deviceTab = TAB_NETSCAN;
+  int8_t nextTab = -1;
+  if (SelectButtonGroup(tabs, 2).hitTest(point, nextTab, 0)) {
+    deviceTab = static_cast<DeviceTab>(nextTab);
   }
 }
 
@@ -1859,7 +1868,7 @@ bool WifiApp::fetchPlainTextUrl(const char *url, char *out,
 
 void WifiApp::handleInfoTabTouch(const TouchPoint &point) {
   if (uiContains(DEVICE_BACK_BUTTON, point)) {
-    pressedButton = 4;
+    press.press(4);
     view = VIEW_NETWORKS;
     networkScanState = SCAN_IDLE;
     freeNetDevices();
@@ -1892,7 +1901,7 @@ void WifiApp::handleInfoTabTouch(const TouchPoint &point) {
 
 void WifiApp::handleNetScanTabTouch(const TouchPoint &point) {
   if (uiContains(DEVICE_BACK_BUTTON, point)) {
-    pressedButton = 4;
+    press.press(4);
     view = VIEW_NETWORKS;
     networkScanState = SCAN_IDLE;
     freeNetDevices();
@@ -1901,7 +1910,7 @@ void WifiApp::handleNetScanTabTouch(const TouchPoint &point) {
   }
 
   if (uiContains(DEVICE_SCAN_BUTTON, point)) {
-    pressedButton = 5;
+    press.press(5);
     if (networkScanState == SCAN_IDLE || networkScanState == SCAN_DONE) {
       networkScanState = SCAN_PENDING;
       networkScanDeviceCount = 0;
@@ -1939,7 +1948,7 @@ void WifiApp::handleDevicePopupTouch(const TouchPoint &point) {
   UiRect fullBtn = devicePopupButtonRect(1, 2);
 
   if (uiContains(quickBtn, point)) {
-    pressedButton = 2;
+    press.press(2);
     devicePopupOpen = false;
     if (selectedDeviceIndex >= 0 &&
         static_cast<uint16_t>(selectedDeviceIndex) < networkScanDeviceCount) {
@@ -1952,7 +1961,7 @@ void WifiApp::handleDevicePopupTouch(const TouchPoint &point) {
   }
 
   if (uiContains(fullBtn, point)) {
-    pressedButton = 3;
+    press.press(3);
     devicePopupOpen = false;
     if (selectedDeviceIndex >= 0 &&
         static_cast<uint16_t>(selectedDeviceIndex) < networkScanDeviceCount) {
@@ -1967,7 +1976,7 @@ void WifiApp::handleDevicePopupTouch(const TouchPoint &point) {
 
 void WifiApp::handlePortScanTouch(const TouchPoint &point) {
   if (uiContains(DEVICE_BACK_BUTTON, point)) {
-    pressedButton = 4;
+    press.press(4);
     portScanState = PORT_IDLE;
     freePortResults();
     return;

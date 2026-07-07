@@ -16,12 +16,11 @@
 
 /// Enumerates shell screens. Apps use SCREEN_APP plus AppDefinition metadata.
 enum Screen {
-  SCREEN_HOME,
-  SCREEN_KEYBOARD,
-  SCREEN_T9_KEYBOARD,
-  SCREEN_QWERTY_ZOOM_KEYBOARD,
-  SCREEN_MENU,
-  SCREEN_APP
+  SCREEN_HOME = 0,
+  SCREEN_T9_KEYBOARD = 2,
+  SCREEN_QWERTY_ZOOM_KEYBOARD = 3,
+  SCREEN_MENU = 4,
+  SCREEN_APP = 5
 };
 
 /// Groups launcher entries into menu pages.

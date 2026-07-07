@@ -1,3 +1,7 @@
+/// Shell-facing Wi-Fi state and control helpers. The actual network service
+/// lives in `src/sys/wifi_manager.h`; this facade keeps status bar, quick
+/// settings, retained shell state, and network app hosts behind the same
+/// compile-time boundary.
 #ifndef SHELL_CONNECTIVITY_H
 #define SHELL_CONNECTIVITY_H
 

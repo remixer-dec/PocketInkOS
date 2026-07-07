@@ -90,104 +90,6 @@ AppScreen<AiApp, true> aiScreen(aiApp);
 AppScreen<WeatherApp, true> weatherScreen(weatherApp);
 #endif
 
-AppEventResult dirtyIfHandled(bool handled) {
-  return handled ? AppEventResult::Dirty : AppEventResult::Unhandled;
-}
-
-AppEventResult dirtyIfUnhandled(bool handled) {
-  return handled ? AppEventResult::Dirty : AppEventResult::Unhandled;
-}
-
-void startPaint() { paintApp.start(display); }
-void stopPaint() { paintApp.stop(); }
-void handlePaintRawTouch(const TouchEvent &event) {
-  paintApp.handleTouchEvent(event);
-}
-void startDeghost() { deghostApp.start(display); }
-void startGfx() { gfxApp.start(display); }
-void stopGfx() { gfxApp.release(); }
-
-AppEventResult requestQuit() { return AppEventResult::QuitRequested; }
-size_t saveTicTacToeContext(uint8_t *buffer, size_t capacity) {
-  return ticTacToe.saveContext(buffer, capacity);
-}
-void restoreTicTacToeContext(const uint8_t *buffer, size_t length) {
-  ticTacToe.restoreContext(buffer, length);
-}
-size_t saveMinesweeperContext(uint8_t *buffer, size_t capacity) {
-  return minesweeper.saveContext(buffer, capacity);
-}
-void restoreMinesweeperContext(const uint8_t *buffer, size_t length) {
-  minesweeper.restoreContext(buffer, length);
-}
-size_t saveHangmanContext(uint8_t *buffer, size_t capacity) {
-  return hangman.saveContext(buffer, capacity);
-}
-void restoreHangmanContext(const uint8_t *buffer, size_t length) {
-  hangman.restoreContext(buffer, length);
-}
-size_t saveSudokuContext(uint8_t *buffer, size_t capacity) {
-  return sudoku.saveContext(buffer, capacity);
-}
-void restoreSudokuContext(const uint8_t *buffer, size_t length) {
-  sudoku.restoreContext(buffer, length);
-}
-size_t saveWordleContext(uint8_t *buffer, size_t capacity) {
-  return wordle.saveContext(buffer, capacity);
-}
-void restoreWordleContext(const uint8_t *buffer, size_t length) {
-  wordle.restoreContext(buffer, length);
-}
-size_t saveChessContext(uint8_t *buffer, size_t capacity) {
-  return chess.saveContext(buffer, capacity);
-}
-void restoreChessContext(const uint8_t *buffer, size_t length) {
-  chess.restoreContext(buffer, length);
-}
-size_t saveQrContext(uint8_t *buffer, size_t capacity) {
-  return qrApp.saveContext(buffer, capacity);
-}
-void restoreQrContext(const uint8_t *buffer, size_t length) {
-  qrApp.restoreContext(buffer, length);
-}
-size_t saveFilesContext(uint8_t *buffer, size_t capacity) {
-  return filesApp.saveContext(buffer, capacity);
-}
-void restoreFilesContext(const uint8_t *buffer, size_t length) {
-  filesApp.restoreContext(buffer, length);
-}
-
-AppEventResult handleHangmanPower() {
-  return dirtyIfHandled(hangman.openKeyboardFromButton());
-}
-AppEventResult handleWordlePower() {
-  return dirtyIfHandled(wordle.openKeyboardFromButton());
-}
-AppEventResult handleMinesweeperPower() {
-  return dirtyIfHandled(minesweeper.handlePowerButton());
-}
-AppEventResult handlePaintPower() {
-  paintApp.clear();
-  return AppEventResult::Handled;
-}
-AppEventResult handleDeghostPower() {
-  return dirtyIfHandled(deghostApp.handlePowerButton());
-}
-AppEventResult handleDeghostMenu() {
-  return deghostApp.handleBackButton();
-}
-AppEventResult handleGfxPower() {
-  return dirtyIfHandled(gfxApp.handlePowerButton());
-}
-AppEventResult handleFilesMenu() {
-  if (filesApp.handleMenuButton()) {
-    return AppEventResult::Dirty;
-  }
-  return AppEventResult::Unhandled;
-}
-AppEventResult handleFilesPower() {
-  return dirtyIfHandled(filesApp.handlePowerButton());
-}
 AppEventResult handleChessMenu() {
   if (chess.handleMenuButton()) {
     return AppEventResult::Dirty;
@@ -223,42 +125,12 @@ AppEventResult handleChessPower() {
 }
 
 #if ENABLE_NETWORK_APPS
-AppEventResult handleRedditMenu() {
-  return dirtyIfUnhandled(redditApp.handleMenuButton());
-}
-AppEventResult handleRedditPower() {
-  return dirtyIfHandled(redditApp.handlePowerButton());
-}
-void releaseReddit() { redditApp.release(); }
 AppEventResult handleHnMenu() {
   if (hnApp.handleMenuButton()) {
     return AppEventResult::Dirty;
   }
   return AppEventResult::GoMenu;
 }
-AppEventResult handleHnPower() {
-  return dirtyIfHandled(hnApp.handlePowerButton());
-}
-void releaseHn() { hnApp.release(); }
-AppEventResult handleAiPower() {
-  return dirtyIfHandled(aiApp.handlePowerButton());
-}
-void stopAiAudio() { aiApp.stopAudio(); }
-void releaseAi() { aiApp.release(); }
-void releaseWeather() { weatherApp.release(); }
-
-#endif
-
-#if ENABLE_TTS
-void stopTtsAudio() { ttsApp.stopAudio(); }
-AppEventResult handleTtsMenu() { return dirtyIfHandled(ttsApp.handleMenuButton()); }
-AppEventResult handleTtsMenuDouble() {
-  return dirtyIfHandled(ttsApp.handleMenuDoubleButton());
-}
-AppEventResult handleTtsMenuLong() {
-  return dirtyIfHandled(ttsApp.handleMenuLongButton());
-}
-AppEventResult handleTtsPower() { return dirtyIfHandled(ttsApp.handlePowerButton()); }
 #endif
 
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
@@ -319,147 +191,16 @@ AppDefinition withInactivityDeepSleep(AppDefinition app, uint32_t timeoutMs) {
   return app;
 }
 
-AppBehavior powerBehavior(AppEventHandler handler) {
-  AppBehavior behavior;
-  behavior.onPower = handler;
-  return behavior;
-}
-
-AppBehavior contextBehavior(AppSaveContextHandler save,
-                            AppRestoreContextHandler restore) {
-  AppBehavior behavior;
-  behavior.onSaveContext = save;
-  behavior.onRestoreContext = restore;
-  return behavior;
-}
-
-AppBehavior powerContextBehavior(AppEventHandler handler,
-                                 AppSaveContextHandler save,
-                                 AppRestoreContextHandler restore) {
-  AppBehavior behavior = powerBehavior(handler);
-  behavior.onSaveContext = save;
-  behavior.onRestoreContext = restore;
-  return behavior;
-}
-
-AppBehavior chessBehavior() {
-  AppBehavior behavior;
-  behavior.onMenu = handleChessMenu;
-  behavior.onMenuDouble = handleChessMenuDouble;
-  behavior.onMenuLong = handleChessMenuLong;
-  behavior.onPower = handleChessPower;
-  behavior.onSaveContext = saveChessContext;
-  behavior.onRestoreContext = restoreChessContext;
-  return behavior;
-}
-
-AppBehavior gfxBehavior() {
-  AppBehavior behavior;
-  behavior.onEnter = startGfx;
-  behavior.onPower = handleGfxPower;
-  behavior.onRelease = stopGfx;
-  return behavior;
-}
-
-AppBehavior filesBehavior() {
-  AppBehavior behavior;
-  behavior.onMenu = handleFilesMenu;
-  behavior.onPower = handleFilesPower;
-  behavior.onSaveContext = saveFilesContext;
-  behavior.onRestoreContext = restoreFilesContext;
-  return behavior;
-}
-
-AppBehavior paintBehavior() {
-  AppBehavior behavior;
-  behavior.onEnter = startPaint;
-  behavior.onExit = stopPaint;
-  behavior.onPower = handlePaintPower;
-  behavior.onRawTouch = handlePaintRawTouch;
-  return behavior;
-}
-
-AppBehavior deghostBehavior() {
-  AppBehavior behavior;
-  behavior.onEnter = startDeghost;
-  behavior.onMenu = handleDeghostMenu;
-  behavior.onMenuLong = handleDeghostMenu;
-  behavior.onPower = handleDeghostPower;
-  return behavior;
-}
-
-AppBehavior settingsBehavior() {
-  AppBehavior behavior;
-  behavior.onMenu = requestQuit;
-  return behavior;
-}
-
-AppBehavior contactLinksBehavior() {
-  AppBehavior behavior;
-  behavior.onPower = []() { return AppEventResult::GoHome; };
-  return behavior;
-}
-
 const AppDefinition contactLinksApp =
     builtInApp("contact_links", "contact", "C", MENU_APPS, &contactLinksScreen,
-               []() { contactLinks.reset(); }, contactLinksBehavior());
+               []() { contactLinks.reset(); },
+               defaultBehavior()
+                   .withPowerBtn([]() { return AppEventResult::GoHome; })
+                   .build());
 
 #if ENABLE_NETWORK_APPS
-AppBehavior redditBehavior() {
-  AppBehavior behavior;
-  behavior.onMenu = handleRedditMenu;
-  behavior.onPower = handleRedditPower;
-  behavior.onRelease = releaseReddit;
-  return behavior;
-}
-
-AppBehavior hnBehavior() {
-  AppBehavior behavior;
-  behavior.onMenu = handleHnMenu;
-  behavior.onPower = handleHnPower;
-  behavior.onRelease = releaseHn;
-  return behavior;
-}
-
-AppBehavior aiBehavior() {
-  AppBehavior behavior;
-  behavior.onExit = stopAiAudio;
-  behavior.onPower = handleAiPower;
-  behavior.onRelease = releaseAi;
-  return behavior;
-}
-
-AppBehavior weatherBehavior() {
-  AppBehavior behavior;
-  behavior.onRelease = releaseWeather;
-  return behavior;
-}
-
 AppEventResult handleWifiMenu() {
   return dirtyIfHandled(wifiApp.handleMenuButton());
-}
-
-void openWifi() { wifiApp.open(); }
-void releaseWifi() { wifiApp.release(); }
-
-AppBehavior wifiBehavior() {
-  AppBehavior behavior;
-  behavior.onEnter = openWifi;
-  behavior.onMenu = handleWifiMenu;
-  behavior.onRelease = releaseWifi;
-  return behavior;
-}
-#endif
-
-#if ENABLE_TTS
-AppBehavior ttsBehavior() {
-  AppBehavior behavior;
-  behavior.onExit = stopTtsAudio;
-  behavior.onMenu = handleTtsMenu;
-  behavior.onMenuDouble = handleTtsMenuDouble;
-  behavior.onMenuLong = handleTtsMenuLong;
-  behavior.onPower = handleTtsPower;
-  return behavior;
 }
 #endif
 
@@ -468,69 +209,194 @@ AppBehavior ttsBehavior() {
 const AppDefinition builtInApps[] = {
     builtInApp("tictactoe", "tictac", "T", MENU_GAMES, &ticTacToeScreen,
                []() { ticTacToe.reset(); },
-               contextBehavior(saveTicTacToeContext, restoreTicTacToeContext)),
+               defaultContextBehavior<TicTacToeApp, ticTacToe>().build()),
     builtInApp("minesweeper", "mines", "M", MENU_GAMES, &minesweeperScreen,
                []() { minesweeper.reset(); },
-               powerContextBehavior(handleMinesweeperPower,
-                                    saveMinesweeperContext,
-                                    restoreMinesweeperContext)),
+               defaultContextBehavior<MinesweeperApp, minesweeper>()
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              MinesweeperApp, minesweeper,
+                              &MinesweeperApp::handlePowerButton>)
+                   .build()),
     builtInApp("hangman", "hangman", "H", MENU_GAMES, &hangmanScreen,
                []() { hangman.reset(); },
-               powerContextBehavior(handleHangmanPower, saveHangmanContext,
-                                    restoreHangmanContext)),
+               defaultContextBehavior<HangmanApp, hangman>()
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              HangmanApp, hangman,
+                              &HangmanApp::openKeyboardFromButton>)
+                   .withMenuBtn(dirtyIfHandledMethod<
+                                 HangmanApp, hangman,
+                                 &HangmanApp::handleMenuButton>,
+                             dirtyIfHandledMethod<
+                                 HangmanApp, hangman,
+                                 &HangmanApp::handleMenuDoubleButton>,
+                             dirtyIfHandledMethod<
+                                 HangmanApp, hangman,
+                                 &HangmanApp::handleMenuLongButton>)
+                   .build()),
     builtInApp("sudoku", "sudoku", "S", MENU_GAMES, &sudokuScreen,
                []() { sudoku.reset(); },
-               contextBehavior(saveSudokuContext, restoreSudokuContext)),
+               defaultContextBehavior<SudokuApp, sudoku>().build()),
     builtInApp("wordle", "wordle", "W", MENU_GAMES, &wordleScreen,
                []() { wordle.reset(); },
-               powerContextBehavior(handleWordlePower, saveWordleContext,
-                                    restoreWordleContext)),
+               defaultContextBehavior<WordleApp, wordle>()
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              WordleApp, wordle,
+                              &WordleApp::openKeyboardFromButton>)
+                   .withMenuBtn(dirtyIfHandledMethod<
+                                 WordleApp, wordle,
+                                 &WordleApp::handleMenuButton>,
+                             dirtyIfHandledMethod<
+                                 WordleApp, wordle,
+                                 &WordleApp::handleMenuDoubleButton>,
+                             dirtyIfHandledMethod<
+                                 WordleApp, wordle,
+                                 &WordleApp::handleMenuLongButton>)
+                   .build()),
     withInactivityDeepSleep(
         builtInApp("chess", "chess", "C", MENU_GAMES, &chessScreen,
-                   []() { chess.reset(); }, chessBehavior()),
+                   []() { chess.reset(); },
+                   defaultContextBehavior<ChessApp, chess>()
+                       .withMenuBtn(handleChessMenu, handleChessMenuDouble,
+                                 handleChessMenuLong)
+                       .withPowerBtn(handleChessPower)
+                       .build()),
         CHESS_INACTIVITY_DEEP_SLEEP_MS),
     builtInApp("gfx", "gfx", "G", MENU_APPS, &gfxScreen,
-               []() { gfxApp.reset(); }, gfxBehavior()),
+               []() { gfxApp.reset(); },
+               defaultBehavior()
+                   .withEnter([]() { gfxApp.start(display); })
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              GfxApp, gfxApp, &GfxApp::handlePowerButton>)
+                   .withRelease([]() { gfxApp.release(); })
+                   .build()),
     builtInApp("calculator", "calc", "=", MENU_APPS, &calculatorScreen,
                []() { calculator.reset(); }),
     builtInApp("calendar", "calendar", "C", MENU_APPS, &calendarScreen,
                []() { calendar.reset(); }),
     builtInApp("qr", "qr", "Q", MENU_APPS, &qrScreen,
                []() { qrApp.reset(); },
-               contextBehavior(saveQrContext, restoreQrContext)),
+               defaultContextBehavior<QrApp, qrApp>()
+                   .withMenuBtn(dirtyIfHandledMethod<QrApp, qrApp,
+                                                  &QrApp::handleMenuButton>,
+                             dirtyIfHandledMethod<
+                                 QrApp, qrApp,
+                                 &QrApp::handleMenuDoubleButton>,
+                             dirtyIfHandledMethod<
+                                 QrApp, qrApp,
+                                 &QrApp::handleMenuLongButton>)
+                   .build()),
     builtInApp("paint", "paint", "P", MENU_APPS, &paintScreen,
-               []() { paintApp.reset(); }, paintBehavior()),
+               []() { paintApp.reset(); },
+               defaultBehavior()
+                   .withEnter([]() { paintApp.start(display); })
+                   .withExit([]() { paintApp.stop(); })
+                   .withPowerBtn([]() {
+                     paintApp.clear();
+                     return AppEventResult::Handled;
+                   })
+                   .withRawTouch([](const TouchEvent &event) {
+                     paintApp.handleTouchEvent(event);
+                   })
+                   .build()),
     builtInApp("deghost", "deghost", "D", MENU_APPS, &deghostScreen,
                []() { deghostApp.reset(); },
-               deghostBehavior()),
+               defaultBehavior()
+                   .withEnter([]() { deghostApp.start(display); })
+                   .withMenuBtn([]() { return deghostApp.handleBackButton(); },
+                             nullptr,
+                             []() { return deghostApp.handleBackButton(); })
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              DeghostApp, deghostApp,
+                              &DeghostApp::handlePowerButton>)
+                   .build()),
     builtInIconAppWhen("files", "files", "N", MENU_APPS, &filesScreen,
                        sdStorageMounted,
                        []() { filesApp.reset(); },
-                       filesBehavior()),
+                       defaultContextBehavior<FilesApp, filesApp>()
+                           .withMenuBtn(dirtyIfHandledMethod<
+                              FilesApp, filesApp,
+                              &FilesApp::handleMenuButton>)
+                           .withPowerBtn(dirtyIfHandledMethod<
+                              FilesApp, filesApp,
+                              &FilesApp::handlePowerButton>)
+                           .build()),
     contactLinksApp,
     builtInAppWhen("settings", "settings", "S", MENU_APPS, &settingsScreen,
                    sdStorageMounted,
                    []() { settingsApp.reset(); },
-                   settingsBehavior())
+                   defaultBehavior()
+                       .withMenuBtn([]() {
+                         return AppEventResult::QuitRequested;
+                       })
+                       .build())
 #if ENABLE_TTS
     ,
     builtInAppWhen("tts", "tts", "S", MENU_APPS, &ttsScreen, sdStorageMounted,
                    []() { ttsApp.reset(); },
-                   ttsBehavior())
+                   defaultBehavior()
+                       .withExit([]() { ttsApp.stopAudio(); })
+                       .withMenuBtn(dirtyIfHandledMethod<
+                                     TtsApp, ttsApp,
+                                     &TtsApp::handleMenuButton>,
+                                 dirtyIfHandledMethod<
+                                     TtsApp, ttsApp,
+                                     &TtsApp::handleMenuDoubleButton>,
+                                 dirtyIfHandledMethod<
+                                     TtsApp, ttsApp,
+                                     &TtsApp::handleMenuLongButton>)
+                       .withPowerBtn(dirtyIfHandledMethod<
+                                  TtsApp, ttsApp,
+                                  &TtsApp::handlePowerButton>)
+                       .build())
 #endif
 #if ENABLE_NETWORK_APPS
     ,
     builtInApp("wifi", "wifi", "W", MENU_NETWORK, &wifiScreen,
-               []() { wifiApp.reset(); }, wifiBehavior()),
+               []() { wifiApp.reset(); },
+               defaultBehavior()
+                   .withEnter([]() { wifiApp.open(); })
+                   .withMenuBtn(handleWifiMenu)
+                   .withRelease([]() { wifiApp.release(); })
+                   .build()),
     builtInApp("reddit", "reddit", "R", MENU_NETWORK, &redditScreen,
-               []() { redditApp.reset(); }, redditBehavior()),
+               []() { redditApp.reset(); },
+               defaultBehavior()
+                   .withMenuBtn(dirtyIfHandledMethod<
+                      RedditApp, redditApp, &RedditApp::handleMenuButton>)
+                   .withPowerBtn(dirtyIfHandledMethod<
+                      RedditApp, redditApp, &RedditApp::handlePowerButton>)
+                   .withRelease([]() { redditApp.release(); })
+                   .build()),
     builtInApp("hn", "hn", "H", MENU_NETWORK, &hnScreen,
-               []() { hnApp.reset(); }, hnBehavior()),
+               []() { hnApp.reset(); },
+               defaultBehavior()
+                   .withMenuBtn(handleHnMenu)
+                   .withPowerBtn(dirtyIfHandledMethod<
+                      HnApp, hnApp, &HnApp::handlePowerButton>)
+                   .withRelease([]() { hnApp.release(); })
+                   .build()),
     builtInApp("ai", "ai", "A", MENU_NETWORK, &aiScreen,
-               []() { aiApp.reset(); }, aiBehavior()),
+               []() { aiApp.reset(); },
+               defaultBehavior()
+                   .withExit([]() { aiApp.stopAudio(); })
+                   .withMenuBtn(dirtyIfHandledMethod<
+                                 AiApp, aiApp,
+                                 &AiApp::handleMenuButton>,
+                             dirtyIfHandledMethod<
+                                 AiApp, aiApp,
+                                 &AiApp::handleMenuDoubleButton>,
+                             dirtyIfHandledMethod<
+                                 AiApp, aiApp,
+                                 &AiApp::handleMenuLongButton>)
+                   .withPowerBtn(dirtyIfHandledMethod<
+                              AiApp, aiApp, &AiApp::handlePowerButton>)
+                   .withRelease([]() { aiApp.release(); })
+                   .build()),
     builtInApp("weather", "weather", "C", MENU_NETWORK, &weatherScreen,
                []() { weatherApp.reset(); },
-               weatherBehavior())
+               defaultBehavior()
+                   .withRelease([]() { weatherApp.release(); })
+                   .build())
 #endif
 };
 

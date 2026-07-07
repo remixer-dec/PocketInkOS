@@ -20,6 +20,7 @@ void HwButton::update() {
       _cbActivity();
     _pressStartTime = currentMillis;
     _isLongPressing = false;
+    _isHolding = false;
   }
 
   // 2. Button is currently being held down
@@ -29,6 +30,13 @@ void HwButton::update() {
       _clickCount = 0;        // Cancel any pending double-click sequence
       if (_cbLongPressStart)
         _cbLongPressStart();
+    }
+    if (_holdMs > 0 && !_isHolding &&
+        (currentMillis - _pressStartTime >= _holdMs)) {
+      _isHolding = true;
+      _clickCount = 0;
+      if (_cbHold)
+        _cbHold();
     }
   }
 
@@ -71,6 +79,10 @@ void HwButton::attachDoubleClick(std::function<void()> callback) {
 }
 void HwButton::attachLongPressStart(std::function<void()> callback) {
   _cbLongPressStart = callback;
+}
+void HwButton::attachHold(std::function<void()> callback, uint16_t ms) {
+  _cbHold = callback;
+  _holdMs = ms;
 }
 void HwButton::attachActivity(std::function<void()> callback) {
   _cbActivity = callback;

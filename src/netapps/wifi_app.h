@@ -6,6 +6,7 @@
 #include "sys/wifi_manager.h"
 #include "sys/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/ui_helpers.h"
 
 struct WifiPingSlot;
 
@@ -97,7 +98,7 @@ private:
   bool scanDone = false;
   bool popupOpen = false;
   bool popupConfirm = false;
-  int8_t pressedButton = -1;
+  UiPressFeedback press;
   bool scanRequested = false;
   bool scanPending = false;
   bool pendingSaveAfterConnect = false;

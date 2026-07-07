@@ -54,7 +54,6 @@ void HangmanApp::reset() {
     guessed[i] = false;
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   keyboardMode = KEYBOARD_T9;
   press.clear();
   pendingAction = PENDING_NONE;
@@ -145,7 +144,6 @@ bool HangmanApp::openKeyboardFromButton() {
   }
   if (keyboardOpen) {
     keyboardOpen = false;
-    clearActiveMenuButtonConsumer(this);
     return true;
   }
   openKeyboard();
@@ -225,7 +223,6 @@ void HangmanApp::restoreContext(const uint8_t *buffer, size_t length) {
   inputText = "";
   keyboardOpen = false;
   keyboardMode = KEYBOARD_T9;
-  clearActiveMenuButtonConsumer(this);
 }
 
 bool HangmanApp::handleMenuButton() {
@@ -254,7 +251,6 @@ bool HangmanApp::handleMenuLongButton() {
     return false;
   }
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   return true;
 }
 
@@ -276,7 +272,6 @@ void HangmanApp::beginGuessing(const char *secret) {
   }
   misses = 0;
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   state = STATE_GUESSING;
 }
 
@@ -408,7 +403,6 @@ void HangmanApp::openKeyboard() {
   inputText = "";
   keyboardMode = KEYBOARD_T9;
   keyboardOpen = true;
-  setActiveMenuButtonConsumer(this);
 }
 
 void HangmanApp::drawKeyboard(Adafruit_GFX &gfx) {
@@ -432,7 +426,6 @@ void HangmanApp::submitInput() {
 
   char letter = firstInputLetter();
   keyboardOpen = false;
-  clearActiveMenuButtonConsumer(this);
   if (letter) {
     guessLetter(letter);
   }

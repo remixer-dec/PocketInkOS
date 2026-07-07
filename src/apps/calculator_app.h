@@ -2,6 +2,7 @@
 #define CALCULATOR_APP_H
 
 #include "sys/touch_input.h"
+#include "ui/ui_helpers.h"
 #include <Adafruit_GFX.h>
 
 class CalculatorApp {
@@ -16,8 +17,7 @@ private:
   char expression[32] = {};
   char result[24] = {};
   unsigned long lastDelAt = 0;
-  unsigned long pressedUntil = 0;
-  int8_t pressedButton = -1;
+  UiPressFeedback press;
   bool showingResult = false;
   bool error = false;
 
@@ -26,8 +26,6 @@ private:
   void backspace();
   void clear();
   void calculate();
-  void pressButton(int8_t id);
-  bool isButtonPressed(int8_t id) const;
   bool parseExpression(const char *text, double &value) const;
   void formatResult(double value);
 };

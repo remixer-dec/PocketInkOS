@@ -1,15 +1,11 @@
 #include "ui/text_input_controller.h"
 
 bool TextInputController::isScreen(Screen screen) const {
-  return screen == SCREEN_KEYBOARD || screen == SCREEN_T9_KEYBOARD ||
-         screen == SCREEN_QWERTY_ZOOM_KEYBOARD;
+  return screen == SCREEN_T9_KEYBOARD || screen == SCREEN_QWERTY_ZOOM_KEYBOARD;
 }
 
 bool TextInputController::toggleCaps(Screen screen) {
   switch (screen) {
-  case SCREEN_KEYBOARD:
-    keyboard.toggleCaps();
-    return true;
   case SCREEN_T9_KEYBOARD:
     t9Keyboard.toggleCaps();
     return true;
@@ -30,9 +26,6 @@ Screen TextInputController::nextMode(Screen screen) const {
 
 void TextInputController::draw(AppDisplay &display, Screen screen) {
   switch (screen) {
-  case SCREEN_KEYBOARD:
-    keyboard.draw(display, text);
-    break;
   case SCREEN_T9_KEYBOARD:
     t9Keyboard.draw(display, text);
     break;
@@ -46,8 +39,6 @@ void TextInputController::draw(AppDisplay &display, Screen screen) {
 
 bool TextInputController::handleTouch(Screen screen, const TouchPoint &point) {
   switch (screen) {
-  case SCREEN_KEYBOARD:
-    return applyEvent(keyboard.hitTest(point));
   case SCREEN_T9_KEYBOARD:
     return t9Keyboard.hitTest(point, text).action != KEY_NONE;
   case SCREEN_QWERTY_ZOOM_KEYBOARD:
