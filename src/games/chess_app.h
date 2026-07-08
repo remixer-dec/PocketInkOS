@@ -74,6 +74,7 @@ public:
   bool loadPosition(const char *fen, PieceColor sideToMove);
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
+  void release();
 
 private:
   struct Piece {
@@ -92,6 +93,8 @@ private:
     bool hasPromotion;
   };
 
+  static constexpr uint8_t SEARCH_MAX_PLY = 8;
+
   struct SearchSnapshot {
     Piece board[64];
     PieceColor turn;
@@ -104,7 +107,11 @@ private:
     bool blackQueensideRookMoved;
   };
 
-  static constexpr uint8_t SEARCH_MAX_PLY = 8;
+  struct SearchWorkspace {
+    SearchSnapshot snapshots[SEARCH_MAX_PLY] = {};
+    Move moves[SEARCH_MAX_PLY][96] = {};
+    int16_t ordering[SEARCH_MAX_PLY][96] = {};
+  };
 
   Piece board[64] = {};
   Mode mode = Mode::Setup;
@@ -153,13 +160,10 @@ private:
   unsigned long aiThinkingSinceMs = 0;
   bool aiBookEnabled = false;
   unsigned long menuCancelBlockUntilMs = 0;
-  bool hasLastTouchPoint = false;
-  int16_t lastTouchX = 0;
-  int16_t lastTouchY = 0;
-  SearchSnapshot searchSnapshots[SEARCH_MAX_PLY] = {};
-  Move searchMoves[SEARCH_MAX_PLY][96] = {};
-  int16_t searchOrdering[SEARCH_MAX_PLY][96] = {};
+  SearchWorkspace *searchWorkspace = nullptr;
 
+  bool ensureSearchWorkspace();
+  void releaseSearchWorkspace();
   void placeInitialPieces();
   void resetGameState();
   void startGame();
@@ -177,7 +181,6 @@ private:
   int boardRowToDisplayRow(int boardRow) const;
   void drawBoard(Adafruit_GFX &gfx);
   void drawExperimentalCoordinates(Adafruit_GFX &gfx);
-  void drawTouchMarker(Adafruit_GFX &gfx);
   void drawSetup(Adafruit_GFX &gfx);
   void drawHistory(Adafruit_GFX &gfx);
   void drawStatus(Adafruit_GFX &gfx);

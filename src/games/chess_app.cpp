@@ -3,15 +3,22 @@
 #include "sys/rtc_context.h"
 #include "ui/ui_helpers.h"
 #include <Arduino.h>
+#include <cstdlib>
 #include <cstring>
+#include <new>
+
+#if __has_include(<esp_heap_caps.h>)
+#include <esp_heap_caps.h>
+#define CHESS_APP_HAS_HEAP_CAPS 1
+#else
+#define CHESS_APP_HAS_HEAP_CAPS 0
+#endif
 
 static const int BOARD_X = 8;
 static const int BOARD_Y = 8;
 static const int BOARD_SIZE = 184;
 static const int CELL = BOARD_SIZE / 8;
 static const int BOARD_TOUCH_ASSIST = CELL / 2;
-static const int DISPLAY_WIDTH = 200;
-static const int DISPLAY_HEIGHT = 200;
 static const int AI_MOVE_LIMIT = 96;
 static const unsigned long AI3_TIME_BUDGET_MS = 2200;
 static const uint8_t AI3_MAX_DEPTH = 5;
@@ -33,6 +40,26 @@ static const UiRect PROMOTION_BUTTONS[4] = {{28, 94, 30, 24},
                                             {148, 94, 30, 24}};
 static const PieceType PROMOTION_TYPES[4] = {
     PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight};
+
+static void *chessAppAlloc(size_t bytes) {
+#if CHESS_APP_HAS_HEAP_CAPS
+  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (ptr != nullptr) {
+    return ptr;
+  }
+  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+#else
+  return malloc(bytes);
+#endif
+}
+
+static void chessAppFree(void *ptr) {
+#if CHESS_APP_HAS_HEAP_CAPS
+  heap_caps_free(ptr);
+#else
+  free(ptr);
+#endif
+}
 
 static uint8_t chessPromotionCode(PieceType type) {
   switch (type) {
@@ -195,9 +222,33 @@ static void drawCenteredText(Adafruit_GFX &gfx, const char *text, int y,
 }
 
 void ChessApp::reset() {
+  releaseSearchWorkspace();
   placeInitialPieces();
   resetGameState();
   mode = Mode::Setup;
+}
+
+void ChessApp::release() { releaseSearchWorkspace(); }
+
+bool ChessApp::ensureSearchWorkspace() {
+  if (searchWorkspace != nullptr) {
+    return true;
+  }
+  searchWorkspace =
+      static_cast<SearchWorkspace *>(chessAppAlloc(sizeof(SearchWorkspace)));
+  if (searchWorkspace == nullptr) {
+    return false;
+  }
+  new (searchWorkspace) SearchWorkspace();
+  return true;
+}
+
+void ChessApp::releaseSearchWorkspace() {
+  if (searchWorkspace != nullptr) {
+    searchWorkspace->~SearchWorkspace();
+  }
+  chessAppFree(searchWorkspace);
+  searchWorkspace = nullptr;
 }
 
 void ChessApp::resetGameState() {
@@ -762,10 +813,6 @@ bool ChessApp::handleMenuLongPress() {
 }
 
 bool ChessApp::handleTouch(const TouchPoint &point) {
-  hasLastTouchPoint = true;
-  lastTouchX = point.x;
-  lastTouchY = point.y;
-
   if (aiThinking) {
     return true;
   }
@@ -1077,7 +1124,6 @@ void ChessApp::draw(Adafruit_GFX &gfx) {
   } else if (aiThinking) {
     drawThinkingOverlay(gfx);
   }
-  drawTouchMarker(gfx);
 }
 
 void ChessApp::drawSetup(Adafruit_GFX &gfx) {
@@ -1244,39 +1290,6 @@ void ChessApp::drawMoveOutline(Adafruit_GFX &gfx, int square) {
   gfx.fillRect(x + CELL - 2 - dot / 2, centerY - dot / 2, dot, dot, color);
 }
 
-void ChessApp::drawTouchMarker(Adafruit_GFX &gfx) {
-  if (!hasLastTouchPoint) {
-    return;
-  }
-
-  const int gap = 3;
-  const int dot = 2;
-  struct Dot {
-    int16_t x;
-    int16_t y;
-    uint16_t color;
-  };
-  const Dot dots[4] = {
-      {static_cast<int16_t>(lastTouchX - gap),
-       static_cast<int16_t>(lastTouchY - gap), 1},
-      {static_cast<int16_t>(lastTouchX + gap),
-       static_cast<int16_t>(lastTouchY - gap), 0},
-      {static_cast<int16_t>(lastTouchX - gap),
-       static_cast<int16_t>(lastTouchY + gap), 0},
-      {static_cast<int16_t>(lastTouchX + gap),
-       static_cast<int16_t>(lastTouchY + gap), 1},
-  };
-
-  for (const Dot &markerDot : dots) {
-    if (markerDot.x < 0 || markerDot.y < 0 ||
-        markerDot.x + dot > DISPLAY_WIDTH ||
-        markerDot.y + dot > DISPLAY_HEIGHT) {
-      continue;
-    }
-    gfx.fillRect(markerDot.x, markerDot.y, dot, dot, markerDot.color);
-  }
-}
-
 void ChessApp::drawSelection(Adafruit_GFX &gfx, int square) {
   int row = square / 8;
   int col = square % 8;
@@ -1403,9 +1416,13 @@ void ChessApp::drawPiece(Adafruit_GFX &gfx, int row, int col,
   gfx.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
   int cursorX = x + (CELL - static_cast<int>(w)) / 2 - x1;
   int cursorY = y + (CELL - static_cast<int>(h)) / 2 - y1;
-  if (piece.type == PieceType::Rook && piece.color == PieceColor::Black &&
-      boardColor == BoardColor::Light) {
-    cursorY += 4;
+  if (piece.type == PieceType::Rook && piece.color == PieceColor::White &&
+      boardColor == BoardColor::Dark) {
+    cursorY -= 2;
+  } else if (piece.type == PieceType::Rook &&
+             piece.color == PieceColor::Black &&
+             boardColor == BoardColor::Light) {
+    cursorY += 2;
   }
   gfx.setCursor(cursorX, cursorY);
   gfx.print(text);
@@ -1888,7 +1905,10 @@ ChessApp::Move ChessApp::chooseAiMove() {
     return chooseAiMoveLevel3(AI3_TIME_BUDGET_MS);
   }
 
-  Move *moves = searchMoves[0];
+  if (!ensureSearchWorkspace()) {
+    return {-1, -1, PieceType::Queen, true};
+  }
+  Move *moves = searchWorkspace->moves[0];
   int count = 0;
   collectLegalMoves(turn, moves, AI_MOVE_LIMIT, count);
   if (count <= 0) {
@@ -1965,8 +1985,11 @@ bool ChessApp::chooseAiBookMove(Move &outMove) {
 }
 
 ChessApp::Move ChessApp::chooseAiMoveLevel3(unsigned long budgetMs) {
-  Move *rootMoves = searchMoves[0];
-  int16_t *ordering = searchOrdering[0];
+  if (!ensureSearchWorkspace()) {
+    return {-1, -1, PieceType::Queen, true};
+  }
+  Move *rootMoves = searchWorkspace->moves[0];
+  int16_t *ordering = searchWorkspace->ordering[0];
   int count = 0;
   collectLegalMoves(turn, rootMoves, AI_MOVE_LIMIT, count);
   if (count <= 0) {
@@ -2049,8 +2072,12 @@ int ChessApp::alphaBetaSearch(uint8_t depth, int alpha, int beta,
     return evaluateBoard(aiColor);
   }
 
-  Move *moves = searchMoves[ply];
-  int16_t *ordering = searchOrdering[ply];
+  if (searchWorkspace == nullptr) {
+    timedOut = true;
+    return evaluateBoard(aiColor);
+  }
+  Move *moves = searchWorkspace->moves[ply];
+  int16_t *ordering = searchWorkspace->ordering[ply];
   int count = 0;
   collectLegalMoves(turn, moves, AI_MOVE_LIMIT, count);
   int storedCount = count < AI_MOVE_LIMIT ? count : AI_MOVE_LIMIT;
@@ -2145,7 +2172,10 @@ int ChessApp::scoreMoveForLevel3(const Move &move, PieceColor perspective) const
 }
 
 void ChessApp::saveSearchSnapshot(uint8_t ply) {
-  SearchSnapshot &snapshot = searchSnapshots[ply];
+  if (searchWorkspace == nullptr) {
+    return;
+  }
+  SearchSnapshot &snapshot = searchWorkspace->snapshots[ply];
   for (int i = 0; i < 64; ++i) {
     snapshot.board[i] = board[i];
   }
@@ -2160,7 +2190,10 @@ void ChessApp::saveSearchSnapshot(uint8_t ply) {
 }
 
 void ChessApp::restoreSearchSnapshot(uint8_t ply) {
-  const SearchSnapshot &snapshot = searchSnapshots[ply];
+  if (searchWorkspace == nullptr) {
+    return;
+  }
+  const SearchSnapshot &snapshot = searchWorkspace->snapshots[ply];
   for (int i = 0; i < 64; ++i) {
     board[i] = snapshot.board[i];
   }
