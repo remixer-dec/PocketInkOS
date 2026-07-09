@@ -167,7 +167,10 @@ static uint32_t currentMicros() {
 }
 
 static uint8_t *scratchBuffer() {
-  static uint8_t buffer[INKEPUB_ZIP_BUFFER_SIZE];
+  static uint8_t *buffer = nullptr;
+  if (buffer == nullptr) {
+    buffer = static_cast<uint8_t *>(allocMemory(INKEPUB_ZIP_BUFFER_SIZE));
+  }
   return buffer;
 }
 
@@ -197,6 +200,9 @@ static uint32_t hashPath(std::string_view path) {
 static bool skipBytes(File &file, uint32_t bytes) {
   uint32_t chunk = bytes;
   uint8_t *buffer = scratchBuffer();
+  if (buffer == nullptr) {
+    return false;
+  }
   while (chunk > 0) {
     const size_t want =
         chunk < INKEPUB_ZIP_BUFFER_SIZE ? chunk : INKEPUB_ZIP_BUFFER_SIZE;
@@ -281,19 +287,23 @@ static bool readExactAt(File &file, uint32_t offset, uint8_t *out,
   return file.seek(offset) && file.read(out, size) == size;
 }
 
-static bool findEocd(File &file, uint32_t fileSize, uint32_t &outOffset) {
+static InkEpubResult findEocd(File &file, uint32_t fileSize,
+                              uint32_t &outOffset) {
   if (fileSize < 22U) {
-    return false;
+    return InkEpubResult::Format;
   }
   const uint32_t scanStart =
       fileSize > 65557U ? fileSize - 65557U : 0U;
   if (!file.seek(scanStart)) {
-    return false;
+    return InkEpubResult::Format;
   }
 
   uint32_t rolling = 0;
   uint32_t offset = scanStart;
   uint8_t *buffer = scratchBuffer();
+  if (buffer == nullptr) {
+    return InkEpubResult::Memory;
+  }
   bool found = false;
   while (offset < fileSize) {
     const uint32_t remaining = fileSize - offset;
@@ -313,7 +323,7 @@ static bool findEocd(File &file, uint32_t fileSize, uint32_t &outOffset) {
     }
     offset += static_cast<uint32_t>(got);
   }
-  return found;
+  return found ? InkEpubResult::Ok : InkEpubResult::Format;
 }
 
 static InkEpubResult buildZipIndex(File &file, ZipIndex &index) {
@@ -324,8 +334,11 @@ static InkEpubResult buildZipIndex(File &file, ZipIndex &index) {
   const uint32_t fileSize = static_cast<uint32_t>(rawFileSize);
   uint32_t eocdOffset = 0;
   uint8_t fixed[46];
-  if (!findEocd(file, fileSize, eocdOffset) ||
-      !readExactAt(file, eocdOffset, fixed, 22)) {
+  const InkEpubResult eocdResult = findEocd(file, fileSize, eocdOffset);
+  if (eocdResult != InkEpubResult::Ok) {
+    return eocdResult;
+  }
+  if (!readExactAt(file, eocdOffset, fixed, 22)) {
     return InkEpubResult::Format;
   }
   if (readLe32(fixed) != kZipEocdSig || readLe16(fixed + 4) != 0 ||
@@ -344,6 +357,9 @@ static InkEpubResult buildZipIndex(File &file, ZipIndex &index) {
 
   uint32_t cursor = cdOffset;
   uint8_t *buffer = scratchBuffer();
+  if (buffer == nullptr) {
+    return InkEpubResult::Memory;
+  }
   for (uint16_t i = 0; i < entryCount; i++) {
     if (file.read(fixed, sizeof(fixed)) != sizeof(fixed) ||
         readLe32(fixed) != kZipCentralSig) {
@@ -832,6 +848,9 @@ static InkEpubResult streamZipEntry(File &file, const ZipEntry &entry,
   reader.file = &file;
   reader.remaining = entry.compressedSize;
   reader.buffer = scratchBuffer();
+  if (reader.buffer == nullptr) {
+    return InkEpubResult::Memory;
+  }
 
   if (entry.method == kZipMethodStore) {
     while (reader.remaining > 0) {

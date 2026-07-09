@@ -259,6 +259,7 @@ const AppDefinition builtInApps[] = {
                        .withMenuBtn(handleChessMenu, handleChessMenuDouble,
                                  handleChessMenuLong)
                        .withPowerBtn(handleChessPower)
+                       .withRelease([]() { chess.release(); })
                        .build()),
         CHESS_INACTIVITY_DEEP_SLEEP_MS),
     builtInApp("gfx", "gfx", "G", MENU_APPS, &gfxScreen,
@@ -319,6 +320,7 @@ const AppDefinition builtInApps[] = {
                            .withPowerBtn(dirtyIfHandledMethod<
                               FilesApp, filesApp,
                               &FilesApp::handlePowerButton>)
+                           .withRelease([]() { filesApp.release(); })
                            .build()),
     contactLinksApp,
     builtInAppWhen("settings", "settings", "S", MENU_APPS, &settingsScreen,

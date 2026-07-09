@@ -6,6 +6,7 @@
 #include "fs/providers/inkreadable/inkepub.h"
 
 #include <Arduino.h>
+#include <new>
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,11 +53,6 @@ struct EpubImageCache {
   EpubImageCacheState state = EpubImageCacheState::Empty;
 };
 
-EpubImageCache &imageCache() {
-  static EpubImageCache cache;
-  return cache;
-}
-
 File openEpubProviderFile(const char *providerId, const char *path) {
   return openProviderPath(providerId, path);
 }
@@ -79,6 +75,18 @@ void freeEpubMemory(void *ptr) {
 #else
   free(ptr);
 #endif
+}
+
+EpubImageCache *imageCache(bool create = true) {
+  static EpubImageCache *cache = nullptr;
+  if (cache == nullptr && create) {
+    void *storage = allocEpubMemory(sizeof(EpubImageCache));
+    if (storage == nullptr) {
+      return nullptr;
+    }
+    cache = new (storage) EpubImageCache();
+  }
+  return cache;
 }
 
 void ensureInkEpubHooks() {
@@ -180,23 +188,34 @@ bool sameImageCache(const EpubImageCache &cache, const char *providerId,
 }
 
 void clearImageCache() {
-  EpubImageCache &cache = imageCache();
-  if (cache.data != nullptr) {
-    inkEpubFreeBuffer(cache.data);
-  }
-  cache = EpubImageCache();
-}
-
-void requestImageCache(const FileViewerRuntime &runtime) {
-  EpubImageCache &cache = imageCache();
-  if (sameImageCache(cache, runtime.providerId, runtime.path, runtime.offset)) {
+  EpubImageCache *cache = imageCache(false);
+  if (cache == nullptr) {
     return;
   }
+  if (cache->data != nullptr) {
+    inkEpubFreeBuffer(cache->data);
+  }
+  *cache = EpubImageCache();
+}
+
+bool requestImageCache(const FileViewerRuntime &runtime) {
+  EpubImageCache *cache = imageCache();
+  if (cache == nullptr) {
+    return false;
+  }
+  if (sameImageCache(*cache, runtime.providerId, runtime.path, runtime.offset)) {
+    return true;
+  }
   clearImageCache();
-  copyViewerText(cache.providerId, sizeof(cache.providerId), runtime.providerId);
-  copyViewerText(cache.path, sizeof(cache.path), runtime.path);
-  cache.page = runtime.offset;
-  cache.state = EpubImageCacheState::Loading;
+  cache = imageCache();
+  if (cache == nullptr) {
+    return false;
+  }
+  copyViewerText(cache->providerId, sizeof(cache->providerId), runtime.providerId);
+  copyViewerText(cache->path, sizeof(cache->path), runtime.path);
+  cache->page = runtime.offset;
+  cache->state = EpubImageCacheState::Loading;
+  return true;
 }
 
 void drawEpubImagePage(Adafruit_GFX &gfx, const FileViewerRuntime &runtime,
@@ -206,21 +225,28 @@ void drawEpubImagePage(Adafruit_GFX &gfx, const FileViewerRuntime &runtime,
     return;
   }
 
-  requestImageCache(runtime);
-  EpubImageCache &cache = imageCache();
-  if (cache.state == EpubImageCacheState::Loading) {
+  if (!requestImageCache(runtime)) {
+    drawEpubStatus(gfx, "ALLOC FAILED");
+    return;
+  }
+  EpubImageCache *cache = imageCache();
+  if (cache == nullptr) {
+    drawEpubStatus(gfx, "ALLOC FAILED");
+    return;
+  }
+  if (cache->state == EpubImageCacheState::Loading) {
     drawEpubStatus(gfx, "LOADING");
     return;
   }
-  if (cache.state == EpubImageCacheState::Error || cache.data == nullptr ||
-      cache.size == 0) {
-    drawEpubStatus(gfx, statusForResult(cache.result));
+  if (cache->state == EpubImageCacheState::Error || cache->data == nullptr ||
+      cache->size == 0) {
+    drawEpubStatus(gfx, statusForResult(cache->result));
     return;
   }
 
   const int16_t imageY = runtime.fullscreen ? kFullscreenEpubImageY : kEpubImageY;
   const int16_t imageH = runtime.fullscreen ? kFullscreenEpubImageH : kEpubImageH;
-  drawImageBuffer(gfx, cache.data, cache.size, extensionForRasterKind(cache.kind), kEpubImageX,
+  drawImageBuffer(gfx, cache->data, cache->size, extensionForRasterKind(cache->kind), kEpubImageX,
                   imageY, kEpubImageW, imageH, runtime.imageDither,
                   runtime.imageScaleToFit);
 }
@@ -326,22 +352,22 @@ uint8_t epubViewerProgress(const char *providerId, const char *path) {
 
 bool epubViewerImageLoading(const char *providerId, const char *path,
                             uint32_t page) {
-  EpubImageCache &cache = imageCache();
-  return sameImageCache(cache, providerId, path, page) &&
-         cache.state == EpubImageCacheState::Loading;
+  EpubImageCache *cache = imageCache(false);
+  return cache != nullptr && sameImageCache(*cache, providerId, path, page) &&
+         cache->state == EpubImageCacheState::Loading;
 }
 
 bool epubViewerContinueImage(const char *providerId, const char *path,
                              uint32_t page) {
   ensureInkEpubHooks();
-  EpubImageCache &cache = imageCache();
-  if (!sameImageCache(cache, providerId, path, page) ||
-      cache.state != EpubImageCacheState::Loading) {
+  EpubImageCache *cache = imageCache();
+  if (cache == nullptr || !sameImageCache(*cache, providerId, path, page) ||
+      cache->state != EpubImageCacheState::Loading) {
     return false;
   }
-  cache.result = inkEpubLoadImagePage(providerId, path, page, &cache.data,
-                                      &cache.size, &cache.kind);
-  cache.state = cache.result == InkEpubResult::Ok ? EpubImageCacheState::Ready
+  cache->result = inkEpubLoadImagePage(providerId, path, page, &cache->data,
+                                      &cache->size, &cache->kind);
+  cache->state = cache->result == InkEpubResult::Ok ? EpubImageCacheState::Ready
                                                   : EpubImageCacheState::Error;
   return true;
 }

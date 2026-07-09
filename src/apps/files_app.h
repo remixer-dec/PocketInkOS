@@ -28,6 +28,7 @@ public:
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
   bool consumePinkLaunch(char *path, size_t pathSize);
+  void release();
 
 private:
   enum class Mode : uint8_t { Scroll = 0, Select = 1, Split = 2 };
@@ -48,8 +49,8 @@ private:
 
   char currentPath[FILES_PATH_CAPACITY] = "/";
   char statusText[28] = {};
-  FileEntry entries[MAX_CACHED_ENTRIES] = {};
-  char entryNamePool[FILES_NAME_POOL_CAPACITY] = {};
+  FileEntry *entries = nullptr;
+  char *entryNamePool = nullptr;
   uint16_t entryCount = 0;
   uint16_t folderCount = 0;
   uint16_t entryNamePoolUsed = 0;
@@ -86,6 +87,8 @@ private:
   File directoryScanRoot;
   bool pendingPinkLaunch = false;
 
+  bool ensureDirectoryCache();
+  void releaseDirectoryCache();
   void loadDirectory();
   bool loadDirectoryFast(const FileProvider *provider);
   void finishDirectoryLoad();

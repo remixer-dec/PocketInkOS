@@ -251,8 +251,6 @@ void drawSvgViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
     return;
   }
 
-  static uint8_t raster[kRasterBytes];
-  memset(raster, 0, sizeof(raster));
   const int16_t imageX = runtime.fullscreen ? kFullscreenImageX : kImageX;
   const int16_t imageY = runtime.fullscreen ? kFullscreenImageY : kImageY;
   const int16_t imageW = runtime.fullscreen ? kFullscreenImageW : kImageW;
@@ -270,9 +268,18 @@ void drawSvgViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
     return;
   }
 
+  uint8_t *raster = static_cast<uint8_t *>(svgViewerAllocRaw(kRasterBytes));
+  if (raster == nullptr) {
+    isvg_free(&tape);
+    gfx.setCursor(56, 92);
+    gfx.print("ALLOC FAILED");
+    return;
+  }
+  memset(raster, 0, kRasterBytes);
   isvg_rasterize(&tape, raster, imageW, imageH);
   isvg_free(&tape);
   drawRaster(gfx, raster, imageX, imageY, imageW, imageH);
+  svgViewerFreeRaw(raster);
 }
 
 void scrollSvgViewer(FileViewerRuntime &, int8_t) {}

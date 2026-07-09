@@ -24,7 +24,7 @@ constexpr int kDataOutPin = 45;
 constexpr unsigned long kCodecPowerDelayMs = 50;
 constexpr unsigned long kAmpEnableDelayMs = 60;
 constexpr uint32_t kPlaybackTaskStackBytes = 8192;
-constexpr UBaseType_t kPlaybackTaskPriority = 1;
+constexpr UBaseType_t kPlaybackTaskPriority = 3;
 constexpr BaseType_t kPlaybackTaskCore = 1;
 constexpr unsigned long kTaskStopTimeoutMs = 300;
 constexpr int kI2cTimeoutMs = 100;
@@ -249,7 +249,6 @@ void AudioPlaybackRenderer::taskLoop() {
     if (!writeChunk(error, sizeof(error))) {
       break;
     }
-    vTaskDelay(pdMS_TO_TICKS(1));
   }
   playbackActive = false;
   taskRunning = false;

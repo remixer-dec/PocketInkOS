@@ -12,6 +12,14 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+
+#if __has_include(<esp_heap_caps.h>)
+#include <esp_heap_caps.h>
+#define FILES_APP_HAS_HEAP_CAPS 1
+#else
+#define FILES_APP_HAS_HEAP_CAPS 0
+#endif
 
 #if __has_include(<esp_rom_sys.h>)
 #include <esp_rom_sys.h>
@@ -107,6 +115,26 @@ void filesViewerSleepGuard(void *, bool active) {
   } else {
     lockscreenGuardRelease();
   }
+}
+
+void *filesAppAlloc(size_t bytes) {
+#if FILES_APP_HAS_HEAP_CAPS
+  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (ptr != nullptr) {
+    return ptr;
+  }
+  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+#else
+  return malloc(bytes);
+#endif
+}
+
+void filesAppFree(void *ptr) {
+#if FILES_APP_HAS_HEAP_CAPS
+  heap_caps_free(ptr);
+#else
+  free(ptr);
+#endif
 }
 
 struct FilesContextSnapshotV1 {
@@ -566,6 +594,7 @@ void fitMiddleEllipsis(Adafruit_GFX &gfx, const char *source, int16_t maxWidth,
 } // namespace
 
 void FilesApp::reset() {
+  releaseDirectoryCache();
   copyText(currentPath, sizeof(currentPath), "/");
   scrollOffset = 0;
   selectedIndex = NO_SELECTION;
@@ -588,6 +617,43 @@ void FilesApp::reset() {
   viewerPageJumpOpen = false;
   viewerPageInput = "";
   hasDirtyRegion = false;
+}
+
+void FilesApp::release() {
+  closeViewer();
+  directoryScanRoot = File();
+  directoryLoading = false;
+  releaseDirectoryCache();
+  viewerPageInput = "";
+}
+
+bool FilesApp::ensureDirectoryCache() {
+  if (entries != nullptr && entryNamePool != nullptr) {
+    return true;
+  }
+
+  if (entries == nullptr) {
+    entries = static_cast<FileEntry *>(
+        filesAppAlloc(sizeof(FileEntry) * MAX_CACHED_ENTRIES));
+  }
+  if (entryNamePool == nullptr) {
+    entryNamePool = static_cast<char *>(filesAppAlloc(FILES_NAME_POOL_CAPACITY));
+  }
+  if (entries == nullptr || entryNamePool == nullptr) {
+    releaseDirectoryCache();
+    return false;
+  }
+  return true;
+}
+
+void FilesApp::releaseDirectoryCache() {
+  filesAppFree(entries);
+  filesAppFree(entryNamePool);
+  entries = nullptr;
+  entryNamePool = nullptr;
+  entryCount = 0;
+  folderCount = 0;
+  entryNamePoolUsed = 0;
 }
 
 bool FilesApp::hasActiveSession() const {
@@ -727,6 +793,14 @@ void FilesApp::loadDirectory() {
   entryCount = 0;
   folderCount = 0;
   entryNamePoolUsed = 0;
+  if (!ensureDirectoryCache()) {
+    truncatedDirectory = false;
+    directoryLoading = false;
+    directoryScanRoot = File();
+    setStatus("ALLOC FAILED");
+    clampView();
+    return;
+  }
   entryNamePool[0] = '\0';
   truncatedDirectory = false;
   directoryLoading = false;
@@ -804,7 +878,9 @@ bool FilesApp::loadDirectoryFast(const FileProvider *provider) {
     entryCount = 0;
     folderCount = 0;
     entryNamePoolUsed = 0;
-    entryNamePool[0] = '\0';
+    if (entryNamePool != nullptr) {
+      entryNamePool[0] = '\0';
+    }
     truncatedDirectory = false;
     return false;
   }
@@ -969,7 +1045,8 @@ bool FilesApp::cacheDirectoryEntry(const char *name, bool directory,
   const size_t storedLength =
       sourceLength < FILES_NAME_CAPACITY ? sourceLength : FILES_NAME_CAPACITY - 1;
   const size_t needed = storedLength + 1;
-  if (needed > sizeof(entryNamePool) - entryNamePoolUsed) {
+  if (!ensureDirectoryCache() ||
+      needed > static_cast<size_t>(FILES_NAME_POOL_CAPACITY - entryNamePoolUsed)) {
     truncatedDirectory = true;
     return false;
   }
@@ -1058,6 +1135,9 @@ int FilesApp::compareEntryNames(const char *left, const char *right) const {
 }
 
 uint16_t FilesApp::sortedInsertIndex(const char *name, bool directory) const {
+  if (entries == nullptr) {
+    return 0;
+  }
   uint16_t low = directory ? 0 : folderCount;
   uint16_t high = directory ? folderCount : entryCount;
   while (low < high) {
@@ -1072,7 +1152,7 @@ uint16_t FilesApp::sortedInsertIndex(const char *name, bool directory) const {
 }
 
 const char *FilesApp::entryName(const FileEntry &entry) const {
-  if (entry.nameOffset >= entryNamePoolUsed) {
+  if (entryNamePool == nullptr || entry.nameOffset >= entryNamePoolUsed) {
     return "";
   }
   return entryNamePool + entry.nameOffset;
@@ -1138,6 +1218,9 @@ void FilesApp::clampView() {
 
 bool FilesApp::activateIndex(uint16_t index) {
   if (index >= entryCount) {
+    return false;
+  }
+  if (entries == nullptr) {
     return false;
   }
   const FileEntry &entry = entries[index];
@@ -1450,6 +1533,7 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
   }
 
   const uint8_t visibleCount =
+      entries == nullptr ? 0 :
       entryCount - scrollOffset < MAX_VISIBLE_ENTRIES
           ? static_cast<uint8_t>(entryCount - scrollOffset)
           : MAX_VISIBLE_ENTRIES;
@@ -1890,6 +1974,9 @@ bool FilesApp::update() {
     entryCount = 0;
     folderCount = 0;
     entryNamePoolUsed = 0;
+    if (entryNamePool != nullptr) {
+      entryNamePool[0] = '\0';
+    }
     setStatus("");
     return true;
   }
