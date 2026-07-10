@@ -21,6 +21,8 @@ struct AudioPlaybackConfig {
   size_t chunkFrames = 512;
   /// Source gain from 0 to 100 before device output volume and mute are applied.
   uint8_t volumePercent = 80;
+  /// Lets alarm-like streams remain audible at minimum gain while muted.
+  bool playWhenMutedAtMinimumVolume = false;
 };
 
 /// Streams signed 16-bit stereo PCM to the codec and I2S output path.

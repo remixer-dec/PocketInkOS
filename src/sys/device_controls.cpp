@@ -12,6 +12,7 @@ static const uint8_t CPU_STEP_COUNT = sizeof(CPU_STEPS) / sizeof(CPU_STEPS[0]);
 static const uint8_t VOLUME_STEP = 10;
 static const uint8_t DEFAULT_VOLUME = 40;
 static const uint8_t DEFAULT_OUTPUT_VOLUME = 10;
+static const uint8_t MUTED_ALARM_OUTPUT_VOLUME = 1;
 static const float VOLUME_CURVE_EXPONENT = 2.5129f;
 
 bool bluetoothEnabled = false;
@@ -122,6 +123,19 @@ uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent) {
     return 0;
   }
   const uint8_t source = clampPercent(sourceVolumePercent);
+  return static_cast<uint8_t>(
+      (static_cast<uint16_t>(source) * output + 50U) / 100U);
+}
+
+uint8_t deviceEffectiveAlarmVolumePercent(uint8_t sourceVolumePercent) {
+  const uint8_t source = clampPercent(sourceVolumePercent);
+  if (source == 0) {
+    return 0;
+  }
+  const uint8_t output = muted ? MUTED_ALARM_OUTPUT_VOLUME : outputVolumeLevel;
+  if (output == 0) {
+    return 0;
+  }
   return static_cast<uint8_t>(
       (static_cast<uint16_t>(source) * output + 50U) / 100U);
 }

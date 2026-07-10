@@ -28,6 +28,8 @@ void toggleBluetooth();
 void cycleCpuFrequency();
 /// Returns source volume scaled by the current output volume and mute state.
 uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent);
+/// Returns current output volume, using a minimum audible gain while muted.
+uint8_t deviceEffectiveAlarmVolumePercent(uint8_t sourceVolumePercent);
 /// Decreases runtime output volume by one UI step.
 void volumeDown();
 /// Increases runtime output volume by one UI step.

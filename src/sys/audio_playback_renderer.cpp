@@ -24,7 +24,7 @@ constexpr int kDataOutPin = 45;
 constexpr unsigned long kCodecPowerDelayMs = 50;
 constexpr unsigned long kAmpEnableDelayMs = 60;
 constexpr uint32_t kPlaybackTaskStackBytes = 8192;
-constexpr UBaseType_t kPlaybackTaskPriority = 3;
+constexpr UBaseType_t kPlaybackTaskPriority = 1;
 constexpr BaseType_t kPlaybackTaskCore = 1;
 constexpr unsigned long kTaskStopTimeoutMs = 300;
 constexpr int kI2cTimeoutMs = 100;
@@ -173,8 +173,11 @@ bool AudioPlaybackRenderer::writeChunk(char *error, int errorSize) {
     return true;
   }
 
-  const uint32_t volume =
-      deviceEffectiveOutputVolumePercent(playbackConfig.volumePercent);
+  const uint32_t volume = playbackConfig.playWhenMutedAtMinimumVolume
+                              ? deviceEffectiveAlarmVolumePercent(
+                                    playbackConfig.volumePercent)
+                              : deviceEffectiveOutputVolumePercent(
+                                    playbackConfig.volumePercent);
   const size_t sampleCount = frames * 2U;
   uint16_t peak = 0;
   if (volume < 100U) {
@@ -249,6 +252,7 @@ void AudioPlaybackRenderer::taskLoop() {
     if (!writeChunk(error, sizeof(error))) {
       break;
     }
+    vTaskDelay(pdMS_TO_TICKS(1));
   }
   playbackActive = false;
   taskRunning = false;
