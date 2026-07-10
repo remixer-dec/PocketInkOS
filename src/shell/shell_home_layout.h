@@ -34,7 +34,7 @@ enum ShellWidget : uint16_t {
   SHELL_WIDGET_WEATHER = 1U << 9,
 };
 
-/// User-configurable presentation state for shell-owned screens.
+/// User-configurable presentation state for the home screen.
 ///
 /// This separates persistent layout choices from live sensor/app data so render
 /// functions can stay deterministic and easy to test.
@@ -42,8 +42,6 @@ struct ShellLayoutConfig {
   ShellLayoutMode layout = SHELL_LAYOUT_DEFAULT;
   ShellTemperatureUnit temperatureUnit = SHELL_TEMP_CELSIUS;
   uint16_t homeWidgets = 0;
-  char lockscreenTopIcon = 'S';
-  bool lockscreenDate = true;
 };
 
 /// Live data passed into shell renderers for one frame.
@@ -57,8 +55,10 @@ struct ShellData {
   const SdStorageSnapshot *sd;
 };
 
-/// Reloads presentation config after settings changes.
+/// Reloads both home and lockscreen presentation config after settings changes.
 void shellLayoutConfigReload();
+/// Reloads only home presentation config.
+void shellHomeLayoutConfigReload();
 /// Shares the active presentation config with shell render paths.
 const ShellLayoutConfig &shellLayoutConfig();
 /// Checks a home-widget bit against the active layout config.

@@ -1,4 +1,5 @@
 #include "shell/shell_home_layout.h"
+#include "shell/shell_lockscreen_layout.h"
 #include "sys/global.h"
 #include "sys/system_config.h"
 #include <ctype.h>
@@ -19,8 +20,6 @@ ShellLayoutConfig shellConfig = {
     SHELL_LAYOUT_DEFAULT,
     SHELL_TEMP_CELSIUS,
     SHELL_WIDGETS_DEFAULT,
-    'S',
-    true,
 };
 
 bool asciiEqualIgnoreCase(const char *a, const char *b) {
@@ -60,20 +59,6 @@ char *trim(char *text) {
     *--end = '\0';
   }
   return text;
-}
-
-bool parseBoolValue(const char *value, bool fallback) {
-  if (asciiEqualIgnoreCase(value, "1") || asciiEqualIgnoreCase(value, "true") ||
-      asciiEqualIgnoreCase(value, "yes") || asciiEqualIgnoreCase(value, "on")) {
-    return true;
-  }
-  if (asciiEqualIgnoreCase(value, "0") ||
-      asciiEqualIgnoreCase(value, "false") ||
-      asciiEqualIgnoreCase(value, "no") ||
-      asciiEqualIgnoreCase(value, "off")) {
-    return false;
-  }
-  return fallback;
 }
 
 bool widgetToken(const char *token, uint16_t &widget) {
@@ -141,8 +126,6 @@ void resetShellConfigDefaults() {
   shellConfig.layout = SHELL_LAYOUT_DEFAULT;
   shellConfig.temperatureUnit = SHELL_TEMP_CELSIUS;
   shellConfig.homeWidgets = SHELL_WIDGETS_DEFAULT;
-  shellConfig.lockscreenTopIcon = 'S';
-  shellConfig.lockscreenDate = true;
 }
 
 float displayTemperature(float celsius) {
@@ -166,19 +149,31 @@ void drawCenteredText(AppDisplay &display, const char *text, int16_t y) {
   display.print(text);
 }
 
-void drawRightAlignedText(AppDisplay &display, const char *text, int16_t y) {
-  int16_t textX;
-  int16_t textY;
-  uint16_t textW;
-  uint16_t textH;
-  display.getTextBounds(text, 0, y, &textX, &textY, &textW, &textH);
-  display.setCursor(EPD_WIDTH - textW - 4 - textX, y);
-  display.print(text);
-}
+/// Text widgets share a vertical rhythm per side, so hiding one naturally
+/// closes the gap before every following widget.
+struct HomeTextColumn {
+  int16_t x;
+  int16_t nextY;
+  int16_t rowHeight;
+  bool rightAligned;
+
+  void add(AppDisplay &display, const char *text) {
+    int16_t textX;
+    int16_t textY;
+    uint16_t textW;
+    uint16_t textH;
+    display.getTextBounds(text, 0, nextY, &textX, &textY, &textW, &textH);
+    const int16_t cursorX =
+        rightAligned ? x - static_cast<int16_t>(textW) - textX : x;
+    display.setCursor(cursorX, nextY);
+    display.print(text);
+    nextY += rowHeight;
+  }
+};
 
 } // namespace
 
-void shellLayoutConfigReload() {
+void shellHomeLayoutConfigReload() {
   resetShellConfigDefaults();
 
   char value[CONFIG_VALUE_MAX];
@@ -197,14 +192,11 @@ void shellLayoutConfigReload() {
   if (configGet("home.widgets", value, sizeof(value))) {
     shellConfig.homeWidgets = parseWidgetMask(value, shellConfig.homeWidgets);
   }
-  if (configGet("lockscreen.topIcon", value, sizeof(value)) &&
-      value[0] != '\0') {
-    shellConfig.lockscreenTopIcon = value[0];
-  }
-  if (configGet("lockscreen.date", value, sizeof(value))) {
-    shellConfig.lockscreenDate =
-        parseBoolValue(value, shellConfig.lockscreenDate);
-  }
+}
+
+void shellLayoutConfigReload() {
+  shellHomeLayoutConfigReload();
+  lockscreenLayoutConfigReload();
 }
 
 const ShellLayoutConfig &shellLayoutConfig() { return shellConfig; }
@@ -242,6 +234,9 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
 
   drawStatusBar(display, data.status);
 
+  HomeTextColumn leftColumn = {4, 22, 12, false};
+  HomeTextColumn rightColumn = {EPD_WIDTH - 4, 22, 12, true};
+
   if (shellHomeWidgetEnabled(SHELL_WIDGET_BATTERY)) {
     char batteryText[20];
     if (data.battery != nullptr && data.battery->valid) {
@@ -250,8 +245,7 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
     } else {
       snprintf(batteryText, sizeof(batteryText), "BAT --%% --.--V");
     }
-    display.setCursor(4, 22);
-    display.print(batteryText);
+    leftColumn.add(display, batteryText);
   }
 
   if (shellHomeWidgetEnabled(SHELL_WIDGET_SD)) {
@@ -263,8 +257,7 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
     } else {
       snprintf(sdText, sizeof(sdText), "SD no card");
     }
-    display.setCursor(4, 34);
-    display.print(sdText);
+    leftColumn.add(display, sdText);
   }
 
   const EnvironmentSnapshot *env = data.environment;
@@ -294,13 +287,13 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
              displayTemperatureSuffix());
   }
   if (shellHomeWidgetEnabled(SHELL_WIDGET_TEMP)) {
-    drawRightAlignedText(display, ambientText, 22);
+    rightColumn.add(display, ambientText);
   }
   if (shellHomeWidgetEnabled(SHELL_WIDGET_HUM)) {
-    drawRightAlignedText(display, humidityText, 34);
+    rightColumn.add(display, humidityText);
   }
   if (shellHomeWidgetEnabled(SHELL_WIDGET_CPU_TEMP)) {
-    drawRightAlignedText(display, chipText, 46);
+    rightColumn.add(display, chipText);
   }
 
   if (shellHomeWidgetEnabled(SHELL_WIDGET_BUTTON_HELP)) {
