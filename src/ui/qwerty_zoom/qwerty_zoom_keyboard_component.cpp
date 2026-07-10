@@ -1,4 +1,5 @@
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
+#include "ui/icon_ascii_font.h"
 
 #include <cstdio>
 #include <cstring>
@@ -35,6 +36,25 @@ static void drawZoomKey(Adafruit_GFX &gfx, int x, int y, int w, int h,
   int textY = y + (h - charH) / 2;
   gfx.setCursor(textX, textY);
   gfx.print(label);
+}
+
+static void drawZoomIconKey(Adafruit_GFX &gfx, int x, int y, int w, int h,
+                            char icon) {
+  const char label[2] = {icon, '\0'};
+  gfx.drawRect(x, y, w, h, 1);
+  gfx.setFont(&iconASCII12pt7b);
+  gfx.setTextSize(1);
+  gfx.setTextColor(1);
+  int16_t textX;
+  int16_t textY;
+  uint16_t textW;
+  uint16_t textH;
+  gfx.getTextBounds(label, 0, 0, &textX, &textY, &textW, &textH);
+  gfx.setCursor(x + (w - static_cast<int>(textW)) / 2 - textX,
+                y + (h - static_cast<int>(textH)) / 2 - textY);
+  gfx.print(label);
+  gfx.setFont();
+  gfx.setTextSize(1);
 }
 
 void QwertyZoomKeyboardComponent::drawInput(Adafruit_GFX &gfx,
@@ -88,7 +108,7 @@ void QwertyZoomKeyboardComponent::draw(Adafruit_GFX &gfx, const String &text,
   }
 
   drawZoomKey(gfx, 4, CTRL_Y, 62, CTRL_H, caps ? "CAPS" : "caps");
-  drawZoomKey(gfx, 70, CTRL_Y, 62, CTRL_H, "<");
+  drawZoomIconKey(gfx, 70, CTRL_Y, 62, CTRL_H, 'H');
   drawZoomKey(gfx, 136, CTRL_Y, 60, CTRL_H, "OK");
 
   if (pageColumn > 0) {

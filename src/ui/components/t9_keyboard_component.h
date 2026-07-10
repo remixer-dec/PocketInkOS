@@ -8,7 +8,7 @@
 class T9KeyboardComponent {
 public:
   /// Available T9 keyboard layouts.
-  enum class Layout : uint8_t { Text, Numbers };
+  enum class Layout : uint8_t { Text, Numbers, Numeric };
 
   /// Draws the T9 keyboard for String-backed input.
   void draw(Adafruit_GFX &gfx, const String &text);
@@ -22,7 +22,7 @@ public:
   KeyboardEvent hitTest(const TouchPoint &point, String &text, int maxLength);
   /// Handles touch input for char-buffer text.
   KeyboardEvent hitTest(const TouchPoint &point, char *text, int capacity);
-  /// Switches between text and numeric layouts.
+  /// Switches between text, digits-only, and signed-decimal numeric layouts.
   void setLayout(Layout nextLayout);
   /// Expires pending multi-tap state and returns true when redraw is needed.
   bool update();
@@ -56,6 +56,7 @@ private:
   void clearPending();
   bool expirePending();
   char currentChar() const;
+  const char *sequenceForCurrentLayout(int key) const;
 
   static TextBuffer stringBuffer(String &text, int maxLength);
   static TextBuffer charBuffer(char *text, int capacity);

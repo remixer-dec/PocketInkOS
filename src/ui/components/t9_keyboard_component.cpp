@@ -1,4 +1,5 @@
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/icon_ascii_font.h"
 
 #include <Arduino.h>
 #include <cstdio>
@@ -21,7 +22,7 @@ static const int T9_KEYS[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
 static const char *sequenceForKey(int key) {
   switch (key) {
   case 1:
-    return ".,?!/-_1";
+    return ".,?!:/-_1";
   case 2:
     return "abc2";
   case 3:
@@ -43,6 +44,12 @@ static const char *sequenceForKey(int key) {
   default:
     return "";
   }
+}
+
+static const char *numericSequenceForKey(int key) {
+  static const char *const sequences[] = {"0", "1-.", "2", "3", "4",
+                                           "5", "6",  "7", "8", "9"};
+  return key >= 0 && key <= 9 ? sequences[key] : "";
 }
 
 static char applyCaps(char value, bool caps) {
@@ -74,14 +81,23 @@ static void buildNumberLabel(char *out, size_t outSize, int key) {
   }
   if (key >= 0 && key <= 9) {
     snprintf(out, outSize, "%d", key);
-  } else if (key == 10) {
-    strncpy(out, "BACK", outSize - 1);
-    out[outSize - 1] = '\0';
   } else if (key == 11) {
     strncpy(out, "OK", outSize - 1);
     out[outSize - 1] = '\0';
   } else {
     out[0] = '\0';
+  }
+}
+
+static void buildNumericLabel(char *out, size_t outSize, int key) {
+  if (outSize == 0) {
+    return;
+  }
+  if (key == 1) {
+    strncpy(out, "1-.", outSize - 1);
+    out[outSize - 1] = '\0';
+  } else {
+    buildNumberLabel(out, outSize, key);
   }
 }
 
@@ -126,8 +142,25 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
     gfx.drawLine(x + 4, y + h - 5, x + w - 5, y + 4, 1);
   }
 
-  char digit[2] = {(key == 10) ? '*' : (key == 11) ? '#' : char('0' + key),
-                   0};
+  if (key == 10) {
+    const char icon[2] = {'H', '\0'};
+    gfx.setFont(&iconASCII12pt7b);
+    gfx.setTextSize(1);
+    int16_t iconX;
+    int16_t iconY;
+    uint16_t iconW;
+    uint16_t iconH;
+    gfx.getTextBounds(icon, 0, 0, &iconX, &iconY, &iconW, &iconH);
+    gfx.setCursor(x + (w - static_cast<int>(iconW)) / 2 - iconX,
+                  y + (h - static_cast<int>(iconH)) / 2 - iconY);
+    gfx.print(icon);
+    gfx.setFont();
+    gfx.setTextSize(1);
+    gfx.setTextColor(1);
+    return;
+  }
+
+  char digit[2] = {(key == 11) ? '#' : char('0' + key), 0};
   gfx.setTextSize(2);
   gfx.setCursor(x + 8, y + 6);
   gfx.print(digit);
@@ -135,10 +168,10 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
   char label[12] = "";
   if (layout == Layout::Numbers) {
     buildNumberLabel(label, sizeof(label), key);
+  } else if (layout == Layout::Numeric) {
+    buildNumericLabel(label, sizeof(label), key);
   } else if (key >= 0 && key <= 9) {
     buildLabel(label, sizeof(label), key, caps);
-  } else if (key == 10) {
-    strncpy(label, "BACK", sizeof(label) - 1);
   } else if (key == 11) {
     strncpy(label, "OK", sizeof(label) - 1);
   }
@@ -146,7 +179,7 @@ void T9KeyboardComponent::drawKey(Adafruit_GFX &gfx, int key, int x, int y,
   gfx.setCursor(x + 8, y + 28);
   gfx.print(label);
 
-  if (active && !disabled && layout == Layout::Text) {
+  if (active && !disabled && layout != Layout::Numbers) {
     gfx.setTextSize(2);
     char selected[2] = {currentChar(), 0};
     gfx.setCursor(x + w - 24, y + 10);
@@ -199,12 +232,17 @@ char T9KeyboardComponent::currentChar() const {
   if (pendingKey < 0) {
     return 0;
   }
-  const char *sequence = sequenceForKey(pendingKey);
+  const char *sequence = sequenceForCurrentLayout(pendingKey);
   const int len = strlen(sequence);
   if (len == 0) {
     return 0;
   }
   return applyCaps(sequence[pendingIndex % len], caps);
+}
+
+const char *T9KeyboardComponent::sequenceForCurrentLayout(int key) const {
+  return layout == Layout::Numeric ? numericSequenceForKey(key)
+                                   : sequenceForKey(key);
 }
 
 void T9KeyboardComponent::clearPending() {
@@ -305,7 +343,7 @@ KeyboardEvent T9KeyboardComponent::handleKey(int key, TextBuffer &text) {
   }
 
   if (sameKey) {
-    pendingIndex = (pendingIndex + 1) % strlen(sequenceForKey(key));
+    pendingIndex = (pendingIndex + 1) % strlen(sequenceForCurrentLayout(key));
     text.backspace();
   } else {
     pendingKey = key;
