@@ -1,6 +1,7 @@
 #ifndef AUDIO_PLAYBACK_RENDERER_H
 #define AUDIO_PLAYBACK_RENDERER_H
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -39,18 +40,18 @@ public:
   /// Updates output gain for future chunks.
   void setVolumePercent(uint8_t percent);
   /// Returns the current output gain.
-  uint8_t volumePercent() const { return playbackConfig.volumePercent; }
+  uint8_t volumePercent() const { return playbackVolumePercent.load(); }
 
   /// Returns true while playback is active.
-  bool active() const { return playbackActive; }
+  bool active() const { return playbackActive.load(); }
   /// Returns true after the stream has produced no more PCM.
-  bool finished() const { return playbackFinished; }
+  bool finished() const { return playbackFinished.load(); }
   /// Returns the configured output sample rate.
   uint32_t sampleRate() const { return playbackConfig.sampleRate; }
   /// Returns the latest peak absolute PCM sample written to I2S.
-  uint16_t lastPeak() const { return playbackLastPeak; }
+  uint16_t lastPeak() const { return playbackLastPeak.load(); }
   /// Returns the number of chunks written since begin().
-  uint32_t chunksWritten() const { return playbackChunksWritten; }
+  uint32_t chunksWritten() const { return playbackChunksWritten.load(); }
 
 private:
   static void taskEntry(void *user);
@@ -70,14 +71,15 @@ private:
 
   AudioPlaybackStream playbackStream = {};
   AudioPlaybackConfig playbackConfig = {};
+  std::atomic<uint8_t> playbackVolumePercent{80};
   int16_t *dmaBuffer = nullptr;
   void *taskHandle = nullptr;
-  volatile bool playbackActive = false;
-  volatile bool playbackFinished = false;
-  volatile bool stopRequested = false;
-  volatile bool taskRunning = false;
-  volatile uint16_t playbackLastPeak = 0;
-  volatile uint32_t playbackChunksWritten = 0;
+  std::atomic<bool> playbackActive{false};
+  std::atomic<bool> playbackFinished{false};
+  std::atomic<bool> stopRequested{false};
+  std::atomic<bool> taskRunning{false};
+  std::atomic<uint16_t> playbackLastPeak{0};
+  std::atomic<uint32_t> playbackChunksWritten{0};
 };
 
 #endif

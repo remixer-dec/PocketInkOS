@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
 
 #ifndef BitOrder
 // Adafruit BusIO still names the Arduino SPI bit-order type. ESP32 Arduino 3.x

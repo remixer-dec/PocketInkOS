@@ -47,6 +47,7 @@ enum class AppEventResult : uint8_t {
 /// Common runtime interface used to draw apps and dispatch touch input.
 class ActiveApp {
 public:
+  virtual ~ActiveApp() = default;
   virtual void draw(Adafruit_GFX &gfx) = 0;
   virtual bool handleTouch(const TouchPoint &point) = 0;
   virtual bool update() { return false; }
@@ -58,33 +59,6 @@ public:
   }
   virtual bool hasActiveSession() const = 0;
 };
-
-namespace app_runtime_detail {
-
-template <typename T>
-auto consumeDirtyRegion(T &app, int16_t *x, int16_t *y, int16_t *w,
-                        int16_t *h, int)
-    -> decltype(app.consumeDirtyRegion(x, y, w, h), bool()) {
-  return app.consumeDirtyRegion(x, y, w, h);
-}
-
-template <typename T>
-bool consumeDirtyRegion(T &, int16_t *, int16_t *, int16_t *, int16_t *, ...) {
-  return false;
-}
-
-template <typename T>
-auto consumePendingEvent(T &app, int)
-    -> decltype(app.consumePendingEvent(), AppEventResult()) {
-  return app.consumePendingEvent();
-}
-
-template <typename T>
-AppEventResult consumePendingEvent(T &, ...) {
-  return AppEventResult::Unhandled;
-}
-
-} // namespace app_runtime_detail
 
 /// Adapts an app object with touch support to the ActiveApp runtime contract.
 template <typename T, bool SupportsUpdate = false>
@@ -103,11 +77,17 @@ public:
     return false;
   }
   AppEventResult consumePendingEvent() override {
-    return app_runtime_detail::consumePendingEvent(app, 0);
+    if constexpr (requires { app.consumePendingEvent(); }) {
+      return app.consumePendingEvent();
+    }
+    return AppEventResult::Unhandled;
   }
   bool consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w,
                           int16_t *h) override {
-    return app_runtime_detail::consumeDirtyRegion(app, x, y, w, h, 0);
+    if constexpr (requires { app.consumeDirtyRegion(x, y, w, h); }) {
+      return app.consumeDirtyRegion(x, y, w, h);
+    }
+    return false;
   }
   bool hasActiveSession() const override { return app.hasActiveSession(); }
 

@@ -4,6 +4,7 @@
 #include "sys/power_control.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <atomic>
 #include <stdint.h>
 
 namespace {
@@ -14,27 +15,34 @@ TaskHandle_t buttonTaskHandle = NULL;
 ShellButtonHandlers activeHandlers;
 static const uint16_t kEmergencyPowerOffHoldMs = 10000;
 
-volatile uint8_t pendingMenuClicks = 0;
-volatile uint8_t pendingMenuDoubleClicks = 0;
-volatile uint8_t pendingMenuLongPresses = 0;
-volatile uint8_t pendingPowerClicks = 0;
-volatile uint8_t pendingPowerDoubleClicks = 0;
-volatile uint8_t pendingPowerLongPresses = 0;
-volatile uint8_t pendingButtonActivity = 0;
-volatile bool emergencyPowerOffStarted = false;
+using EventCounter = std::atomic<uint8_t>;
 
-void queueButtonEvent(volatile uint8_t &counter) {
-  if (counter < 255) {
-    counter++;
+EventCounter pendingMenuClicks{0};
+EventCounter pendingMenuDoubleClicks{0};
+EventCounter pendingMenuLongPresses{0};
+EventCounter pendingPowerClicks{0};
+EventCounter pendingPowerDoubleClicks{0};
+EventCounter pendingPowerLongPresses{0};
+EventCounter pendingButtonActivity{0};
+std::atomic<bool> emergencyPowerOffStarted{false};
+
+void queueButtonEvent(EventCounter &counter) {
+  uint8_t current = counter.load(std::memory_order_relaxed);
+  while (current != UINT8_MAX &&
+         !counter.compare_exchange_weak(current, current + 1,
+                                        std::memory_order_relaxed)) {
   }
 }
 
-bool consumeButtonEvent(volatile uint8_t &counter) {
-  if (counter == 0) {
-    return false;
+bool consumeButtonEvent(EventCounter &counter) {
+  uint8_t current = counter.load(std::memory_order_relaxed);
+  while (current != 0) {
+    if (counter.compare_exchange_weak(current, current - 1,
+                                      std::memory_order_relaxed)) {
+      return true;
+    }
   }
-  counter--;
-  return true;
+  return false;
 }
 
 void call(ShellButtonCallback callback) {
@@ -44,10 +52,9 @@ void call(ShellButtonCallback callback) {
 }
 
 void emergencyPowerOff() {
-  if (emergencyPowerOffStarted) {
+  if (emergencyPowerOffStarted.exchange(true)) {
     return;
   }
-  emergencyPowerOffStarted = true;
   emergencyPowerOffDevice();
 }
 

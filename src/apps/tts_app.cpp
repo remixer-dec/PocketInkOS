@@ -495,27 +495,19 @@ bool TtsApp::startSynthesis() {
   ttsAppLog("[tts-app] synth task create text_len=%u\n",
             static_cast<unsigned>(strlen(taskText)));
 
-  if (taskHandle == nullptr) {
-    TaskHandle_t created = nullptr;
-    if (xTaskCreatePinnedToCore(synthesisTaskEntry, "tts-synth",
-                                kTaskStackBytes, this, kTaskPriority, &created,
-                                kTaskCore) != pdPASS) {
-      taskRunning = false;
-      taskWorkerIdle = false;
-      state = State::Error;
-      setStatus("Task create failed");
-      ttsAppLog("[tts-app] synth task create failed\n");
-      return true;
-    }
-    taskHandle = created;
-    ttsAppLog("[tts-app] synth worker created stack_bytes=%u core=%d\n",
-              static_cast<unsigned>(kTaskStackBytes),
-              static_cast<int>(kTaskCore));
-  } else {
-    taskWorkerIdle = false;
-    ttsAppLog("[tts-app] synth worker resume\n");
-    vTaskResume(static_cast<TaskHandle_t>(taskHandle));
+  TaskHandle_t created = nullptr;
+  if (xTaskCreatePinnedToCore(synthesisTaskEntry, "tts-synth", kTaskStackBytes,
+                              this, kTaskPriority, &created,
+                              kTaskCore) != pdPASS) {
+    taskRunning = false;
+    state = State::Error;
+    setStatus("Task create failed");
+    ttsAppLog("[tts-app] synth task create failed\n");
+    return true;
   }
+  ttsAppLog("[tts-app] synth worker created stack_bytes=%u core=%d\n",
+            static_cast<unsigned>(kTaskStackBytes),
+            static_cast<int>(kTaskCore));
   return true;
 }
 
@@ -575,11 +567,8 @@ void TtsApp::setStatus(const char *nextStatus) {
 
 void TtsApp::synthesisTaskEntry(void *user) {
   TtsApp *app = static_cast<TtsApp *>(user);
-  while (app != nullptr) {
+  if (app != nullptr) {
     app->synthesisTask();
-    app->taskWorkerIdle = true;
-    ttsAppLog("[tts-app] synth worker suspend\n");
-    vTaskSuspend(nullptr);
   }
   vTaskDelete(nullptr);
 }

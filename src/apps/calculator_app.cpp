@@ -281,7 +281,7 @@ bool CalculatorApp::parseExpression(const char *text, double &value) const {
 
 bool CalculatorApp::canAppendDot() const {
   const char *source = showingResult ? result : expression;
-  for (int i = strlen(source) - 1; i >= 0; --i) {
+  for (size_t i = strlen(source); i-- > 0;) {
     char c = source[i];
     if (c == '.') {
       return false;

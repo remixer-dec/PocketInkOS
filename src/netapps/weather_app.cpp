@@ -419,8 +419,6 @@ bool WeatherApp::handleTouch(const TouchPoint &point) {
   }
   if (point.x < 80) {
     page = static_cast<Page>((page + PAGE_COUNT - 1) % PAGE_COUNT);
-  } else if (point.x > 120) {
-    page = static_cast<Page>((page + 1) % PAGE_COUNT);
   } else {
     page = static_cast<Page>((page + 1) % PAGE_COUNT);
   }

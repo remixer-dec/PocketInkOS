@@ -190,7 +190,7 @@ MAP="$BUILD_DIR/app.map"
 RELOCS="$BUILD_DIR/app.relocs"
 
 CXXFLAGS=(
-  -std=gnu++17
+  -std=gnu++20
   -Os
   -ffunction-sections
   -fdata-sections

@@ -81,28 +81,22 @@ void AppDisplay::flush() {
   partialReady = true;
 }
 
-void AppDisplay::flushPartial(int16_t x, int16_t y, int16_t w, int16_t h) {
+void AppDisplay::flushPartial() {
   if (!partialReady) {
     flush();
     return;
   }
 
-  (void)x;
-  (void)y;
-  (void)w;
-  (void)h;
   driver.EPD_DisplayPart();
 }
 
 void AppDisplay::lock() {
-  while (__sync_lock_test_and_set(&locked, true)) {
+  while (locked.test_and_set(std::memory_order_acquire)) {
     vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 
-void AppDisplay::unlock() {
-  __sync_lock_release(&locked);
-}
+void AppDisplay::unlock() { locked.clear(std::memory_order_release); }
 
 const uint8_t *AppDisplay::framebufferData() const {
   return driver.framebufferData();

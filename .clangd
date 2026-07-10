@@ -1,0 +1,5 @@
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
+# Use the portable root flags instead of Arduino's generated wrapper-only
+# database, which has no command for nested source files.
+CompileFlags:
+  CompilationDatabase: .

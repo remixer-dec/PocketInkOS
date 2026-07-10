@@ -12,9 +12,21 @@ if [[ "$TTS_APPS" != "0" && "$TTS_APPS" != "1" ]]; then
   printf 'ENABLE_TTS/WITH_TTS must be 0 or 1, got %q\n' "$TTS_APPS" >&2
   exit 1
 fi
+EXTENDED="${ENABLE_EXTENDED:-1}"
+if [[ "$EXTENDED" != "0" && "$EXTENDED" != "1" ]]; then
+  printf 'ENABLE_EXTENDED must be 0 or 1, got %q\n' "$EXTENDED" >&2
+  exit 1
+fi
+if [[ "$EXTENDED" != "0" && ! -d "$PROJECT_DIR/extended" ]]; then
+  printf '[build] Extended directory not found; disabling extended edition\n'
+  EXTENDED=0
+fi
 BUILD_PROFILE=$([[ "$NETWORK_APPS" != "0" ]] && printf 'network' || printf 'no-network')
 if [[ "$TTS_APPS" != "0" ]]; then
   BUILD_PROFILE+="-tts"
+fi
+if [[ "$EXTENDED" != "0" ]]; then
+  BUILD_PROFILE+="-extended"
 fi
 BUILD_DIR="$PROJECT_DIR/build/$BUILD_PROFILE"
 SKETCH_DIR="$PROJECT_DIR/src"
@@ -90,8 +102,13 @@ done < <(
     ! -path "$SKETCH_DIR/apps/tts_app.cpp" \
     ! -path "$SKETCH_DIR/tts/*" \
     ! -path "$SKETCH_DIR/InflectNanoTTS/*" \
+    ! -path "$SKETCH_DIR/fs/providers/audio_file_viewer.cpp" \
     | sort
 )
+
+if [[ "$EXTENDED" != "0" ]]; then
+  emit_wrapper "$SKETCH_DIR/fs/providers/audio_file_viewer.cpp"
+fi
 
 if [[ "$TTS_APPS" != "0" ]]; then
   INFLECT_SOURCES=(
@@ -205,10 +222,36 @@ if [[ "$TTS_APPS" != "0" ]]; then
 else
   log "TTS disabled; set ENABLE_TTS=1 or WITH_TTS=1 to include it"
 fi
-if [[ "$NETWORK_APPS" != "0" ]]; then
-  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=1 -DENABLE_TTS=$TTS_APPS $INFLECT_FLAGS")
+if [[ "$EXTENDED" != "0" ]]; then
+  log "Extended edition enabled"
 else
-  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=0 -DENABLE_TTS=$TTS_APPS $INFLECT_FLAGS")
+  log "Extended edition disabled; set ENABLE_EXTENDED=1 to include it"
+fi
+if [[ "$NETWORK_APPS" != "0" ]]; then
+  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=1 -DENABLE_TTS=$TTS_APPS -DENABLE_EXTENDED=$EXTENDED $INFLECT_FLAGS")
+else
+  COMPILE_ARGS+=(--build-property "build.extra_flags=-DENABLE_NETWORK_APPS=0 -DENABLE_TTS=$TTS_APPS -DENABLE_EXTENDED=$EXTENDED $INFLECT_FLAGS")
+fi
+
+# NODEBUG=1: size-optimized release build. Strips symbols, enables LTO + section
+# GC, drops RTTI/exceptions, and silences ESP-IDF/Arduino logging. Saves flash
+# and static DRAM at the cost of backtrace symbol names and graceful exception
+# recovery (TTS gguf.cpp OOM paths abort instead of returning errors).
+NODEBUG="${NODEBUG:-0}"
+if [[ "$NODEBUG" != "0" && "$NODEBUG" != "1" ]]; then
+  printf 'NODEBUG must be 0 or 1, got %q\n' "$NODEBUG" >&2
+  exit 1
+fi
+if [[ "$NODEBUG" == "1" ]]; then
+  log "NODEBUG=1: stripped, LTO, no RTTI/exceptions, min logging"
+  NODEBUG_LOG_DEFS="-DCORE_DEBUG_LEVEL=0 -DCONFIG_ARDUHAL_LOG_LEVEL=0 -DCONFIG_LOG_DEFAULT_LEVEL=0"
+  NODEBUG_CPP_FLAGS="-ffunction-sections -fdata-sections -fmerge-all-constants -fno-rtti -fno-exceptions $NODEBUG_LOG_DEFS"
+  NODEBUG_C_FLAGS="-ffunction-sections -fdata-sections -fmerge-all-constants $NODEBUG_LOG_DEFS"
+  NODEBUG_LINK_FLAGS="-Wl,--gc-sections -Wl,-s"
+  COMPILE_ARGS+=(--build-property "build.code_debug=0")
+  COMPILE_ARGS+=(--build-property "compiler.cpp.extra_flags=${NODEBUG_CPP_FLAGS}")
+  COMPILE_ARGS+=(--build-property "compiler.c.extra_flags=${NODEBUG_C_FLAGS}")
+  COMPILE_ARGS+=(--build-property "compiler.c.elf.extra_flags=${NODEBUG_LINK_FLAGS}")
 fi
 if [[ "${VERBOSE:-0}" == "1" ]]; then
   COMPILE_ARGS+=(--verbose)
@@ -237,6 +280,9 @@ fi
 log "Compiled app binary"
 ls -lh "$APP_BIN"
 ls -lh "$MERGED_BIN"
+if [[ -f "$PROJECT_DIR/extended/tools/memory-audit.js" ]]; then
+  node "$PROJECT_DIR/extended/tools/memory-audit.js" || true
+fi
 APP_BIN_SIZE=$(wc -c < "$APP_BIN")
 if (( APP_BIN_SIZE > APP_PARTITION_SIZE_BYTES )); then
   printf 'App binary is too large: %d bytes > %d byte factory partition\n' \

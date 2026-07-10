@@ -2,6 +2,7 @@
 #include "sys/system_config.h"
 
 #include <Arduino.h>
+#include <atomic>
 #include <math.h>
 #include <stdio.h>
 
@@ -17,9 +18,9 @@ static const float VOLUME_CURVE_EXPONENT = 2.5129f;
 
 bool bluetoothEnabled = false;
 uint8_t cpuStep = 2;
-volatile uint8_t volumeLevel = DEFAULT_VOLUME;
-volatile uint8_t outputVolumeLevel = DEFAULT_OUTPUT_VOLUME;
-volatile bool muted = false;
+std::atomic<uint8_t> volumeLevel{DEFAULT_VOLUME};
+std::atomic<uint8_t> outputVolumeLevel{DEFAULT_OUTPUT_VOLUME};
+std::atomic<bool> muted{false};
 
 uint8_t cpuStepIndexForMhz(uint16_t mhz) {
   for (uint8_t i = 0; i < CPU_STEP_COUNT; i++) {
@@ -67,8 +68,10 @@ uint8_t calibratedOutputVolume(uint8_t uiVolume) {
 }
 
 void setVolumeLevel(uint8_t uiVolume) {
-  volumeLevel = clampPercent(uiVolume);
-  outputVolumeLevel = calibratedOutputVolume(volumeLevel);
+  const uint8_t next = clampPercent(uiVolume);
+  volumeLevel.store(next, std::memory_order_relaxed);
+  outputVolumeLevel.store(calibratedOutputVolume(next),
+                          std::memory_order_relaxed);
 }
 
 uint16_t currentCpuMhz() {
@@ -84,7 +87,7 @@ uint16_t currentCpuMhz() {
 void deviceControlsBegin() {
   cpuStep = cpuStepIndexForMhz(currentSystemConfig().cpu.mhz);
   setVolumeLevel(DEFAULT_VOLUME);
-  muted = false;
+  muted.store(false, std::memory_order_relaxed);
   applyBluetoothState();
   applyCpuFrequency();
 }
@@ -93,14 +96,14 @@ DeviceControlSnapshot deviceControlsSnapshot() {
   DeviceControlSnapshot snapshot;
   snapshot.bluetoothOn = bluetoothEnabled;
   snapshot.cpuMhz = currentCpuMhz();
-  snapshot.volume = volumeLevel;
-  snapshot.muted = muted;
+  snapshot.volume = volumeLevel.load(std::memory_order_relaxed);
+  snapshot.muted = muted.load(std::memory_order_relaxed);
   return snapshot;
 }
 
 void deviceControlsRestoreAudio(uint8_t volume, bool muteState) {
   setVolumeLevel(volume);
-  muted = muteState;
+  muted.store(muteState, std::memory_order_relaxed);
 }
 
 void toggleBluetooth() {
@@ -118,8 +121,9 @@ void cycleCpuFrequency() {
 }
 
 uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent) {
-  const uint8_t output = outputVolumeLevel;
-  if (muted || output == 0 || sourceVolumePercent == 0) {
+  const uint8_t output = outputVolumeLevel.load(std::memory_order_relaxed);
+  if (muted.load(std::memory_order_relaxed) || output == 0 ||
+      sourceVolumePercent == 0) {
     return 0;
   }
   const uint8_t source = clampPercent(sourceVolumePercent);
@@ -132,7 +136,9 @@ uint8_t deviceEffectiveAlarmVolumePercent(uint8_t sourceVolumePercent) {
   if (source == 0) {
     return 0;
   }
-  const uint8_t output = muted ? MUTED_ALARM_OUTPUT_VOLUME : outputVolumeLevel;
+  const uint8_t output = muted.load(std::memory_order_relaxed)
+                             ? MUTED_ALARM_OUTPUT_VOLUME
+                             : outputVolumeLevel.load(std::memory_order_relaxed);
   if (output == 0) {
     return 0;
   }
@@ -141,19 +147,25 @@ uint8_t deviceEffectiveAlarmVolumePercent(uint8_t sourceVolumePercent) {
 }
 
 void volumeDown() {
-  const uint8_t current = volumeLevel;
-  setVolumeLevel(current > VOLUME_STEP ? current - VOLUME_STEP : 0);
-  if (volumeLevel > 0) {
-    muted = false;
+  const uint8_t current = volumeLevel.load(std::memory_order_relaxed);
+  const uint8_t next = current > VOLUME_STEP ? current - VOLUME_STEP : 0;
+  setVolumeLevel(next);
+  if (next > 0) {
+    muted.store(false, std::memory_order_relaxed);
   }
 }
 
 void volumeUp() {
-  const uint8_t current = volumeLevel;
-  setVolumeLevel(current + VOLUME_STEP < 100 ? current + VOLUME_STEP : 100);
-  if (volumeLevel > 0) {
-    muted = false;
+  const uint8_t current = volumeLevel.load(std::memory_order_relaxed);
+  const uint8_t next =
+      current + VOLUME_STEP < 100 ? current + VOLUME_STEP : 100;
+  setVolumeLevel(next);
+  if (next > 0) {
+    muted.store(false, std::memory_order_relaxed);
   }
 }
 
-void toggleMute() { muted = !muted; }
+void toggleMute() {
+  const bool current = muted.load(std::memory_order_relaxed);
+  muted.store(!current, std::memory_order_relaxed);
+}

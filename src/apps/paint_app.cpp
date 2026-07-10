@@ -67,7 +67,7 @@ void PaintApp::clear() {
   if (fallbackMode || taskHandle == NULL) {
     display->lock();
     clearCanvas();
-    display->flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    display->flushPartial();
     display->unlock();
     return;
   }
@@ -135,7 +135,7 @@ void PaintApp::run() {
     }
 
     if (changed) {
-      display->flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+      display->flushPartial();
     }
     display->unlock();
   }
@@ -197,7 +197,7 @@ void PaintApp::handleFallbackTouch(const TouchEvent &event) {
   display->lock();
   handleTouch(event);
   if (event.type == TOUCH_EVENT_UP) {
-    display->flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    display->flushPartial();
   }
   display->unlock();
 }

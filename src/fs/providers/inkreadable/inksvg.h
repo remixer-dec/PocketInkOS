@@ -568,7 +568,7 @@ bool isvg_parse(isvg_tape* tape, char* svg) {
     uint8_t fill_rule_stack[16];
     int xf_ptr = 0;
     int skip_depth = 0;
-    xform_stack[0] = (isvg_xform){{1,0, 0,1, 0,0}};
+    xform_stack[0] = isvg_xform{{1,0, 0,1, 0,0}};
     fill_stack[0] = ISVG_PAINT_BLACK;
     stroke_stack[0] = ISVG_PAINT_NONE;
     stroke_width_stack[0] = 1;

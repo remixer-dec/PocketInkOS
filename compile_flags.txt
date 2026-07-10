@@ -1,0 +1,12 @@
+-xc++
+-std=c++20
+-Wall
+-Wextra
+-I.
+-Isrc
+-Itools/container-stubs
+-Iexamples/pink/include
+-include
+src/sys/arduino_esp32_compat.h
+-DENABLE_NETWORK_APPS=1
+-DENABLE_TTS=0

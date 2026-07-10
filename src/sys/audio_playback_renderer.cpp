@@ -99,6 +99,7 @@ bool AudioPlaybackRenderer::begin(const AudioPlaybackStream &stream,
 
   playbackStream = stream;
   playbackConfig = config;
+  playbackVolumePercent = config.volumePercent;
   playbackFinished = false;
   stopRequested = false;
   playbackLastPeak = 0;
@@ -175,9 +176,9 @@ bool AudioPlaybackRenderer::writeChunk(char *error, int errorSize) {
 
   const uint32_t volume = playbackConfig.playWhenMutedAtMinimumVolume
                               ? deviceEffectiveAlarmVolumePercent(
-                                    playbackConfig.volumePercent)
+                                    playbackVolumePercent.load())
                               : deviceEffectiveOutputVolumePercent(
-                                    playbackConfig.volumePercent);
+                                    playbackVolumePercent.load());
   const size_t sampleCount = frames * 2U;
   uint16_t peak = 0;
   if (volume < 100U) {
@@ -235,7 +236,7 @@ void AudioPlaybackRenderer::stop() {
 }
 
 void AudioPlaybackRenderer::setVolumePercent(uint8_t percent) {
-  playbackConfig.volumePercent = percent > 100U ? 100U : percent;
+  playbackVolumePercent = percent > 100U ? 100U : percent;
 }
 
 void AudioPlaybackRenderer::taskEntry(void *user) {

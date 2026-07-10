@@ -17,8 +17,104 @@ struct multi_heap_info_t {
   size_t free_blocks;
   size_t total_blocks;
 };
-inline void *heap_caps_malloc(size_t n, int) { return std::malloc(n); }
-inline void heap_caps_free(void *p) { std::free(p); }
+
+struct heap_caps_tracking_snapshot_t {
+  size_t current_bytes;
+  size_t peak_bytes;
+  size_t total_allocated_bytes;
+  size_t allocation_count;
+};
+
+struct heap_caps_tracking_header_t {
+  size_t size;
+  int caps;
+  uint32_t magic;
+};
+
+inline heap_caps_tracking_snapshot_t &heap_caps_tracking_internal_stats() {
+  static heap_caps_tracking_snapshot_t stats = {};
+  return stats;
+}
+
+inline heap_caps_tracking_snapshot_t &heap_caps_tracking_spiram_stats() {
+  static heap_caps_tracking_snapshot_t stats = {};
+  return stats;
+}
+
+inline heap_caps_tracking_snapshot_t &heap_caps_tracking_total_stats() {
+  static heap_caps_tracking_snapshot_t stats = {};
+  return stats;
+}
+
+inline void heap_caps_tracking_add(heap_caps_tracking_snapshot_t &stats,
+                                   size_t n) {
+  stats.current_bytes += n;
+  stats.total_allocated_bytes += n;
+  stats.allocation_count++;
+  if (stats.current_bytes > stats.peak_bytes) {
+    stats.peak_bytes = stats.current_bytes;
+  }
+}
+
+inline void heap_caps_tracking_sub(heap_caps_tracking_snapshot_t &stats,
+                                   size_t n) {
+  stats.current_bytes = stats.current_bytes > n ? stats.current_bytes - n : 0;
+}
+
+inline void heap_caps_reset_tracking() {
+  heap_caps_tracking_internal_stats() = {};
+  heap_caps_tracking_spiram_stats() = {};
+  heap_caps_tracking_total_stats() = {};
+}
+
+inline heap_caps_tracking_snapshot_t heap_caps_get_tracking(int caps) {
+  if ((caps & MALLOC_CAP_SPIRAM) != 0) {
+    return heap_caps_tracking_spiram_stats();
+  }
+  if ((caps & MALLOC_CAP_INTERNAL) != 0) {
+    return heap_caps_tracking_internal_stats();
+  }
+  return heap_caps_tracking_total_stats();
+}
+
+inline void *heap_caps_malloc(size_t n, int caps) {
+  constexpr uint32_t kMagic = 0x48434150U;
+  void *raw = std::malloc(sizeof(heap_caps_tracking_header_t) + n);
+  if (raw == nullptr) {
+    return nullptr;
+  }
+  auto *header = static_cast<heap_caps_tracking_header_t *>(raw);
+  header->size = n;
+  header->caps = caps;
+  header->magic = kMagic;
+  heap_caps_tracking_add(heap_caps_tracking_total_stats(), n);
+  if ((caps & MALLOC_CAP_SPIRAM) != 0) {
+    heap_caps_tracking_add(heap_caps_tracking_spiram_stats(), n);
+  } else {
+    heap_caps_tracking_add(heap_caps_tracking_internal_stats(), n);
+  }
+  return header + 1;
+}
+
+inline void heap_caps_free(void *p) {
+  if (p == nullptr) {
+    return;
+  }
+  constexpr uint32_t kMagic = 0x48434150U;
+  auto *header = static_cast<heap_caps_tracking_header_t *>(p) - 1;
+  if (header->magic == kMagic) {
+    heap_caps_tracking_sub(heap_caps_tracking_total_stats(), header->size);
+    if ((header->caps & MALLOC_CAP_SPIRAM) != 0) {
+      heap_caps_tracking_sub(heap_caps_tracking_spiram_stats(), header->size);
+    } else {
+      heap_caps_tracking_sub(heap_caps_tracking_internal_stats(), header->size);
+    }
+    header->magic = 0;
+    std::free(header);
+    return;
+  }
+  std::free(p);
+}
 inline size_t heap_caps_get_free_size(int) { return 256 * 1024; }
 inline size_t heap_caps_get_largest_free_block(int) { return 128 * 1024; }
 inline void heap_caps_get_info(multi_heap_info_t *info, int) {

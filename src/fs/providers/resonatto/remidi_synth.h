@@ -3,6 +3,7 @@
 
 #include "fs/providers/resonatto/remidi.h"
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -49,7 +50,7 @@ private:
   uint32_t sampleRateHz = 16000;
   uint32_t nextEventIndex = 0;
   uint64_t positionFrames = 0;
-  volatile uint32_t positionMsSnapshot = 0;
+  std::atomic<uint32_t> positionMsSnapshot{0};
   Voice voices[kVoiceCount] = {};
 };
 

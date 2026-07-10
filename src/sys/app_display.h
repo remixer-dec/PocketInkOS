@@ -4,6 +4,7 @@
 #include "sys/drivers/epaper_driver_bsp.h"
 #include "sys/global.h"
 #include <Adafruit_GFX.h>
+#include <atomic>
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,7 +20,8 @@ public:
   void drawBlackPixelUnchecked(int16_t x, int16_t y);
   void drawBlackBlock2x2Unchecked(int16_t x, int16_t y);
   void flush();
-  void flushPartial(int16_t x, int16_t y, int16_t w, int16_t h);
+  /// Transfers the full framebuffer using the panel's partial-refresh waveform.
+  void flushPartial();
   void clear();
   void seedPartialBothImages();
   void requestFullRefresh();
@@ -34,7 +36,7 @@ public:
 private:
   epaper_driver_display driver;
   bool partialReady = false;
-  volatile bool locked = false;
+  std::atomic_flag locked = ATOMIC_FLAG_INIT;
 };
 
 #endif

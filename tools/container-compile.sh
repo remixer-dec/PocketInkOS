@@ -14,7 +14,13 @@ if [[ "$TTS_APPS" != "0" && "$TTS_APPS" != "1" ]]; then
   exit 1
 fi
 
-COMMON=(-std=c++17 -Wall -Wextra -Werror -fsyntax-only -include "$ROOT/src/sys/arduino_esp32_compat.h" -I"$STUBS" -I"$ROOT/src" -I"$ROOT")
+EXTENDED="${ENABLE_EXTENDED:-0}"
+if [[ "$EXTENDED" != "0" && "$EXTENDED" != "1" ]]; then
+  printf 'ENABLE_EXTENDED must be 0 or 1, got %q\n' "$EXTENDED" >&2
+  exit 1
+fi
+
+COMMON=(-std=c++20 -Wall -Wextra -Werror -pedantic-errors -fsyntax-only -include "$ROOT/src/sys/arduino_esp32_compat.h" -I"$STUBS" -I"$ROOT/src" -I"$ROOT")
 append_inflect_define() {
   local name="$1"
   local default_value="$2"
@@ -68,6 +74,7 @@ append_inflect_symbol_define() {
   printf -v "$4" '%s' "$value"
 }
 COMMON+=("-DENABLE_TTS=$TTS_APPS")
+COMMON+=("-DENABLE_EXTENDED=$EXTENDED")
 if [[ "$TTS_APPS" != "0" ]]; then
   COMMON+=(-DINFLECT_LOW_MEMORY -include "$ROOT/src/tts/ggml_config_arduino.h" -I"$ROOT/src/tts/InflectNanoTTS/src" -I"$ROOT/src/tts/InflectNanoTTS/ggml/include" -I"$ROOT/src/tts/InflectNanoTTS/ggml/src" -I"$ROOT/src/tts/InflectNanoTTS/ggml/src/ggml-cpu")
   append_inflect_define INFLECT_USE_ESP_DSP_CONTIG 0 INFLECT_DSP_CONTIG
@@ -91,6 +98,11 @@ if [[ "$TTS_APPS" != "0" ]]; then
 else
   printf '[container-compile] TTS disabled; set ENABLE_TTS=1 or WITH_TTS=1 to include it\n'
 fi
+if [[ "$EXTENDED" != "0" ]]; then
+  printf '[container-compile] Extended edition enabled\n'
+else
+  printf '[container-compile] Extended edition disabled; set ENABLE_EXTENDED=1 to include it\n'
+fi
 NETWORK_APPS="${ENABLE_NETWORK_APPS:-1}"
 if [[ "$NETWORK_APPS" != "0" ]]; then
   COMMON+=(-DENABLE_NETWORK_APPS=1)
@@ -100,11 +112,14 @@ fi
 
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
+  "$ROOT/src/sys/app_config.cpp" \
+  "$ROOT/src/sys/drivers/epaper_driver_bsp.cpp" \
   "$ROOT/src/sys/audio_capture.cpp" \
   "$ROOT/src/sys/audio_playback_renderer.cpp" \
   "$ROOT/src/sys/audio_power.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
+  "$ROOT/src/apps/alarm_app.cpp" \
   "$ROOT/src/apps/calendar_app.cpp" \
   "$ROOT/src/apps/calculator_app.cpp" \
   "$ROOT/src/games/chess_app.cpp" \
@@ -133,6 +148,7 @@ FILES=( \
   "$ROOT/src/sys/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/sd_storage.cpp" \
+  "$ROOT/src/sys/screenshot.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/sys/shell_buttons.cpp" \
@@ -142,10 +158,14 @@ FILES=( \
   "$ROOT/src/apps/paint_app.cpp" \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \
   "$ROOT/src/apps/qr_app.cpp" \
+  "$ROOT/src/apps/settings_app.cpp" \
   "$ROOT/src/apps/gfx_app.cpp" \
   "$ROOT/src/shell/shell_home_layout.cpp" \
+  "$ROOT/src/shell/shell_lockscreen_layout.cpp" \
   "$ROOT/src/shell/shell_menu_layout.cpp" \
   "$ROOT/src/shell/shell_dialog_layout.cpp" \
+  "$ROOT/src/shell/shell_controller.cpp" \
+  "$ROOT/src/shell/quick_settings.cpp" \
   "$ROOT/src/sys/hw_button.cpp" \
   "$ROOT/src/ui/components/touch_button.cpp" \
   "$ROOT/src/ui/status_bar.cpp" \
@@ -181,6 +201,10 @@ if [[ "$TTS_APPS" != "0" ]]; then
     "$ROOT/src/tts/InflectNanoTTS/src/acoustic_model.cpp" \
     "$ROOT/src/tts/InflectNanoTTS/src/vocoder_model.cpp" \
     "$ROOT/src/tts/InflectNanoTTS/src/text_frontend.cpp")
+fi
+
+if [[ "$EXTENDED" != "0" ]]; then
+  FILES+=("$ROOT/src/fs/providers/audio_file_viewer.cpp")
 fi
 
 for file in "${FILES[@]}"; do

@@ -14,3 +14,5 @@ inline BaseType_t xQueueSend(QueueHandle_t, const void *, uint32_t) {
 inline BaseType_t xQueueReceive(QueueHandle_t, void *, uint32_t) {
   return 0;
 }
+inline UBaseType_t uxQueueMessagesWaiting(QueueHandle_t) { return 0; }
+inline void vQueueDelete(QueueHandle_t) {}

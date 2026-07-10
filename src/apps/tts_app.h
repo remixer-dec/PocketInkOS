@@ -9,6 +9,7 @@
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 
 #include <Adafruit_GFX.h>
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -47,10 +48,8 @@ private:
   uint8_t griffinLimIterations = 4;
   char status[96] = "Enter text";
   char taskText[MAX_TEXT_LENGTH + 1] = {};
-  volatile bool taskRunning = false;
-  volatile bool taskDone = false;
-  volatile bool taskWorkerIdle = false;
-  void *taskHandle = nullptr;
+  std::atomic<bool> taskRunning{false};
+  std::atomic<bool> taskDone{false};
 
   tts::PcmBuffer pcm;
   tts::SynthesisResult lastResult;

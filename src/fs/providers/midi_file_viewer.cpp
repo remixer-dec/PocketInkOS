@@ -87,7 +87,15 @@ void resetState(MidiViewerState &state) {
   stopPlayback(state);
   remidi_free_sequence(&state.sequence);
   state.synth.reset();
-  state = MidiViewerState();
+  state.providerId[0] = '\0';
+  state.path[0] = '\0';
+  state.sequence = {};
+  state.loaded = false;
+  state.playing = false;
+  state.pressedAction = AudioPlayerAction::None;
+  state.pressedUntil = 0;
+  state.positionMs = 0;
+  state.nextProgressRedrawMs = 0;
 }
 
 bool loadMidiSequence(const char *providerId, const char *path,

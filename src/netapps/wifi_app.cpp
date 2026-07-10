@@ -17,8 +17,10 @@
 #include <IPAddress.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <atomic>
 #include <ctype.h>
 #include <cstring>
+#include <new>
 
 extern "C" {
   #include "ping/ping_sock.h"
@@ -29,27 +31,27 @@ extern "C" {
 #include "lwip/netif.h"
 
 struct WifiPingSlot {
-  uint32_t ip;
-  uint16_t pingMs;
-  volatile bool done;
-  bool reachable;
+  uint32_t ip = 0;
+  uint16_t pingMs = 0;
+  bool reachable = false;
+  std::atomic<bool> done{false};
 };
 
 static void on_ping_success(esp_ping_handle_t hdl, void *args) {
   WifiPingSlot *slot = static_cast<WifiPingSlot *>(args);
   uint32_t elapsed_ms;
   esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_ms, sizeof(elapsed_ms));
-  slot->done = true;
   slot->reachable = true;
   slot->pingMs = elapsed_ms > 65535 ? 65535 : static_cast<uint16_t>(elapsed_ms);
+  slot->done.store(true, std::memory_order_release);
 }
 
 static void on_ping_timeout(esp_ping_handle_t hdl, void *args) {
   (void)hdl;
   WifiPingSlot *slot = static_cast<WifiPingSlot *>(args);
-  slot->done = true;
   slot->reachable = false;
   slot->pingMs = 65535;
+  slot->done.store(true, std::memory_order_release);
 }
 
 static void on_ping_end(esp_ping_handle_t hdl, void *args) {
@@ -377,13 +379,22 @@ bool WifiApp::ensurePingSlots() {
   if (pingSlots == nullptr) {
     return false;
   }
+  for (uint8_t i = 0; i < NET_SCAN_TRIES_PER_FRAME; i++) {
+    new (&pingSlots[i]) WifiPingSlot();
+  }
   clearPingSlots();
   return true;
 }
 
 void WifiApp::clearPingSlots() {
-  if (pingSlots != nullptr) {
-    memset(pingSlots, 0, sizeof(WifiPingSlot) * NET_SCAN_TRIES_PER_FRAME);
+  if (pingSlots == nullptr) {
+    return;
+  }
+  for (uint8_t i = 0; i < NET_SCAN_TRIES_PER_FRAME; i++) {
+    pingSlots[i].ip = 0;
+    pingSlots[i].pingMs = 0;
+    pingSlots[i].reachable = false;
+    pingSlots[i].done.store(false, std::memory_order_relaxed);
   }
 }
 
@@ -392,7 +403,8 @@ bool WifiApp::pingSlotsBusy() const {
     return false;
   }
   for (uint8_t i = 0; i < NET_SCAN_TRIES_PER_FRAME; i++) {
-    if (pingSlots[i].ip != 0 && !pingSlots[i].done) {
+    if (pingSlots[i].ip != 0 &&
+        !pingSlots[i].done.load(std::memory_order_acquire)) {
       return true;
     }
   }
@@ -401,6 +413,9 @@ bool WifiApp::pingSlotsBusy() const {
 
 void WifiApp::releasePingSlotsIfIdle() {
   if (pingSlots != nullptr && !pingSlotsBusy()) {
+    for (uint8_t i = 0; i < NET_SCAN_TRIES_PER_FRAME; i++) {
+      pingSlots[i].~WifiPingSlot();
+    }
     heap_caps_free(pingSlots);
     pingSlots = nullptr;
   }
@@ -1501,6 +1516,12 @@ void WifiApp::startNetworkScan() {
   networkScanState = SCAN_RUNNING;
   networkScanStartedAt = millis();
   freeNetDevices();
+  // A previous scan can still be completing callbacks after the screen closes.
+  // Reusing its slots would race those callbacks, so wait for a later scan.
+  if (pingSlotsBusy()) {
+    networkScanState = SCAN_DONE;
+    return;
+  }
   if (!ensurePingSlots()) {
     networkScanState = SCAN_DONE;
     return;
@@ -1553,7 +1574,10 @@ void WifiApp::advanceNetworkScan() {
   }
 
   for (uint8_t i = 0; i < NET_SCAN_TRIES_PER_FRAME; i++) {
-    if (pingSlots[i].ip == 0 || !pingSlots[i].done) continue;
+    if (pingSlots[i].ip == 0 ||
+        !pingSlots[i].done.load(std::memory_order_acquire)) {
+      continue;
+    }
 
     if (pingSlots[i].reachable && networkScanDeviceCount < MAX_NET_DEVICES) {
       NetworkDevice &dev = networkDevices[networkScanDeviceCount++];
@@ -1572,7 +1596,8 @@ void WifiApp::advanceNetworkScan() {
       // Check if all pings have completed before declaring done
       bool allDone = true;
       for (uint8_t j = 0; j < NET_SCAN_TRIES_PER_FRAME; j++) {
-        if (pingSlots[j].ip != 0 && !pingSlots[j].done) {
+        if (pingSlots[j].ip != 0 &&
+            !pingSlots[j].done.load(std::memory_order_acquire)) {
           allDone = false;
           break;
         }
@@ -1610,8 +1635,8 @@ void WifiApp::advanceNetworkScan() {
     if (err == ESP_OK) {
       pingSlots[i].ip = target;
       pingSlots[i].pingMs = 0;
-      pingSlots[i].done = false;
       pingSlots[i].reachable = false;
+      pingSlots[i].done.store(false, std::memory_order_relaxed);
       esp_ping_start(ping);
     }
   }

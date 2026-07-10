@@ -239,7 +239,7 @@ void renderSleepClockScreen(bool partialUpdate,
   display.clear();
   drawLockscreenClockScreen(display, timeText, dateText);
   if (partialUpdate) {
-    display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    display.flushPartial();
   } else {
     display.flush();
   }

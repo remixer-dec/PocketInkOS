@@ -1,5 +1,7 @@
 #include "fs/file_viewer_registry.h"
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
 #include "fs/providers/audio_file_viewer.h"
+#endif
 #include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/hex_file_viewer.h"
 #include "fs/providers/midi_file_viewer.h"
@@ -69,7 +71,9 @@ bool extensionMatches(const FileViewerExtension &viewer, const char *extension,
 }
 
 const FileViewerExtension *const VIEWERS[] = {
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
     &AUDIO_FILE_VIEWER,
+#endif
     &MIDI_FILE_VIEWER,
     &IMAGE_FILE_VIEWER,
     &SVG_FILE_VIEWER,
