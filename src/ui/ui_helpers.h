@@ -69,4 +69,18 @@ inline void uiDrawButton(Adafruit_GFX &gfx, const UiRect &rect,
   TouchButton(rect, content).draw(gfx, pressed);
 }
 
+/// Draws an icon-only control without a border, retaining pressed feedback.
+inline void uiDrawBorderlessIconButton(Adafruit_GFX &gfx, const UiRect &rect,
+                                       char icon, bool pressed = false) {
+  char iconText[2] = {icon, '\0'};
+  TouchButtonContent content;
+  content.icon = iconText;
+  content.iconPlacement = TouchButtonIconPlacement::Only;
+  TouchButtonStyle style;
+  style.drawOutline = false;
+  style.padding = 0;
+  TouchButton(rect, content, TouchButtonShape::rectangle(), style)
+      .draw(gfx, pressed);
+}
+
 #endif

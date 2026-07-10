@@ -54,6 +54,7 @@ PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) 
   case PowerDialogAction::VolumeDown:
   case PowerDialogAction::VolumeMute:
   case PowerDialogAction::VolumeUp:
+  case PowerDialogAction::Screenshot:
     return action;
   }
   return PowerDialogAction::None;
@@ -103,6 +104,11 @@ void QuickSettingsController::runAction(
   case PowerDialogAction::VolumeUp:
     volumeUp();
     return;
+  case PowerDialogAction::Screenshot:
+    if (actions.captureScreenshot != nullptr) {
+      actions.captureScreenshot(actions.context);
+    }
+    return;
   case PowerDialogAction::PreviousPage:
   case PowerDialogAction::NextPage:
   case PowerDialogAction::None:
@@ -113,11 +119,13 @@ void QuickSettingsController::runAction(
 PowerDialogPage QuickSettingsController::previousPage() const {
   switch (page) {
   case PowerDialogPage::Power:
-    return PowerDialogPage::Volume;
+    return PowerDialogPage::Screen;
   case PowerDialogPage::Device:
     return PowerDialogPage::Power;
   case PowerDialogPage::Volume:
     return PowerDialogPage::Device;
+  case PowerDialogPage::Screen:
+    return PowerDialogPage::Volume;
   }
   return PowerDialogPage::Power;
 }
@@ -129,6 +137,8 @@ PowerDialogPage QuickSettingsController::nextPage() const {
   case PowerDialogPage::Device:
     return PowerDialogPage::Volume;
   case PowerDialogPage::Volume:
+    return PowerDialogPage::Screen;
+  case PowerDialogPage::Screen:
     return PowerDialogPage::Power;
   }
   return PowerDialogPage::Power;
