@@ -61,6 +61,10 @@ void DateTimePickerComponent::setTimePickerEnabled(bool enabled) {
   showTimePicker = enabled;
 }
 
+void DateTimePickerComponent::setMondayFirst(bool enabled) {
+  mondayFirst = enabled;
+}
+
 void DateTimePickerComponent::draw(Adafruit_GFX &gfx) {
   if (yearKeyboardOpen) {
     yearKeyboard.draw(gfx, yearInput, 4);
@@ -70,17 +74,20 @@ void DateTimePickerComponent::draw(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
 
-  drawButton(gfx, NAV_X, NAV_Y, NAV_W, NAV_H, "<",
-             isControlPressed(CONTROL_PREV_MONTH));
-  drawButton(gfx, EPD_WIDTH - NAV_W - NAV_X, NAV_Y, NAV_W, NAV_H, ">",
-             isControlPressed(CONTROL_NEXT_MONTH));
+  uiDrawBorderlessIconButton(
+      gfx, {NAV_X, NAV_Y, NAV_W, NAV_H}, '<',
+      isControlPressed(CONTROL_PREV_MONTH));
+  uiDrawBorderlessIconButton(
+      gfx, {static_cast<int16_t>(EPD_WIDTH - NAV_W - NAV_X), NAV_Y, NAV_W,
+            NAV_H},
+      '>', isControlPressed(CONTROL_NEXT_MONTH));
 
   char title[16];
   snprintf(title, sizeof(title), "%s %d", monthName(viewedMonth), viewedYear);
   drawCenteredText(gfx, title, 8, 2);
 
   for (int i = 0; i < 7; i++) {
-    const char *label = weekdayName((i + 1) % 7);
+    const char *label = weekdayName((i + (mondayFirst ? 1 : 0)) % 7);
     int16_t textX;
     int16_t textY;
     uint16_t textW;
@@ -316,7 +323,8 @@ void DateTimePickerComponent::clampSelectedDay() {
 }
 
 int DateTimePickerComponent::firstWeekday() const {
-  return (weekdayForDate(viewedYear, viewedMonth, 1) + 6) % 7;
+  const int weekday = weekdayForDate(viewedYear, viewedMonth, 1);
+  return mondayFirst ? (weekday + 6) % 7 : weekday;
 }
 
 void DateTimePickerComponent::adjustHour(int delta) {

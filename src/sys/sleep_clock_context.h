@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "sys/system_config.h"
+
 /// Minimal clock context used by periodic sleep/wake clock updates.
 struct SleepClockSnapshot {
   /// True when periodic sleep clock mode is active.
@@ -13,16 +15,20 @@ struct SleepClockSnapshot {
   int64_t localUnix;
   /// Requested wake interval in seconds.
   uint16_t wakeIntervalSeconds;
+  /// Clock presentation used for the previous e-paper frame.
+  ConfigTimeFormat timeFormat;
 };
 
 /// Starts periodic sleep clock mode with the current clock state.
 void sleepClockContextStart(bool clockSet, int64_t localUnix,
-                            uint16_t wakeIntervalSeconds);
+                            uint16_t wakeIntervalSeconds,
+                            ConfigTimeFormat timeFormat);
 /// Loads periodic sleep clock state after wake.
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot);
 /// Updates periodic sleep clock state before returning to sleep.
 void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
-                             uint16_t wakeIntervalSeconds);
+                             uint16_t wakeIntervalSeconds,
+                             ConfigTimeFormat timeFormat);
 /// Clears periodic sleep clock state.
 void sleepClockContextClear();
 

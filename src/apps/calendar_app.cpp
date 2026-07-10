@@ -2,7 +2,32 @@
 #include "sys/device_clock.h"
 #include "sys/global.h"
 
+namespace {
+
+const AppConfigOption kMondayFirstOptions[] = {
+    {"Monday", "true"},
+    {"Sunday", "false"},
+};
+
+const AppConfigSetting kCalendarSettings[] = {
+    {"monday_first", "Week starts", AppConfigType::Bool, "true",
+     kMondayFirstOptions,
+     static_cast<uint8_t>(sizeof(kMondayFirstOptions) /
+                          sizeof(kMondayFirstOptions[0])),
+     0},
+};
+
+const AppConfigRegistration kCalendarConfig = {
+    "calendar", "Calendar", kCalendarSettings,
+    static_cast<uint8_t>(sizeof(kCalendarSettings) / sizeof(kCalendarSettings[0]))};
+
+} // namespace
+
+void calendarAppConfigRegister() { appConfigRegister(kCalendarConfig); }
+
 void CalendarApp::reset() {
+  picker.setMondayFirst(appConfigGetBool(kCalendarConfig,
+                                         kCalendarSettings[0]));
   loadToday();
   picker.setToday(today, clockReady);
   picker.setTimePickerEnabled(false);

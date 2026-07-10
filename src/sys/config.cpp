@@ -113,6 +113,39 @@ bool parseBool(const char *value, bool &out) {
   return false;
 }
 
+bool parseInactivityMinutes(const char *value, uint8_t &out) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  uint16_t minutes = 0;
+  for (const char *cursor = value; *cursor != '\0'; cursor++) {
+    if (*cursor < '0' || *cursor > '9') {
+      return false;
+    }
+    const uint16_t digit = static_cast<uint16_t>(*cursor - '0');
+    if (minutes >
+        (static_cast<uint16_t>(CONFIG_LOCKSCREEN_INACTIVITY_MAX_MINUTES) -
+         digit) /
+            10U) {
+      return false;
+    }
+    minutes = minutes * 10U + digit;
+  }
+  out = static_cast<uint8_t>(minutes);
+  return true;
+}
+
+bool validSystemValue(const char *key, const char *value) {
+  if (key == nullptr || value == nullptr) {
+    return false;
+  }
+  if (strcmp(key, "lockscreen.inactivityMinutes") == 0) {
+    uint8_t minutes = 0;
+    return parseInactivityMinutes(value, minutes);
+  }
+  return true;
+}
+
 uint16_t cpuMhzFromValue(const char *value, uint16_t fallback) {
   const unsigned long parsed =
       strtoul(value != nullptr ? value : "", nullptr, 10);
@@ -137,6 +170,13 @@ void resetSystemDefaults() {
   currentConfig.wifi.autoConnect = false;
   copyValue(currentConfig.home.sunBtnApp, sizeof(currentConfig.home.sunBtnApp),
             "contact_links");
+  copyValue(currentConfig.home.widgets, sizeof(currentConfig.home.widgets),
+            "temp,hum,cpuTemp,sd,battery,logoText,buttonHelp");
+  copyValue(currentConfig.layout, sizeof(currentConfig.layout), "default");
+  copyValue(currentConfig.lockscreen.topIcon,
+            sizeof(currentConfig.lockscreen.topIcon), "S");
+  currentConfig.lockscreen.showDate = true;
+  currentConfig.lockscreen.inactivityMinutes = 2;
   currentConfig.cpu.mhz = 240;
   currentConfig.cpu.governor = CONFIG_CPU_FIXED;
   currentConfig.time.timeFormat = CONFIG_TIME_24H;
@@ -147,6 +187,60 @@ void resetSystemDefaults() {
   copyValue(currentConfig.time.syncServer, sizeof(currentConfig.time.syncServer),
             kDefaultTimeSyncServer);
   currentConfig.sensors.temperatureOffsetC = 0.0f;
+  copyValue(currentConfig.sensors.unit, sizeof(currentConfig.sensors.unit), "c");
+}
+
+struct StringConfigField {
+  const char *key;
+  char *value;
+  size_t capacity;
+};
+
+struct BoolConfigField {
+  const char *key;
+  bool *value;
+};
+
+const StringConfigField *stringConfigField(const char *key) {
+  static const StringConfigField fields[] = {
+      {"wifi.ssid", currentConfig.wifi.ssid, sizeof(currentConfig.wifi.ssid)},
+      {"wifi.password", currentConfig.wifi.password,
+       sizeof(currentConfig.wifi.password)},
+      {"wifi.displayName", currentConfig.wifi.displayName,
+       sizeof(currentConfig.wifi.displayName)},
+      {"home.sunBtnApp", currentConfig.home.sunBtnApp,
+       sizeof(currentConfig.home.sunBtnApp)},
+      {"home.widgets", currentConfig.home.widgets,
+       sizeof(currentConfig.home.widgets)},
+      {"layout", currentConfig.layout, sizeof(currentConfig.layout)},
+      {"lockscreen.topIcon", currentConfig.lockscreen.topIcon,
+       sizeof(currentConfig.lockscreen.topIcon)},
+      {"timezone", currentConfig.time.timezone,
+       sizeof(currentConfig.time.timezone)},
+      {"time.syncServer", currentConfig.time.syncServer,
+       sizeof(currentConfig.time.syncServer)},
+      {"temp.unit", currentConfig.sensors.unit,
+       sizeof(currentConfig.sensors.unit)},
+  };
+  for (const StringConfigField &field : fields) {
+    if (strcmp(key, field.key) == 0) {
+      return &field;
+    }
+  }
+  return nullptr;
+}
+
+const BoolConfigField *boolConfigField(const char *key) {
+  static const BoolConfigField fields[] = {
+      {"wifi.autoConnect", &currentConfig.wifi.autoConnect},
+      {"lockscreen.date", &currentConfig.lockscreen.showDate},
+  };
+  for (const BoolConfigField &field : fields) {
+    if (strcmp(key, field.key) == 0) {
+      return &field;
+    }
+  }
+  return nullptr;
 }
 
 void applySystemKey(const char *key, const char *value) {
@@ -161,19 +255,15 @@ void applySystemKey(const char *key, const char *value) {
     } else if (strcmp(savedField, "bssid") == 0) {
       copyValue(saved.bssid, sizeof(saved.bssid), value);
     }
-  } else if (strcmp(key, "wifi.ssid") == 0) {
-    copyValue(currentConfig.wifi.ssid, sizeof(currentConfig.wifi.ssid), value);
-  } else if (strcmp(key, "wifi.password") == 0) {
-    copyValue(currentConfig.wifi.password, sizeof(currentConfig.wifi.password),
-              value);
-  } else if (strcmp(key, "wifi.displayName") == 0) {
-    copyValue(currentConfig.wifi.displayName,
-              sizeof(currentConfig.wifi.displayName), value);
-  } else if (strcmp(key, "wifi.autoConnect") == 0) {
-    parseBool(value, currentConfig.wifi.autoConnect);
-  } else if (strcmp(key, "home.sunBtnApp") == 0) {
-    copyValue(currentConfig.home.sunBtnApp,
-              sizeof(currentConfig.home.sunBtnApp), value);
+  } else if (const StringConfigField *field = stringConfigField(key)) {
+    copyValue(field->value, field->capacity, value);
+  } else if (const BoolConfigField *field = boolConfigField(key)) {
+    parseBool(value, *field->value);
+  } else if (strcmp(key, "lockscreen.inactivityMinutes") == 0) {
+    uint8_t minutes = 0;
+    if (parseInactivityMinutes(value, minutes)) {
+      currentConfig.lockscreen.inactivityMinutes = minutes;
+    }
   } else if (strcmp(key, "cpu.mhz") == 0) {
     currentConfig.cpu.mhz = cpuMhzFromValue(value, currentConfig.cpu.mhz);
   } else if (strcmp(key, "cpu.governor") == 0) {
@@ -199,12 +289,6 @@ void applySystemKey(const char *key, const char *value) {
     currentConfig.time.syncProtocol = asciiEqualIgnoreCase(value, "ntp")
                                           ? CONFIG_TIME_SYNC_NTP
                                           : CONFIG_TIME_SYNC_HTTPS;
-  } else if (strcmp(key, "timezone") == 0) {
-    copyValue(currentConfig.time.timezone, sizeof(currentConfig.time.timezone),
-              value);
-  } else if (strcmp(key, "time.syncServer") == 0) {
-    copyValue(currentConfig.time.syncServer,
-              sizeof(currentConfig.time.syncServer), value);
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     currentConfig.sensors.temperatureOffsetC =
         static_cast<float>(atof(value != nullptr ? value : "0"));
@@ -311,16 +395,13 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
     } else {
       return false;
     }
-  } else if (strcmp(key, "wifi.ssid") == 0) {
-    copyValue(out, outSize, currentConfig.wifi.ssid);
-  } else if (strcmp(key, "wifi.password") == 0) {
-    copyValue(out, outSize, currentConfig.wifi.password);
-  } else if (strcmp(key, "wifi.displayName") == 0) {
-    copyValue(out, outSize, currentConfig.wifi.displayName);
-  } else if (strcmp(key, "wifi.autoConnect") == 0) {
-    copyValue(out, outSize, currentConfig.wifi.autoConnect ? "true" : "false");
-  } else if (strcmp(key, "home.sunBtnApp") == 0) {
-    copyValue(out, outSize, currentConfig.home.sunBtnApp);
+  } else if (const StringConfigField *field = stringConfigField(key)) {
+    copyValue(out, outSize, field->value);
+  } else if (const BoolConfigField *field = boolConfigField(key)) {
+    copyValue(out, outSize, *field->value ? "true" : "false");
+  } else if (strcmp(key, "lockscreen.inactivityMinutes") == 0) {
+    snprintf(out, outSize, "%u",
+             static_cast<unsigned>(currentConfig.lockscreen.inactivityMinutes));
   } else if (strcmp(key, "cpu.mhz") == 0) {
     snprintf(out, outSize, "%u", static_cast<unsigned>(currentConfig.cpu.mhz));
   } else if (strcmp(key, "cpu.governor") == 0) {
@@ -346,10 +427,6 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
     copyValue(out, outSize,
               currentConfig.time.syncProtocol == CONFIG_TIME_SYNC_NTP ? "ntp"
                                                                       : "https");
-  } else if (strcmp(key, "timezone") == 0) {
-    copyValue(out, outSize, currentConfig.time.timezone);
-  } else if (strcmp(key, "time.syncServer") == 0) {
-    copyValue(out, outSize, currentConfig.time.syncServer);
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     snprintf(out, outSize, "%.2f", currentConfig.sensors.temperatureOffsetC);
   } else {
@@ -402,6 +479,10 @@ bool appConfigPath(const char *appId, char *out, size_t outSize) {
 void configBegin() { configReload(); }
 
 void configLoadDefaults() { resetSystemDefaults(); }
+
+bool configParseLockscreenInactivityMinutes(const char *value, uint8_t &out) {
+  return parseInactivityMinutes(value, out);
+}
 
 void configReload() {
   resetSystemDefaults();
@@ -499,6 +580,9 @@ static bool rewriteConfigFile(const char *key, const char *value) {
 }
 
 bool configSet(const char *key, const char *value) {
+  if (!validSystemValue(key, value)) {
+    return false;
+  }
   return rewriteConfigFile(key, value);
 }
 

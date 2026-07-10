@@ -30,6 +30,8 @@ public:
   void setTime(const TimePickerTime &time);
   /// Enables or hides time selection controls.
   void setTimePickerEnabled(bool enabled);
+  /// Chooses whether weekday columns start on Monday or Sunday.
+  void setMondayFirst(bool enabled);
 
   /// Draws the picker.
   void draw(Adafruit_GFX &gfx);
@@ -64,6 +66,7 @@ private:
   TimePickerTime time;
   bool hasToday = false;
   bool showTimePicker = false;
+  bool mondayFirst = true;
   bool yearKeyboardOpen = false;
   String yearInput;
   T9KeyboardComponent yearKeyboard;

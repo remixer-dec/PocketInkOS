@@ -28,6 +28,7 @@ struct StoredSleepClockContext {
   uint16_t checksum;
   uint8_t active;
   uint8_t clockSet;
+  uint8_t timeFormat;
   uint16_t wakeIntervalSeconds;
   int64_t localUnix;
 };
@@ -49,10 +50,11 @@ uint16_t contextChecksum(const StoredSleepClockContext &context) {
 }
 
 void store(bool active, bool clockSet, int64_t localUnix,
-           uint16_t wakeIntervalSeconds) {
+           uint16_t wakeIntervalSeconds, ConfigTimeFormat timeFormat) {
   sleepClockContext.magic = SLEEP_CLOCK_MAGIC;
   sleepClockContext.active = active ? 1 : 0;
   sleepClockContext.clockSet = clockSet ? 1 : 0;
+  sleepClockContext.timeFormat = static_cast<uint8_t>(timeFormat);
   sleepClockContext.wakeIntervalSeconds = wakeIntervalSeconds;
   sleepClockContext.localUnix = localUnix;
   sleepClockContext.checksum = contextChecksum(sleepClockContext);
@@ -61,8 +63,9 @@ void store(bool active, bool clockSet, int64_t localUnix,
 } // namespace
 
 void sleepClockContextStart(bool clockSet, int64_t localUnix,
-                            uint16_t wakeIntervalSeconds) {
-  store(true, clockSet, localUnix, wakeIntervalSeconds);
+                            uint16_t wakeIntervalSeconds,
+                            ConfigTimeFormat timeFormat) {
+  store(true, clockSet, localUnix, wakeIntervalSeconds, timeFormat);
 }
 
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
@@ -75,12 +78,16 @@ bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
   snapshot.clockSet = sleepClockContext.clockSet != 0;
   snapshot.localUnix = sleepClockContext.localUnix;
   snapshot.wakeIntervalSeconds = sleepClockContext.wakeIntervalSeconds;
+  snapshot.timeFormat = sleepClockContext.timeFormat == CONFIG_TIME_12H
+                            ? CONFIG_TIME_12H
+                            : CONFIG_TIME_24H;
   return snapshot.active;
 }
 
 void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
-                             uint16_t wakeIntervalSeconds) {
-  store(true, clockSet, localUnix, wakeIntervalSeconds);
+                             uint16_t wakeIntervalSeconds,
+                             ConfigTimeFormat timeFormat) {
+  store(true, clockSet, localUnix, wakeIntervalSeconds, timeFormat);
 }
 
 void sleepClockContextClear() {

@@ -8,6 +8,8 @@
 static const uint16_t CONFIG_VALUE_MAX = 96;
 /// Number of Wi-Fi network slots persisted for automatic reconnect.
 static const uint8_t CONFIG_WIFI_SAVED_MAX = 3;
+/// Largest supported inactivity timeout for the uint8_t setting, in minutes.
+static const uint8_t CONFIG_LOCKSCREEN_INACTIVITY_MAX_MINUTES = UINT8_MAX;
 
 /// CPU frequency policy stored in system config.
 enum ConfigCpuGovernor : uint8_t {
@@ -69,7 +71,16 @@ struct SystemConfig {
 
   struct {
     char sunBtnApp[32];
+    char widgets[CONFIG_VALUE_MAX];
   } home;
+
+  char layout[16];
+
+  struct {
+    char topIcon[2];
+    bool showDate;
+    uint8_t inactivityMinutes;
+  } lockscreen;
 
   struct {
     uint16_t mhz;
@@ -86,6 +97,7 @@ struct SystemConfig {
 
   struct {
     float temperatureOffsetC;
+    char unit[2];
   } sensors;
 
 };
@@ -98,6 +110,9 @@ void configLoadDefaults();
 void configReload();
 /// Returns the active read-only system configuration.
 const SystemConfig &currentSystemConfig();
+/// Parses a whole-minute inactivity timeout in the supported 0–255 range.
+bool configParseLockscreenInactivityMinutes(const char *value,
+                                            uint8_t &out);
 
 /// Reads a raw config value by key into out.
 bool configGet(const char *key, char *out, size_t outSize);

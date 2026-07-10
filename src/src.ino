@@ -22,8 +22,10 @@
 #include "shell/connectivity.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
+#include "shell/shell_lockscreen_layout.h"
 #include "shell/shell_controller.h"
 #include <Arduino.h>
+#include <cstring>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -42,7 +44,6 @@ TextInputController textInput;
 ShellController shell(display, touch, textInput);
 
 static const unsigned long BATTERY_REFRESH_INTERVAL_MS = 30000;
-static const unsigned long DEFAULT_INACTIVITY_DEEP_SLEEP_MS = 120000;
 static const uint32_t INACTIVITY_SLEEP_GUARD_GRACE_MS = 3000;
 static const uint16_t SLEEP_CLOCK_WAKE_CPU_MHZ = 80;
 static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
@@ -157,6 +158,9 @@ void enterInactivityDeepSleep() {
   if (batteryShutdownStarted || inactivitySleepStarted) {
     return;
   }
+  if (inactivityDeepSleepMs() == 0) {
+    return;
+  }
   if (usbConnected()) {
     noteUserActivity();
     return;
@@ -171,7 +175,12 @@ void enterInactivityDeepSleep() {
 }
 
 unsigned long inactivityDeepSleepMs() {
-  return shell.inactivityDeepSleepMs(DEFAULT_INACTIVITY_DEEP_SLEEP_MS);
+  const uint8_t minutes = currentSystemConfig().lockscreen.inactivityMinutes;
+  if (minutes == 0) {
+    return 0;
+  }
+  return shell.inactivityDeepSleepMs(static_cast<unsigned long>(minutes) *
+                                     60UL * 1000UL);
 }
 
 void checkInactivitySleep() {
@@ -182,7 +191,11 @@ void checkInactivitySleep() {
     noteUserActivity();
     return;
   }
-  if (millis() - lastUserActivityAt >= inactivityDeepSleepMs()) {
+  const unsigned long timeoutMs = inactivityDeepSleepMs();
+  if (timeoutMs == 0) {
+    return;
+  }
+  if (millis() - lastUserActivityAt >= timeoutMs) {
     enterInactivityDeepSleep();
   }
 }
@@ -203,15 +216,28 @@ void renderLowBatteryScreen() {
   display.unlock();
 }
 
-void renderSleepClockScreen(bool partialUpdate) {
+void formatLockscreenTime(char *out, size_t outSize, ConfigTimeFormat format) {
+  deviceClock.formatTime(out, outSize, format);
+  if (format != CONFIG_TIME_12H) {
+    return;
+  }
+  char *space = strchr(out, ' ');
+  if (space != nullptr) {
+    memmove(space, space + 1, strlen(space));
+  }
+}
+
+void renderSleepClockScreen(bool partialUpdate,
+                            ConfigTimeFormat timeFormat =
+                                currentSystemConfig().time.timeFormat) {
   char timeText[16];
   char dateText[16];
-  deviceClock.formatTime(timeText, sizeof(timeText));
+  formatLockscreenTime(timeText, sizeof(timeText), timeFormat);
   deviceClock.formatDate(dateText, sizeof(dateText));
 
   display.lock();
   display.clear();
-  drawDeepSleepClockScreen(display, timeText, dateText);
+  drawLockscreenClockScreen(display, timeText, dateText);
   if (partialUpdate) {
     display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
   } else {
@@ -291,8 +317,9 @@ void enterSleepClockDeepSleep() {
   const bool clockSet = deviceClock.snapshotLocalUnix(localUnix);
   const uint16_t wakeIntervalSeconds =
       sleepClockWakeIntervalSeconds(clockSet, localUnix);
-  sleepClockContextStart(clockSet, localUnix, wakeIntervalSeconds);
-  renderSleepClockScreen();
+  const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
+  sleepClockContextStart(clockSet, localUnix, wakeIntervalSeconds, timeFormat);
+  renderSleepClockScreen(false, timeFormat);
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
                  SLEEP_CLOCK_RETAIN_EPD_POWER);
@@ -308,9 +335,9 @@ void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock) {
   display.clear();
   char timeText[16];
   char dateText[16];
-  deviceClock.formatTime(timeText, sizeof(timeText));
+  formatLockscreenTime(timeText, sizeof(timeText), sleepClock.timeFormat);
   deviceClock.formatDate(dateText, sizeof(dateText));
-  drawDeepSleepClockScreen(display, timeText, dateText);
+  drawLockscreenClockScreen(display, timeText, dateText);
   display.seedPartialBothImages();
   display.unlock();
 }
@@ -346,7 +373,7 @@ bool handleSleepClockTimerWake() {
     return true;
   }
 
-  renderSleepClockScreen(true);
+  renderSleepClockScreen(true, sleepClock.timeFormat);
 
   int64_t localUnix = 0;
   if (!deviceClock.snapshotLocalUnix(localUnix)) {
@@ -354,7 +381,8 @@ bool handleSleepClockTimerWake() {
   }
   const uint16_t wakeIntervalSeconds =
       sleepClockWakeIntervalSeconds(clockSet, localUnix);
-  sleepClockContextUpdate(clockSet, localUnix, wakeIntervalSeconds);
+  sleepClockContextUpdate(clockSet, localUnix, wakeIntervalSeconds,
+                          sleepClock.timeFormat);
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
                  SLEEP_CLOCK_RETAIN_EPD_POWER);

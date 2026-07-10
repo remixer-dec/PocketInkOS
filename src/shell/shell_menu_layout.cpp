@@ -1,7 +1,7 @@
 #include "shell/shell_menu_layout.h"
 #include "sys/global.h"
-#include "ui/components/touch_button.h"
 #include "ui/icon_ascii_font.h"
+#include "ui/ui_helpers.h"
 #include <stdio.h>
 
 namespace {
@@ -109,19 +109,7 @@ void drawMenuNextPage(AppDisplay &display, uint8_t slot, bool selected) {
   const int16_t y = MENU_Y + row * MENU_CELL_H;
 
   UiRect iconRect = {x, y, MENU_ICON_W, MENU_ICON_H};
-  TouchButton(iconRect).draw(display, selected);
-  display.setTextColor(selected ? 0 : 1);
-  display.setTextSize(2);
-  int16_t arrowX;
-  int16_t arrowY;
-  uint16_t arrowW;
-  uint16_t arrowH;
-  display.getTextBounds(">", 0, 0, &arrowX, &arrowY, &arrowW, &arrowH);
-  display.setCursor(x + (MENU_ICON_W - static_cast<int16_t>(arrowW)) / 2 -
-                        arrowX,
-                    y + (MENU_ICON_H - static_cast<int16_t>(arrowH)) / 2 -
-                        arrowY);
-  display.print(">");
+  uiDrawBorderlessIconButton(display, iconRect, '>', selected);
 
   display.setTextColor(1);
   display.setTextSize(1);
@@ -212,11 +200,8 @@ void moveMenuNext(MenuState &state) {
 void drawAppMenu(AppDisplay &display, const MenuState &state,
                  int8_t pressedSlot) {
   display.setTextColor(1);
-  display.setTextSize(2);
-  display.setCursor(8, 10);
-  display.print("<");
-  display.setCursor(184, 10);
-  display.print(">");
+  uiDrawBorderlessIconButton(display, {4, 0, 39, 28}, '<');
+  uiDrawBorderlessIconButton(display, {157, 0, 39, 28}, '>');
   drawMenuTitle(display, state);
 
   for (uint8_t slot = 0; slot < MENU_GRID_SIZE; slot++) {
