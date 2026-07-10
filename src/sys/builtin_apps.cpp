@@ -1,5 +1,7 @@
 #include "sys/builtin_apps.h"
+#include "sys/app_config.h"
 #include "sys/system_config.h"
+#include "apps/alarm_app.h"
 #include "apps/calendar_app.h"
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
@@ -37,6 +39,7 @@ extern AppDisplay display;
 namespace {
 
 CalculatorApp calculator;
+AlarmApp alarmApp;
 CalendarApp calendar;
 QrApp qrApp;
 PaintApp paintApp;
@@ -71,6 +74,7 @@ AppScreen<SudokuApp, true> sudokuScreen(sudoku);
 AppScreen<WordleApp, true> wordleScreen(wordle);
 AppScreen<ChessApp, true> chessScreen(chess);
 AppScreen<CalculatorApp, true> calculatorScreen(calculator);
+AppScreen<AlarmApp, true> alarmScreen(alarmApp);
 AppScreen<CalendarApp, true> calendarScreen(calendar);
 AppScreen<QrApp, true> qrScreen(qrApp);
 TouchlessAppScreen<PaintApp> paintScreen(paintApp);
@@ -78,7 +82,7 @@ AppScreen<DeghostApp, true> deghostScreen(deghostApp);
 AppScreen<GfxApp, true> gfxScreen(gfxApp);
 AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
-AppScreen<SettingsApp> settingsScreen(settingsApp);
+AppScreen<SettingsApp, true> settingsScreen(settingsApp);
 #if ENABLE_TTS
 AppScreen<TtsApp, true> ttsScreen(ttsApp);
 #endif
@@ -134,55 +138,16 @@ AppEventResult handleHnMenu() {
 #endif
 
 AppDefinition builtInApp(const char *id, const char *label, const char *icon,
-                         MenuCategory category, ActiveApp *runtime) {
-  return {id, label, icon, category, runtime};
-}
-
-AppDefinition builtInApp(const char *id, const char *label, const char *icon,
                          MenuCategory category, ActiveApp *runtime,
-                         AppCallback reset) {
-  AppDefinition app = builtInApp(id, label, icon, category, runtime);
+                         AppCallback reset = nullptr,
+                         AppBehavior behavior = AppBehavior{},
+                         bool useIconFont = false,
+                         AppVisibleHandler showCondition = nullptr) {
+  AppDefinition app = {id, label, icon, category, runtime};
   app.reset = reset;
-  return app;
-}
-
-AppDefinition builtInApp(const char *id, const char *label, const char *icon,
-                         MenuCategory category, ActiveApp *runtime,
-                         AppCallback reset, AppBehavior behavior) {
-  AppDefinition app = builtInApp(id, label, icon, category, runtime, reset);
   app.behavior = behavior;
-  return app;
-}
-
-AppDefinition builtInAppWhen(const char *id, const char *label,
-                             const char *icon, MenuCategory category,
-                             ActiveApp *runtime, AppVisibleHandler visible,
-                             AppCallback reset) {
-  AppDefinition app = builtInApp(id, label, icon, category, runtime);
-  app.visible = visible;
-  app.reset = reset;
-  return app;
-}
-
-AppDefinition builtInAppWhen(const char *id, const char *label,
-                             const char *icon, MenuCategory category,
-                             ActiveApp *runtime, AppVisibleHandler visible,
-                             AppCallback reset, AppBehavior behavior) {
-  AppDefinition app =
-      builtInAppWhen(id, label, icon, category, runtime, visible, reset);
-  app.behavior = behavior;
-  return app;
-}
-
-AppDefinition builtInIconAppWhen(const char *id, const char *label,
-                                 const char *icon, MenuCategory category,
-                                 ActiveApp *runtime, AppVisibleHandler visible,
-                                 AppCallback reset,
-                                 AppBehavior behavior = AppBehavior{}) {
-  AppDefinition app =
-      builtInAppWhen(id, label, icon, category, runtime, visible, reset);
-  app.iconFont = true;
-  app.behavior = behavior;
+  app.iconFont = useIconFont;
+  app.visible = showCondition;
   return app;
 }
 
@@ -272,6 +237,18 @@ const AppDefinition builtInApps[] = {
                    .build()),
     builtInApp("calculator", "calc", "=", MENU_APPS, &calculatorScreen,
                []() { calculator.reset(); }),
+    builtInApp(
+        "alarm", "alarm", "F", MENU_APPS, &alarmScreen,
+        []() { alarmApp.reset(); },
+        defaultBehavior()
+            .withEnter([]() { alarmApp.onEnter(); })
+            .withMenuBtn(dirtyIfHandledMethod<AlarmApp, alarmApp,
+                                               &AlarmApp::handleMenuButton>)
+            .withPowerBtn(dirtyIfHandledMethod<AlarmApp, alarmApp,
+                                                &AlarmApp::handlePowerButton>)
+            .withRelease([]() { alarmApp.release(); })
+            .build(),
+        true),
     builtInApp("calendar", "calendar", "C", MENU_APPS, &calendarScreen,
                []() { calendar.reset(); }),
     builtInApp("qr", "qr", "Q", MENU_APPS, &qrScreen,
@@ -310,8 +287,7 @@ const AppDefinition builtInApps[] = {
                               DeghostApp, deghostApp,
                               &DeghostApp::handlePowerButton>)
                    .build()),
-    builtInIconAppWhen("files", "files", "N", MENU_APPS, &filesScreen,
-                       sdStorageMounted,
+    builtInApp("files", "files", "N", MENU_APPS, &filesScreen,
                        []() { filesApp.reset(); },
                        defaultContextBehavior<FilesApp, filesApp>()
                            .withMenuBtn(dirtyIfHandledMethod<
@@ -321,20 +297,24 @@ const AppDefinition builtInApps[] = {
                               FilesApp, filesApp,
                               &FilesApp::handlePowerButton>)
                            .withRelease([]() { filesApp.release(); })
-                           .build()),
+                           .build(),
+                       true, sdStorageMounted),
     contactLinksApp,
-    builtInAppWhen("settings", "settings", "S", MENU_APPS, &settingsScreen,
-                   sdStorageMounted,
+    builtInApp("settings", "settings", "S", MENU_APPS, &settingsScreen,
                    []() { settingsApp.reset(); },
                    defaultBehavior()
-                       .withMenuBtn([]() {
-                         return AppEventResult::QuitRequested;
-                       })
+                       .withMenuBtn(dirtyIfHandledMethod<
+                                    SettingsApp, settingsApp,
+                                    &SettingsApp::handleMenuButton>)
+                       .withPowerBtn(dirtyIfHandledMethod<
+                                     SettingsApp, settingsApp,
+                                     &SettingsApp::handlePowerButton>)
+                       .withRelease([]() { settingsApp.release(); })
                        .build())
 #if ENABLE_TTS
     ,
-    builtInAppWhen("tts", "tts", "S", MENU_APPS, &ttsScreen, sdStorageMounted,
-                   []() { ttsApp.reset(); },
+    builtInApp("tts", "tts", "S", MENU_APPS, &ttsScreen,
+               []() { ttsApp.reset(); },
                    defaultBehavior()
                        .withExit([]() { ttsApp.stopAudio(); })
                        .withMenuBtn(dirtyIfHandledMethod<
@@ -349,7 +329,8 @@ const AppDefinition builtInApps[] = {
                        .withPowerBtn(dirtyIfHandledMethod<
                                   TtsApp, ttsApp,
                                   &TtsApp::handlePowerButton>)
-                       .build())
+                       .build(),
+               false, sdStorageMounted)
 #endif
 #if ENABLE_NETWORK_APPS
     ,
@@ -449,6 +430,22 @@ bool tryGetVisibleAppAtIndex(MenuCategory category, size_t index,
                                     sizeof(out.icon));
 }
 
+size_t appCatalogAllCount() {
+  return builtInAppCount + pinkExecutableAllCount();
+}
+
+bool tryGetAppAtIndex(size_t index, AppCatalogEntry &out) {
+  if (index < builtInAppCount) {
+    copyCatalogEntry(out, builtInApps[index]);
+    return true;
+  }
+  return pinkExecutableDefinitionAllAt(index - builtInAppCount,
+                                       &out.definition, out.id,
+                                       sizeof(out.id), out.label,
+                                       sizeof(out.label), out.icon,
+                                       sizeof(out.icon));
+}
+
 bool findAppById(const char *id, AppCatalogEntry &out) {
   if (id == nullptr || id[0] == '\0') {
     return false;
@@ -471,7 +468,16 @@ bool takePendingPinkExecLaunchPath(char *path, size_t pathSize) {
   return filesApp.consumePinkLaunch(path, pathSize);
 }
 
+bool takePendingPinkJsLaunchPath(char *path, size_t pathSize) {
+  return filesApp.consumeJsLaunch(path, pathSize);
+}
+
 void resetApps() {
+  appConfigRegistryReset();
+  calendarAppConfigRegister();
+#if ENABLE_NETWORK_APPS
+  weatherAppConfigRegister();
+#endif
   for (size_t i = 0; i < builtInAppCount; i++) {
     if (builtInApps[i].reset != nullptr) {
       builtInApps[i].reset();

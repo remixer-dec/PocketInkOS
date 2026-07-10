@@ -162,9 +162,10 @@ struct AppBehavior {
   AppCallback onRelease = nullptr;
 };
 
-/// Declares one app entry together with launcher metadata, the per-launch reset/launch
-/// hooks that run before switchTo(), and the AppBehavior callback bundle used after
-/// the app becomes active.
+/// Declares one app entry together with launcher metadata, including optional
+/// icon-font rendering and visibility conditions, the per-launch reset/launch
+/// hooks that run before switchTo(), and the AppBehavior callback bundle used
+/// after the app becomes active.
 struct AppDefinition {
   const char *id;
   const char *label;

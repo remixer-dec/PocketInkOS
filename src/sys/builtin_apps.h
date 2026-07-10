@@ -1,8 +1,9 @@
 /// Public catalog API for built-in and external launcher apps.
 ///
-/// Built-in app definitions are assembled in `builtin_apps.cpp`. The behavior
-/// builder below is part of that catalog wiring: it keeps callback composition
-/// consistent without growing one-off behavior factories for every app.
+/// Built-in app definitions are assembled in `builtin_apps.cpp`. Each entry
+/// sets its launcher metadata directly, including optional icon-font rendering
+/// and visibility conditions. The behavior builder below keeps callback
+/// composition consistent without growing one-off behavior factories.
 #ifndef BUILTIN_APPS_H
 #define BUILTIN_APPS_H
 
@@ -124,6 +125,10 @@ size_t appCatalogCount(MenuCategory category);
 /// Looks up the app shown in a launcher slot and writes it into `out`; returns false if no app exists there.
 bool tryGetVisibleAppAtIndex(MenuCategory category, size_t index,
                              AppCatalogEntry &out);
+/// Counts every installed app, including the SUN-button app hidden from the launcher.
+size_t appCatalogAllCount();
+/// Looks up an installed app by stable catalog order without visibility filtering.
+bool tryGetAppAtIndex(size_t index, AppCatalogEntry &out);
 /// Looks up an app by stable id across built-in and external app catalogs, even
 /// when the app is hidden from the launcher because it is the quick-access app.
 bool findAppById(const char *id, AppCatalogEntry &out);
@@ -131,6 +136,8 @@ bool findAppById(const char *id, AppCatalogEntry &out);
 void refreshAppCatalog();
 /// Takes the pending .pink executable launch path from the files app.
 bool takePendingPinkExecLaunchPath(char *path, size_t pathSize);
+/// Takes the pending PinkJS source launch path from the files app.
+bool takePendingPinkJsLaunchPath(char *path, size_t pathSize);
 /// Resets all app-owned runtime state.
 void resetApps();
 
