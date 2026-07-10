@@ -74,5 +74,9 @@ public:
   void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
   void EPD_DrawBlackPixelUnchecked(uint16_t x, uint16_t y);
   void EPD_DrawBlackBlock2x2Unchecked(uint16_t x, uint16_t y);
+  /// Exposes the live framebuffer for read-only frame export.
+  const uint8_t *framebufferData() const;
+  /// Returns the byte length of the live framebuffer.
+  int framebufferSize() const;
 };
 #endif

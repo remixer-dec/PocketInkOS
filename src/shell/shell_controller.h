@@ -101,6 +101,9 @@ private:
   int8_t menuPressedSlot = -1;
   unsigned long quitDialogOpenedAt = 0;
   int64_t lastHomeMinute = -1;
+  bool screenshotPending = false;
+  char screenshotNotice[24] = {};
+  unsigned long screenshotNoticeUntil = 0;
   QuickSettingsController quickSettings;
 
   static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
@@ -137,6 +140,8 @@ private:
   bool handleScreenTouch(const TouchPoint &point);
   void render();
   void showQuickSettingsActionFeedback(PowerDialogAction action);
+  void requestScreenshot();
+  void showScreenshotNotice(const char *message);
 
   void prepareForPowerTransition();
   void enterSleepClockDeepSleep();
@@ -146,6 +151,7 @@ private:
   static void enterSleepClockDeepSleepThunk(void *context);
   static void renderPowerOffScreenThunk(void *context);
   static void saveRetainedContextThunk(void *context);
+  static void requestScreenshotThunk(void *context);
 
   static void restoreLaunchApp(void *context, const AppDefinition &app);
   static void restoreSwitchTo(void *context, Screen screen);

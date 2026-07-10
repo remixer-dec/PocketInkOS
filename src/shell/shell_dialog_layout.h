@@ -27,6 +27,7 @@ enum class PowerDialogAction : uint8_t {
   VolumeDown,
   VolumeMute,
   VolumeUp,
+  Screenshot,
 };
 
 /// Paged groups in the power/quick-settings dialog.
@@ -34,6 +35,7 @@ enum class PowerDialogPage : uint8_t {
   Power,
   Device,
   Volume,
+  Screen,
 };
 
 /// Live device state displayed by the power/quick-settings dialog.
@@ -54,14 +56,11 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
 /// Converts a dialog touch into a semantic quick-settings action.
 PowerDialogAction powerDialogHitAction(const TouchPoint &point,
                                        PowerDialogPage page);
+/// Draws a short non-modal status message above the active shell screen.
+void drawShellToast(AppDisplay &display, const char *message);
 /// Draws the final user-visible frame before powering off.
 void drawPowerOffScreen(AppDisplay &display);
 /// Draws the battery-protection screen used before forced sleep/shutdown.
 void drawLowBatteryScreen(AppDisplay &display);
-/// Draws the transition frame before entering deep sleep.
-void drawDeepSleepScreen(AppDisplay &display);
-/// Draws the low-power clock frame shown while entering sleep-clock mode.
-void drawDeepSleepClockScreen(AppDisplay &display, const char *timeText,
-                              const char *dateText);
 
 #endif

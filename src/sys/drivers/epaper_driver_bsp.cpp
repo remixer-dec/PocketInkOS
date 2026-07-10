@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <cassert>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -475,4 +476,10 @@ void epaper_driver_display::EPD_DrawBlackBlock2x2Unchecked(uint16_t x,
   EPD_DrawBlackPixelUnchecked(x + 1, y);
   EPD_DrawBlackPixelUnchecked(x, y + 1);
   EPD_DrawBlackPixelUnchecked(x + 1, y + 1);
+}
+
+const uint8_t *epaper_driver_display::framebufferData() const { return buffer; }
+
+int epaper_driver_display::framebufferSize() const {
+  return lcd_spi_data.buffer_len;
 }

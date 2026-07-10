@@ -103,3 +103,9 @@ void AppDisplay::lock() {
 void AppDisplay::unlock() {
   __sync_lock_release(&locked);
 }
+
+const uint8_t *AppDisplay::framebufferData() const {
+  return driver.framebufferData();
+}
+
+size_t AppDisplay::framebufferSize() const { return driver.framebufferSize(); }

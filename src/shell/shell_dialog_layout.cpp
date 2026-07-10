@@ -1,5 +1,4 @@
 #include "shell/shell_dialog_layout.h"
-#include "shell/shell_home_layout.h"
 #include "sys/global.h"
 #include "ui/icon_ascii_font.h"
 #include "ui/ui_helpers.h"
@@ -113,6 +112,8 @@ const char *powerPageTitle(PowerDialogPage page) {
     return "Device";
   case PowerDialogPage::Volume:
     return "Volume";
+  case PowerDialogPage::Screen:
+    return "Screen";
   }
   return "Power";
 }
@@ -197,6 +198,12 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
     return;
   }
 
+  if (snapshot.page == PowerDialogPage::Screen) {
+    drawIconButton(display, POWER_LEFT_BUTTON, ';',
+                   pressed == PowerDialogAction::Screenshot);
+    return;
+  }
+
   char volumeText[12];
   snprintf(volumeText, sizeof(volumeText), "%u%%",
            static_cast<unsigned>(snapshot.volume));
@@ -245,7 +252,23 @@ PowerDialogAction powerDialogHitAction(const TouchPoint &point,
   if (page == PowerDialogPage::Volume && uiContains(POWER_RIGHT_BUTTON, point)) {
     return PowerDialogAction::VolumeUp;
   }
+  if (page == PowerDialogPage::Screen &&
+      uiContains(POWER_LEFT_BUTTON, point)) {
+    return PowerDialogAction::Screenshot;
+  }
   return PowerDialogAction::None;
+}
+
+void drawShellToast(AppDisplay &display, const char *message) {
+  if (message == nullptr || message[0] == '\0') {
+    return;
+  }
+  static const UiRect TOAST_RECT = {24, 162, 152, 24};
+  display.fillRect(TOAST_RECT.x, TOAST_RECT.y, TOAST_RECT.w, TOAST_RECT.h, 0);
+  display.drawRect(TOAST_RECT.x, TOAST_RECT.y, TOAST_RECT.w, TOAST_RECT.h, 1);
+  display.setTextColor(1);
+  display.setTextSize(1);
+  drawCenteredText(display, message, TOAST_RECT.y + 7);
 }
 
 void drawPowerOffScreen(AppDisplay &display) {
@@ -255,29 +278,4 @@ void drawPowerOffScreen(AppDisplay &display) {
 void drawLowBatteryScreen(AppDisplay &display) {
   display.fillScreen(0);
   drawCenteredIcon(display, 'E', 114, 2);
-}
-
-void drawDeepSleepScreen(AppDisplay &display) {
-  display.fillScreen(0);
-  drawCenteredIcon(display, shellLayoutConfig().lockscreenTopIcon, 114, 2);
-}
-
-void drawDeepSleepClockScreen(AppDisplay &display, const char *timeText,
-                              const char *dateText) {
-  const ShellLayoutConfig &config = shellLayoutConfig();
-  display.fillScreen(0);
-  if (config.lockscreenTopIcon != '\0') {
-    drawCenteredIcon(display, config.lockscreenTopIcon, 42, 1);
-  }
-
-  display.setFont();
-  display.setTextColor(1);
-  display.setTextSize(4);
-  drawCenteredText(display, timeText, 104);
-
-  if (config.lockscreenDate) {
-    display.setTextSize(1);
-    drawCenteredText(display, dateText, 140);
-  }
-  display.setTextSize(1);
 }

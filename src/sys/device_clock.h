@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "sys/system_config.h"
+
 /// Monotonic-millis backed local clock used after network or RTC time sync.
 class DeviceClock {
 public:
@@ -16,12 +18,19 @@ public:
   /// Captures current local Unix time and milliseconds into the current second.
   bool snapshotLocalUnixMillis(int64_t &localUnix,
                                uint16_t &millisIntoSecond) const;
+  /// Captures current UTC Unix time and milliseconds for standards-based APIs
+  /// such as JavaScript Date.now().
+  bool snapshotUnixMillis(int64_t &unixTime,
+                          uint16_t &millisIntoSecond) const;
   /// Restores local Unix time after deep sleep without a fresh network sync.
   void restoreLocalUnix(int64_t localUnix);
   /// Returns the current local minute index for minute-granularity UI refresh.
   int64_t localMinuteIndex() const;
   /// Formats local time according to system config.
   void formatTime(char *out, size_t outSize) const;
+  /// Formats local time using an explicit display format. Sleep-clock wakes use
+  /// this with the RTC-retained format before SD-backed configuration is ready.
+  void formatTime(char *out, size_t outSize, ConfigTimeFormat format) const;
   /// Formats local date according to system config.
   void formatDate(char *out, size_t outSize) const;
 

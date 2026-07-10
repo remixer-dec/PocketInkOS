@@ -10,6 +10,7 @@
 #include "sys/global.h"
 #include "sys/pink_executable.h"
 #include "sys/power_control.h"
+#include "sys/screenshot.h"
 #include "sys/sd_storage.h"
 #include "sys/system_config.h"
 #include "sys/usb_status.h"
@@ -393,6 +394,7 @@ QuickSettingsActions ShellController::quickSettingsActions() {
   actions.prepareForPowerTransition = prepareForPowerTransitionThunk;
   actions.saveRetainedContext = saveRetainedContextThunk;
   actions.enterSleepClock = enterSleepClockDeepSleepThunk;
+  actions.captureScreenshot = requestScreenshotThunk;
   return actions;
 }
 
@@ -589,15 +591,37 @@ void ShellController::render() {
         currentShellData(dateText, sizeof(dateText), timeText, sizeof(timeText));
     drawPowerDialog(display, data.status, quickSettings.snapshot());
   }
+  const bool screenshotNoticeVisible =
+      screenshotNoticeUntil != 0 &&
+      static_cast<long>(millis() - screenshotNoticeUntil) < 0;
+  if (screenshotNoticeVisible) {
+    drawShellToast(display, screenshotNotice);
+  }
   display.flush();
+  bool redrawForScreenshotNotice = false;
+  if (screenshotPending) {
+    const ScreenshotResult result = saveFramebufferScreenshot(display);
+    screenshotPending = false;
+    const char *message = screenshotResultMessage(result);
+    if (message[0] != '\0') {
+      showScreenshotNotice(message);
+      redrawForScreenshotNotice = true;
+    }
+  }
   display.unlock();
-  dirty = false;
+  dirty = redrawForScreenshotNotice;
   if (screen == SCREEN_HOME) {
     lastHomeMinute = deviceClock.localMinuteIndex();
   }
 }
 
 void ShellController::renderIfDirty() {
+  if (screenshotNoticeUntil != 0 &&
+      static_cast<long>(millis() - screenshotNoticeUntil) >= 0) {
+    screenshotNotice[0] = '\0';
+    screenshotNoticeUntil = 0;
+    dirty = true;
+  }
   if (dirty) {
     render();
   }
@@ -616,6 +640,19 @@ void ShellController::showQuickSettingsActionFeedback(PowerDialogAction action) 
   display.flush();
   display.unlock();
   delay(180);
+}
+
+void ShellController::requestScreenshot() {
+  quickSettings.close();
+  screenshotPending = true;
+  dirty = true;
+}
+
+void ShellController::showScreenshotNotice(const char *message) {
+  const char *text = message != nullptr ? message : "";
+  strncpy(screenshotNotice, text, sizeof(screenshotNotice) - 1);
+  screenshotNotice[sizeof(screenshotNotice) - 1] = '\0';
+  screenshotNoticeUntil = millis() + 1800;
 }
 
 bool ShellController::updateActiveApp() {
@@ -698,6 +735,10 @@ void ShellController::renderPowerOffScreenThunk(void *context) {
 
 void ShellController::saveRetainedContextThunk(void *context) {
   static_cast<ShellController *>(context)->saveRetainedContextForSleep();
+}
+
+void ShellController::requestScreenshotThunk(void *context) {
+  static_cast<ShellController *>(context)->requestScreenshot();
 }
 
 void ShellController::restoreLaunchApp(void *context,

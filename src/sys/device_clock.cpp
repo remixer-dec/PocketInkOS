@@ -3,6 +3,19 @@
 
 #include <Arduino.h>
 #include <stdio.h>
+#include <sys/time.h>
+
+namespace {
+
+void setFilesystemClock(int64_t localUnix) {
+  timeval value = {};
+  value.tv_sec = static_cast<time_t>(localUnix);
+  // FAT writes use the platform clock for file timestamps. DeviceClock keeps
+  // local time, so mirror that value instead of leaving FAT at its 1980 epoch.
+  settimeofday(&value, nullptr);
+}
+
+} // namespace
 
 DeviceClock deviceClock;
 
@@ -11,6 +24,7 @@ void DeviceClock::set(int64_t unixTime, int32_t utcOffsetSeconds) {
   utcOffset = utcOffsetSeconds;
   baseMillis = millis();
   setFlag = true;
+  setFilesystemClock(baseUnix + utcOffset);
 }
 
 bool DeviceClock::isSet() const { return setFlag; }
@@ -34,6 +48,17 @@ bool DeviceClock::snapshotLocalUnixMillis(int64_t &localUnix,
   return true;
 }
 
+bool DeviceClock::snapshotUnixMillis(int64_t &unixTime,
+                                     uint16_t &millisIntoSecond) const {
+  if (!setFlag) {
+    return false;
+  }
+  const unsigned long elapsed = millis() - baseMillis;
+  unixTime = baseUnix + static_cast<int64_t>(elapsed / 1000);
+  millisIntoSecond = static_cast<uint16_t>(elapsed % 1000);
+  return true;
+}
+
 void DeviceClock::restoreLocalUnix(int64_t localUnix) { set(localUnix, 0); }
 
 int64_t DeviceClock::localMinuteIndex() const {
@@ -44,6 +69,11 @@ int64_t DeviceClock::localMinuteIndex() const {
 }
 
 void DeviceClock::formatTime(char *out, size_t outSize) const {
+  formatTime(out, outSize, currentSystemConfig().time.timeFormat);
+}
+
+void DeviceClock::formatTime(char *out, size_t outSize,
+                             ConfigTimeFormat format) const {
   if (outSize == 0) {
     return;
   }
@@ -55,13 +85,13 @@ void DeviceClock::formatTime(char *out, size_t outSize) const {
   int daySecond = static_cast<int>((seconds % 86400 + 86400) % 86400);
   int hour = daySecond / 3600;
   const int minute = (daySecond / 60) % 60;
-  if (currentSystemConfig().time.timeFormat == CONFIG_TIME_12H) {
+  if (format == CONFIG_TIME_12H) {
     const bool pm = hour >= 12;
     hour %= 12;
     if (hour == 0) {
       hour = 12;
     }
-    snprintf(out, outSize, "%d:%02d%s", hour, minute, pm ? "p" : "a");
+    snprintf(out, outSize, "%d:%02d %s", hour, minute, pm ? "PM" : "AM");
     return;
   }
   snprintf(out, outSize, "%02d:%02d", hour, minute);

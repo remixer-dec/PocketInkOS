@@ -4,6 +4,7 @@
 #include "sys/drivers/epaper_driver_bsp.h"
 #include "sys/global.h"
 #include <Adafruit_GFX.h>
+#include <stddef.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -24,6 +25,11 @@ public:
   void requestFullRefresh();
   void lock();
   void unlock();
+  /// Provides read-only access to the current one-bit framebuffer.
+  /// Callers that need a stable frame must hold the display lock.
+  const uint8_t *framebufferData() const;
+  /// Returns the number of bytes in framebufferData().
+  size_t framebufferSize() const;
 
 private:
   epaper_driver_display driver;
