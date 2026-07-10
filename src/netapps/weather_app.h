@@ -8,6 +8,7 @@
 #if ENABLE_NETWORK_APPS
 
 #include "sys/touch_input.h"
+#include "sys/app_config.h"
 #include <Adafruit_GFX.h>
 #include <stdint.h>
 
@@ -151,10 +152,14 @@ private:
   void printDecimal(Adafruit_GFX &gfx, int16_t valueX10, const char *unit);
   void printCompactDecimal(Adafruit_GFX &gfx, int16_t valueX10);
   void printCompactTemp(Adafruit_GFX &gfx, int16_t valueX10);
+  int16_t displayTemperatureX10(int16_t valueX10) const;
   void formatHour(int32_t unixTime, char *out, int outSize) const;
   void formatDay(int32_t unixTime, char *out, int outSize) const;
   void setStatus(const char *text);
 };
+
+/// Registers Weather's read-only config schema with the Settings app.
+void weatherAppConfigRegister();
 
 #endif
 #endif

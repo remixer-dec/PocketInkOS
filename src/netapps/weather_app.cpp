@@ -6,6 +6,7 @@
 
 #include "netapps/weather_app.h"
 #include "netapps/lightweight_json_parser.h"
+#include "shell/shell_home_layout.h"
 #include "shell/connectivity.h"
 #include "secrets_config.h"
 #include "sys/device_clock.h"
@@ -28,6 +29,17 @@ constexpr int32_t kSecondsPerDay = 86400L;
 constexpr int16_t kUnsafeUvThresholdX10 = 60;
 constexpr int kHourlyPageRows = 8;
 
+const AppConfigSetting kWeatherSettings[] = {
+    {"latitude", "Latitude", AppConfigType::Float, SECRET_WEATHER_LATITUDE,
+     nullptr, 0, 20},
+    {"longitude", "Longitude", AppConfigType::Float,
+     SECRET_WEATHER_LONGITUDE, nullptr, 0, 20},
+};
+
+const AppConfigRegistration kWeatherConfig = {
+    "weather", "Weather", kWeatherSettings,
+    static_cast<uint8_t>(sizeof(kWeatherSettings) / sizeof(kWeatherSettings[0]))};
+
 int16_t clampToInt16(int32_t value) {
   if (value > 32767) {
     return 32767;
@@ -39,15 +51,14 @@ int16_t clampToInt16(int32_t value) {
 }
 } // namespace
 
-static const char *WEATHER_URL =
+constexpr char WEATHER_URL_PREFIX[] =
     "https://api.open-meteo.com/v1/forecast?"
-    "latitude=" SECRET_WEATHER_LATITUDE "&longitude=" SECRET_WEATHER_LONGITUDE
-    "&"
+    "latitude=%s&longitude=%s&"
     "daily=sunset,uv_index_max,precipitation_hours&"
     "hourly=temperature_2m,precipitation_probability,apparent_temperature,"
     "precipitation,uv_index,wind_speed_10m&"
     "current=temperature_2m,apparent_temperature,precipitation,wind_speed_10m&"
-    "timezone=Europe%2FBerlin&timeformat=unixtime";
+    "timezone=Europe%%2FBerlin&timeformat=unixtime";
 
 class WeatherJsonListener : public JsonStreamListener {
 public:
@@ -270,6 +281,8 @@ private:
   }
 };
 
+void weatherAppConfigRegister() { appConfigRegister(kWeatherConfig); }
+
 void WeatherApp::reset() {
   state = STATE_LOADING;
   page = PAGE_CURRENT;
@@ -429,7 +442,16 @@ bool WeatherApp::fetch() {
 
   HTTPClient http;
   http.setTimeout(FETCH_TIMEOUT_MS);
-  if (!http.begin(client, WEATHER_URL)) {
+  char latitude[20] = {};
+  char longitude[20] = {};
+  char url[384] = {};
+  appConfigGet(kWeatherConfig, kWeatherSettings[0], latitude, sizeof(latitude));
+  appConfigGet(kWeatherConfig, kWeatherSettings[1], longitude,
+               sizeof(longitude));
+  const int urlLength = snprintf(url, sizeof(url), WEATHER_URL_PREFIX,
+                                 latitude, longitude);
+  if (urlLength < 0 || static_cast<size_t>(urlLength) >= sizeof(url) ||
+      !http.begin(client, url)) {
     setStatus("HTTP setup fail");
     return false;
   }
@@ -805,13 +827,13 @@ void WeatherApp::drawWeek(Adafruit_GFX &gfx) {
     gfx.print(day);
     gfx.setCursor(64, y);
     if (daySummaries[i].hasDayTemp) {
-      gfx.print(daySummaries[i].dayTempX10 / 10);
+      gfx.print(displayTemperatureX10(daySummaries[i].dayTempX10) / 10);
     } else {
       gfx.print("--");
     }
     gfx.print("/");
     if (daySummaries[i].hasNightTemp) {
-      gfx.print(daySummaries[i].nightTempX10 / 10);
+      gfx.print(displayTemperatureX10(daySummaries[i].nightTempX10) / 10);
     } else {
       gfx.print("--");
     }
@@ -916,8 +938,10 @@ char WeatherApp::dayIcon(const DaySummary &day) const {
 }
 
 void WeatherApp::printTemp(Adafruit_GFX &gfx, int16_t valueX10) {
-  gfx.print(valueX10 / 10);
-  gfx.print("C");
+  const int16_t displayValue = displayTemperatureX10(valueX10);
+  gfx.print(displayValue / 10);
+  gfx.print(shellLayoutConfig().temperatureUnit == SHELL_TEMP_FAHRENHEIT ? "F"
+                                                                          : "C");
 }
 
 void WeatherApp::printDecimal(Adafruit_GFX &gfx, int16_t valueX10,
@@ -943,8 +967,16 @@ void WeatherApp::printCompactDecimal(Adafruit_GFX &gfx, int16_t valueX10) {
 }
 
 void WeatherApp::printCompactTemp(Adafruit_GFX &gfx, int16_t valueX10) {
-  gfx.print(valueX10 / 10);
-  gfx.print("C");
+  printTemp(gfx, valueX10);
+}
+
+int16_t WeatherApp::displayTemperatureX10(int16_t valueX10) const {
+  if (shellLayoutConfig().temperatureUnit != SHELL_TEMP_FAHRENHEIT) {
+    return valueX10;
+  }
+  const int32_t scaled = static_cast<int32_t>(valueX10) * 9;
+  const int32_t rounded = scaled >= 0 ? (scaled + 2) / 5 : (scaled - 2) / 5;
+  return clampToInt16(rounded + 320);
 }
 
 void WeatherApp::formatUnsafeUvLabel(int16_t peakX10, char *out,
