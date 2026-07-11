@@ -4,6 +4,7 @@
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
 #include "sys/lockscreen_guard.h"
+#include "sys/psram_allocator.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
 
@@ -13,13 +14,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-
-#if __has_include(<esp_heap_caps.h>)
-#include <esp_heap_caps.h>
-#define FILES_APP_HAS_HEAP_CAPS 1
-#else
-#define FILES_APP_HAS_HEAP_CAPS 0
-#endif
 
 #if __has_include(<esp_rom_sys.h>)
 #include <esp_rom_sys.h>
@@ -72,15 +66,16 @@ uint32_t elapsedMicros(uint32_t start) {
 }
 
 void filesLogPrintf(const char *format, ...) {
-  char line[192];
   va_list args;
   va_start(args, format);
-  vsnprintf(line, sizeof(line), format, args);
-  va_end(args);
 #if FILES_APP_HAS_ROM_PRINTF
-  esp_rom_printf("%s", line);
-#endif
+  esp_rom_vprintf(format, args);
+#else
+  char line[192];
+  vsnprintf(line, sizeof(line), format, args);
   Serial.print(line);
+#endif
+  va_end(args);
 }
 
 class ScopedTiming {
@@ -118,24 +113,10 @@ void filesViewerSleepGuard(void *, bool active) {
 }
 
 void *filesAppAlloc(size_t bytes) {
-#if FILES_APP_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
-#else
-  return malloc(bytes);
-#endif
+  return psram::allocateOrDefault(bytes);
 }
 
-void filesAppFree(void *ptr) {
-#if FILES_APP_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+void filesAppFree(void *ptr) { psram::release(ptr); }
 
 struct FilesContextSnapshotV1 {
   uint8_t version = 1;
@@ -404,7 +385,7 @@ char iconForEntry(const char *name, bool directory) {
     return '~';
   }
   if (extensionIs(extension, "bin") || extensionIs(extension, "so") ||
-      extensionIs(extension, "pink")) {
+      extensionIs(extension, "pink") || extensionIs(extension, "js")) {
     return '2';
   }
   if (extensionIs(extension, "ini") || extensionIs(extension, "json") ||
@@ -611,6 +592,7 @@ void FilesApp::reset() {
   providerId[0] = '\0';
   pendingPinkPath[0] = '\0';
   pendingPinkLaunch = false;
+  pendingJsLaunch = false;
   viewerPath[0] = '\0';
   viewerTitle[0] = '\0';
   viewerOptionsOpen = false;
@@ -628,7 +610,8 @@ void FilesApp::release() {
 }
 
 bool FilesApp::ensureDirectoryCache() {
-  if (entries != nullptr && entryNamePool != nullptr) {
+  if (entries != nullptr && entryNamePool != nullptr &&
+      drawTextScratch != nullptr) {
     return true;
   }
 
@@ -639,7 +622,12 @@ bool FilesApp::ensureDirectoryCache() {
   if (entryNamePool == nullptr) {
     entryNamePool = static_cast<char *>(filesAppAlloc(FILES_NAME_POOL_CAPACITY));
   }
-  if (entries == nullptr || entryNamePool == nullptr) {
+  if (drawTextScratch == nullptr) {
+    drawTextScratch = static_cast<char *>(
+        psram::allocate(2U * FILES_PATH_CAPACITY));
+  }
+  if (entries == nullptr || entryNamePool == nullptr ||
+      drawTextScratch == nullptr) {
     releaseDirectoryCache();
     return false;
   }
@@ -649,8 +637,10 @@ bool FilesApp::ensureDirectoryCache() {
 void FilesApp::releaseDirectoryCache() {
   filesAppFree(entries);
   filesAppFree(entryNamePool);
+  psram::release(drawTextScratch);
   entries = nullptr;
   entryNamePool = nullptr;
+  drawTextScratch = nullptr;
   entryCount = 0;
   folderCount = 0;
   entryNamePoolUsed = 0;
@@ -1247,6 +1237,9 @@ bool FilesApp::activateIndex(uint16_t index) {
   if (equalsIgnoreCase(providerId, "sd") && pathHasExtension(path, "pink")) {
     return requestPinkLaunch(path);
   }
+  if (equalsIgnoreCase(providerId, "sd") && pathHasExtension(path, "js")) {
+    return requestJsLaunch(path);
+  }
 
   const FileViewerExtension *viewer = nullptr;
   FileViewerActivity activity = viewerActivity();
@@ -1288,7 +1281,19 @@ bool FilesApp::requestPinkLaunch(const char *path) {
     return true;
   }
   pendingPinkLaunch = true;
+  pendingJsLaunch = false;
   setTransientStatus("LAUNCHING");
+  return true;
+}
+
+bool FilesApp::requestJsLaunch(const char *path) {
+  if (!copyText(pendingPinkPath, sizeof(pendingPinkPath), path)) {
+    setTransientStatus("PATH TOO LONG");
+    return true;
+  }
+  pendingPinkLaunch = false;
+  pendingJsLaunch = true;
+  setTransientStatus("LAUNCHING JS");
   return true;
 }
 
@@ -1297,6 +1302,16 @@ bool FilesApp::consumePinkLaunch(char *path, size_t pathSize) {
     return false;
   }
   pendingPinkLaunch = false;
+  copyText(path, pathSize, pendingPinkPath);
+  pendingPinkPath[0] = '\0';
+  return true;
+}
+
+bool FilesApp::consumeJsLaunch(char *path, size_t pathSize) {
+  if (!pendingJsLaunch) {
+    return false;
+  }
+  pendingJsLaunch = false;
   copyText(path, pathSize, pendingPinkPath);
   pendingPinkPath[0] = '\0';
   return true;
@@ -1450,6 +1465,7 @@ bool FilesApp::handleViewerTouch(const TouchPoint &point) {
 
 bool FilesApp::handleViewerPageJumpTouch(const TouchPoint &point) {
   viewerPageKeyboard.setLayout(T9KeyboardComponent::Layout::Numbers);
+  const bool inputWasEmpty = viewerPageInput.length() == 0;
   KeyboardEvent event = viewerPageKeyboard.hitTest(point, viewerPageInput, 5);
   if (event.action == KEY_NONE) {
     return false;
@@ -1468,7 +1484,7 @@ bool FilesApp::handleViewerPageJumpTouch(const TouchPoint &point) {
     viewerPageJumpOpen = false;
     viewerPageInput = "";
   }
-  if (event.action == KEY_BACKSPACE && viewerPageInput.length() == 0) {
+  if (event.action == KEY_BACKSPACE && inputWasEmpty) {
     viewerPageJumpOpen = false;
   }
   markDirtyRegion(0, 0, 200, 200);
@@ -1507,17 +1523,25 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
     loadDirectory();
   }
 
+  if (drawTextScratch == nullptr) {
+    gfx.setTextColor(1);
+    gfx.setTextSize(1);
+    gfx.setCursor(58, 92);
+    gfx.print("ALLOC FAILED");
+    return;
+  }
+
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  char folderLabel[sizeof(currentPath)];
-  char displayFolderName[sizeof(currentPath)];
+  char *displayText = drawTextScratch;
+  char *fittedText = drawTextScratch + FILES_PATH_CAPACITY;
   const char *folderName =
       isRootPath(currentPath) ? "/" : displayName(currentPath);
-  copyDisplayText(displayFolderName, sizeof(displayFolderName), folderName);
-  fitMiddleEllipsis(gfx, displayFolderName, 140, folderLabel,
-                    sizeof(folderLabel));
+  copyDisplayText(displayText, FILES_PATH_CAPACITY, folderName);
+  fitMiddleEllipsis(gfx, displayText, 140, fittedText,
+                    FILES_PATH_CAPACITY);
   gfx.setCursor(4, kHeaderY);
-  gfx.print(folderLabel);
+  gfx.print(fittedText);
   const char *modeLabel = "SPLIT";
   if (mode == Mode::Scroll) {
     modeLabel = "SCROLL";
@@ -1553,12 +1577,11 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
     const uint16_t sizeW = textWidth(gfx, sizeText);
     const int16_t nameMaxW =
         192 - kNameX - (sizeText[0] ? static_cast<int16_t>(sizeW) + 8 : 0);
-    char displayLabel[FILES_LABEL_CAPACITY];
-    char label[FILES_LABEL_CAPACITY];
-    copyDisplayText(displayLabel, sizeof(displayLabel), entryName(entry));
-    fitMiddleEllipsis(gfx, displayLabel, nameMaxW, label, sizeof(label));
+    copyDisplayText(displayText, FILES_LABEL_CAPACITY, entryName(entry));
+    fitMiddleEllipsis(gfx, displayText, nameMaxW, fittedText,
+                      FILES_LABEL_CAPACITY);
     gfx.setCursor(kNameX, y + 4);
-    gfx.print(label);
+    gfx.print(fittedText);
     if (!entry.directory && entry.size > 0) {
       gfx.setCursor(192 - static_cast<int16_t>(sizeW), y + 4);
       gfx.print(sizeText);

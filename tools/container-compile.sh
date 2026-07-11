@@ -19,6 +19,10 @@ if [[ "$EXTENDED" != "0" && "$EXTENDED" != "1" ]]; then
   printf 'ENABLE_EXTENDED must be 0 or 1, got %q\n' "$EXTENDED" >&2
   exit 1
 fi
+if [[ "$EXTENDED" != "0" && ! -d "$ROOT/extended" ]]; then
+  printf '[container-compile] Extended directory not found; disabling extended edition\n'
+  EXTENDED=0
+fi
 
 COMMON=(-std=c++20 -Wall -Wextra -Werror -pedantic-errors -fsyntax-only -include "$ROOT/src/sys/arduino_esp32_compat.h" -I"$STUBS" -I"$ROOT/src" -I"$ROOT")
 append_inflect_define() {
@@ -145,6 +149,7 @@ FILES=( \
   "$ROOT/src/sys/lockscreen_guard.cpp" \
   "$ROOT/src/sys/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
+  "$ROOT/src/sys/pinkjs_app.cpp" \
   "$ROOT/src/sys/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/sd_storage.cpp" \

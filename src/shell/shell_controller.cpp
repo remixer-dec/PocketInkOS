@@ -9,6 +9,7 @@
 #include "sys/environment_monitor.h"
 #include "sys/global.h"
 #include "sys/pink_executable.h"
+#include "sys/pinkjs_app.h"
 #include "sys/power_control.h"
 #include "sys/screenshot.h"
 #include "sys/sd_storage.h"
@@ -466,13 +467,21 @@ void ShellController::handleMenuTouch(const TouchPoint &point) {
 bool ShellController::handlePendingFilesPinkLaunch() {
   char path[288];
   AppCatalogEntry app;
-  if (!takePendingPinkExecLaunchPath(path, sizeof(path))) {
-    return false;
-  }
-  if (!pinkExecutableLaunchPath(path, &app.definition, app.id, sizeof(app.id),
-                                app.label, sizeof(app.label), app.icon,
-                                sizeof(app.icon))) {
-    return false;
+  if (takePendingPinkExecLaunchPath(path, sizeof(path))) {
+    if (!pinkExecutableLaunchPath(path, &app.definition, app.id, sizeof(app.id),
+                                  app.label, sizeof(app.label), app.icon,
+                                  sizeof(app.icon))) {
+      return false;
+    }
+  } else {
+    if (!takePendingPinkJsLaunchPath(path, sizeof(path))) {
+      return false;
+    }
+    if (!pinkJsAppLaunchPath(path, &app.definition, app.id, sizeof(app.id),
+                            app.label, sizeof(app.label), app.icon,
+                            sizeof(app.icon))) {
+      return false;
+    }
   }
   switchTo(SCREEN_APP, app.definition.runtime, &app.definition);
   return true;
@@ -512,11 +521,11 @@ void ShellController::redrawActiveScreenPartial() {
   if (hasRegion) {
     display.fillRect(x, y, w, h, 0);
     activeApp->draw(display);
-    display.flushPartial(x, y, w, h);
+    display.flushPartial();
   } else {
     display.clear();
     drawActiveScreen();
-    display.flushPartial(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    display.flushPartial();
   }
   display.unlock();
 }

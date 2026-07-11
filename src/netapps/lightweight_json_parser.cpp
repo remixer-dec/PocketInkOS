@@ -7,6 +7,7 @@
 #include "netapps/lightweight_json_parser.h"
 
 #include <Arduino.h>
+#include <cstdlib>
 #include <cstring>
 
 bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
@@ -27,6 +28,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
   int pendingRaw = 0;
   int unicodeRemaining = 0;
   int depth = 0;
+  bool containerIsArray[20] = {};
   int bytes = 0;
   int tokenLen = 0;
   char token[TOKEN_SIZE] = "";
@@ -113,7 +115,9 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
     if (c == '"') {
       inString = true;
       escape = false;
-      stringIsValue = expectingValue;
+      stringIsValue = expectingValue || depth == 0 ||
+                      (depth > 0 && depth <= 20 &&
+                       containerIsArray[depth - 1]);
       unicodeRemaining = 0;
       tokenLen = 0;
       token[0] = '\0';
@@ -121,49 +125,43 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
     }
 
     if (c == '-' || (c >= '0' && c <= '9')) {
-      bool negative = c == '-';
-      bool decimal = false;
-      bool haveDecimalDigit = false;
-      int32_t value = negative ? 0 : c - '0';
-      int32_t tenth = 0;
+      char numberText[64];
+      size_t numberLength = 1;
+      numberText[0] = c;
       while (millis() - startedAt < timeoutMs && bytes < maxBytes) {
+        if (expectedSize >= 0 && bytes >= expectedSize)
+          break;
         if (stream->available() <= 0) {
           delay(1);
           continue;
         }
-        int next = stream->read();
-        if (next < 0) {
+        const int next = stream->read();
+        if (next < 0)
           continue;
-        }
         bytes++;
-        char digit = static_cast<char>(next);
-        if (digit == '.' && !decimal) {
-          decimal = true;
-          continue;
-        }
-        if (digit < '0' || digit > '9') {
+        const char digit = static_cast<char>(next);
+        const bool numberCharacter =
+            (digit >= '0' && digit <= '9') || digit == '.' || digit == 'e' ||
+            digit == 'E' || digit == '+' || digit == '-';
+        if (!numberCharacter) {
           pendingRaw = next;
           hasPendingRaw = true;
           break;
         }
-        if (decimal) {
-          if (!haveDecimalDigit) {
-            tenth = digit - '0';
-            haveDecimalDigit = true;
-          }
-          continue;
+        if (numberLength + 1U >= sizeof(numberText)) {
+          setError(error, errorSize, "JSON number too long");
+          return false;
         }
-        if (value <= (INT32_MAX - 9) / 10) {
-          value = value * 10 + (digit - '0');
-        }
+        numberText[numberLength++] = digit;
       }
-      int32_t signedValue = negative ? -value : value;
-      if (decimal) {
-        int32_t valueX10 = value * 10 + tenth;
-        listener.onDecimalValue(depth, currentKey, negative ? -valueX10 : valueX10);
-      } else {
-        listener.onNumberValue(depth, currentKey, signedValue);
+      numberText[numberLength] = '\0';
+      char *numberEnd = nullptr;
+      const double value = std::strtod(numberText, &numberEnd);
+      if (numberEnd != numberText + numberLength) {
+        setError(error, errorSize, "Invalid JSON number");
+        return false;
       }
+      listener.onNumericValue(depth, currentKey, value);
       expectingValue = false;
       currentKey[0] = '\0';
       continue;
@@ -171,7 +169,11 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
 
     if (c == '{') {
       listener.onObjectStart(depth + 1, expectingValue ? currentKey : "");
-      depth++;
+      if (depth >= 20) {
+        setError(error, errorSize, "JSON nesting limit");
+        return false;
+      }
+      containerIsArray[depth++] = false;
       expectingValue = false;
       currentKey[0] = '\0';
       continue;
@@ -179,7 +181,11 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
 
     if (c == '[') {
       listener.onArrayStart(depth + 1, expectingValue ? currentKey : "");
-      depth++;
+      if (depth >= 20) {
+        setError(error, errorSize, "JSON nesting limit");
+        return false;
+      }
+      containerIsArray[depth++] = true;
       expectingValue = false;
       currentKey[0] = '\0';
       continue;
@@ -205,7 +211,29 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
       continue;
     }
 
-    if (c == ',' || c == 'n' || c == 't' || c == 'f') {
+    if (c == 'n' || c == 't' || c == 'f') {
+      const char *suffix = c == 'n' ? "ull" : (c == 't' ? "rue" : "alse");
+      for (size_t i = 0; suffix[i] != '\0'; i++) {
+        while (stream->available() <= 0 &&
+               millis() - startedAt < timeoutMs)
+          delay(1);
+        const int next = stream->read();
+        if (next < 0 || static_cast<char>(next) != suffix[i]) {
+          setError(error, errorSize, "Invalid JSON literal");
+          return false;
+        }
+        bytes++;
+      }
+      if (c == 'n')
+        listener.onNullValue(depth, currentKey);
+      else
+        listener.onBooleanValue(depth, currentKey, c == 't');
+      expectingValue = false;
+      currentKey[0] = '\0';
+      continue;
+    }
+
+    if (c == ',') {
       expectingValue = false;
       currentKey[0] = '\0';
     }
@@ -217,6 +245,10 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
   }
   if (millis() - startedAt >= timeoutMs) {
     setError(error, errorSize, "JSON timeout");
+    return false;
+  }
+  if (inString || depth != 0) {
+    setError(error, errorSize, "Incomplete JSON");
     return false;
   }
   return true;

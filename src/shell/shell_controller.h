@@ -70,7 +70,7 @@ public:
   bool dispatchTouch();
   /// Gives the active app a loop tick and applies its event result.
   bool updateActiveApp();
-  /// Bridges file-manager .pink launch requests into app activation.
+  /// Bridges file-manager .pink and .js launch requests into app activation.
   bool handlePendingFilesPinkLaunch();
   /// Revalidates active/menu state after built-in or .pink catalog changes.
   void handleCatalogChanged();

@@ -28,6 +28,7 @@ public:
   size_t saveContext(uint8_t *buffer, size_t capacity) const;
   void restoreContext(const uint8_t *buffer, size_t length);
   bool consumePinkLaunch(char *path, size_t pathSize);
+  bool consumeJsLaunch(char *path, size_t pathSize);
   void release();
 
 private:
@@ -84,8 +85,11 @@ private:
   char viewerPath[FILES_PATH_CAPACITY] = {};
   char viewerTitle[FILES_LABEL_CAPACITY] = {};
   char pendingPinkPath[FILES_PATH_CAPACITY] = {};
+  // Allocated in PSRAM with the directory cache and released on app exit.
+  char *drawTextScratch = nullptr;
   File directoryScanRoot;
   bool pendingPinkLaunch = false;
+  bool pendingJsLaunch = false;
 
   bool ensureDirectoryCache();
   void releaseDirectoryCache();
@@ -109,6 +113,7 @@ private:
   bool activateIndex(uint16_t index);
   bool activateStorage();
   bool requestPinkLaunch(const char *path);
+  bool requestJsLaunch(const char *path);
   bool openViewer(const char *path, const char *title, const char *viewerId);
   bool providerMounted() const;
   void closeViewer();
