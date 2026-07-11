@@ -1,8 +1,8 @@
 #include "apps/tts_app.h"
 
-#include "sys/device_controls.h"
-#include "sys/lockscreen_guard.h"
-#include "sys/sd_storage.h"
+#include "sys/services/device_controls.h"
+#include "sys/services/lockscreen_guard.h"
+#include "sys/services/sd_storage.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>

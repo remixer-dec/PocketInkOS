@@ -64,6 +64,15 @@ inline void *reallocateOrDefault(void *memory, size_t bytes) {
 #endif
 }
 
+inline void *reallocate(void *memory, size_t bytes) {
+#if POCKETINK_HAS_HEAP_CAPS
+  return heap_caps_realloc(memory, bytes,
+                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  return std::realloc(memory, bytes);
+#endif
+}
+
 inline void release(void *memory) {
 #if POCKETINK_HAS_HEAP_CAPS
   heap_caps_free(memory);

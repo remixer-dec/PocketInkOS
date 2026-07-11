@@ -3,7 +3,7 @@
 #include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
-#include "sys/lockscreen_guard.h"
+#include "sys/services/lockscreen_guard.h"
 #include "sys/psram_allocator.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
@@ -593,6 +593,11 @@ void FilesApp::reset() {
   pendingPinkPath[0] = '\0';
   pendingPinkLaunch = false;
   pendingJsLaunch = false;
+  pickerMode = false;
+  pickerHasSelection = false;
+  pickerWasCancelled = false;
+  pickerSelectedPath[0] = '\0';
+  pickerFilter[0] = '\0';
   viewerPath[0] = '\0';
   viewerTitle[0] = '\0';
   viewerOptionsOpen = false;
@@ -606,8 +611,55 @@ void FilesApp::release() {
   directoryScanRoot = File();
   directoryLoading = false;
   releaseDirectoryCache();
+  // Keep the path/selection for a return from a launched .js/.pink app, but
+  // force the directory to be loaded again because its cache was just freed.
+  loaded = false;
   viewerPageInput = "";
+  pickerMode = false;
+  pickerHasSelection = false;
+  pickerWasCancelled = false;
 }
+
+bool FilesApp::beginPicker(const char *initialPath,
+                           const char *extensionFilter) {
+  reset();
+  if (!copyText(pickerFilter, sizeof(pickerFilter), extensionFilter)) {
+    return false;
+  }
+  pickerMode = true;
+  const FileProvider *provider = defaultFileProvider();
+  if (provider == nullptr || !providerIsMounted(provider)) {
+    pickerMode = false;
+    return false;
+  }
+  copyText(providerId, sizeof(providerId), provider->id);
+  openDirectory(initialPath != nullptr && initialPath[0] == '/'
+                    ? initialPath
+                    : "/");
+  return loaded;
+}
+
+bool FilesApp::takePickedPath(char *path, size_t pathSize) {
+  if (!pickerHasSelection || !copyText(path, pathSize, pickerSelectedPath)) {
+    return false;
+  }
+  pickerHasSelection = false;
+  pickerMode = false;
+  return true;
+}
+
+void FilesApp::cancelPicker() {
+  if (pickerMode) {
+    pickerMode = false;
+    pickerWasCancelled = true;
+  }
+}
+
+bool FilesApp::pickerActive() const { return pickerMode; }
+
+bool FilesApp::pickerSelectionReady() const { return pickerHasSelection; }
+
+bool FilesApp::pickerCancelled() const { return pickerWasCancelled; }
 
 bool FilesApp::ensureDirectoryCache() {
   if (entries != nullptr && entryNamePool != nullptr &&
@@ -758,6 +810,36 @@ const char *FilesApp::displayName(const char *path) const {
     return path;
   }
   return slash + 1;
+}
+
+bool FilesApp::pickerAllows(const char *name) const {
+  if (!pickerMode || pickerFilter[0] == '\0') {
+    return true;
+  }
+  const char *dot = name != nullptr ? strrchr(name, '.') : nullptr;
+  if (dot == nullptr || dot[1] == '\0') {
+    return false;
+  }
+  const char *cursor = pickerFilter;
+  while (*cursor != '\0') {
+    while (*cursor == ',' || *cursor == ' ') {
+      cursor++;
+    }
+    const char *end = cursor;
+    while (*end != '\0' && *end != ',') {
+      end++;
+    }
+    size_t length = static_cast<size_t>(end - cursor);
+    while (length > 0 && cursor[length - 1] == ' ') {
+      length--;
+    }
+    if (length == strlen(dot + 1) &&
+        strncasecmp(cursor, dot + 1, length) == 0) {
+      return true;
+    }
+    cursor = end;
+  }
+  return false;
 }
 
 void FilesApp::setStatus(const char *text) {
@@ -975,7 +1057,8 @@ bool FilesApp::continueDirectoryLoad(uint8_t budget) {
 #endif
     const bool wantsDirectory =
         directoryScanPass == DirectoryScanPass::Folders;
-    if (!isMetadataName(name) && isDirectory == wantsDirectory) {
+    if (!isMetadataName(name) && isDirectory == wantsDirectory &&
+        (isDirectory || pickerAllows(name))) {
 #if FILES_APP_TIMING_LOG
       opStartedAt = micros();
 #endif
@@ -1099,6 +1182,9 @@ bool FilesApp::cacheProviderFileEntry(const FileProviderEntry &entry,
     return false;
   }
   if (isMetadataName(entry.name) || entry.directory) {
+    return true;
+  }
+  if (!app->pickerAllows(entry.name)) {
     return true;
   }
   return app->cacheDirectoryEntry(entry.name, entry.directory, entry.size);
@@ -1232,6 +1318,11 @@ bool FilesApp::activateIndex(uint16_t index) {
   char path[sizeof(currentPath)];
   if (!joinPath(path, sizeof(path), currentPath, name)) {
     setTransientStatus("PATH TOO LONG");
+    return true;
+  }
+  if (pickerMode) {
+    copyText(pickerSelectedPath, sizeof(pickerSelectedPath), path);
+    pickerHasSelection = true;
     return true;
   }
   if (equalsIgnoreCase(providerId, "sd") && pathHasExtension(path, "pink")) {
@@ -1526,8 +1617,15 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
   if (drawTextScratch == nullptr) {
     gfx.setTextColor(1);
     gfx.setTextSize(1);
-    gfx.setCursor(58, 92);
-    gfx.print("ALLOC FAILED");
+    const char *message = "ALLOC FAILED";
+    int16_t textX = 0;
+    int16_t textY = 0;
+    uint16_t textW = 0;
+    uint16_t textH = 0;
+    gfx.getTextBounds(message, 0, 0, &textX, &textY, &textW, &textH);
+    gfx.setCursor((200 - static_cast<int16_t>(textW)) / 2 - textX,
+                  (200 - static_cast<int16_t>(textH)) / 2 - textY);
+    gfx.print(message);
     return;
   }
 
@@ -1541,19 +1639,33 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
   fitMiddleEllipsis(gfx, displayText, 140, fittedText,
                     FILES_PATH_CAPACITY);
   gfx.setCursor(4, kHeaderY);
-  gfx.print(fittedText);
+  gfx.print(pickerMode ? "Pick a file" : fittedText);
   const char *modeLabel = "SPLIT";
   if (mode == Mode::Scroll) {
     modeLabel = "SCROLL";
   } else if (mode == Mode::Select) {
     modeLabel = "SELECT";
   }
-  drawRightText(gfx, statusUntil != 0 ? statusText : modeLabel, kHeaderY);
+  drawRightText(gfx, statusUntil != 0
+                         ? statusText
+                         : (pickerMode ? fittedText : modeLabel),
+                kHeaderY);
   gfx.drawLine(0, kHeaderLineY, 199, kHeaderLineY, 1);
 
   if (entryCount == 0) {
-    gfx.setCursor(72, 92);
-    gfx.print(statusText[0] ? statusText : "empty");
+    const char *emptyText = statusText[0] ? statusText : "empty";
+    int16_t textX = 0;
+    int16_t textY = 0;
+    uint16_t textW = 0;
+    uint16_t textH = 0;
+    gfx.getTextBounds(emptyText, 0, 0, &textX, &textY, &textW, &textH);
+    const int16_t listTop = kHeaderLineY + 1;
+    gfx.setCursor((200 - static_cast<int16_t>(textW)) / 2 - textX,
+                  listTop + (200 - listTop -
+                             static_cast<int16_t>(textH)) /
+                                2 -
+                      textY);
+    gfx.print(emptyText);
   }
 
   const uint8_t visibleCount =
@@ -1703,7 +1815,7 @@ void FilesApp::drawStoragePicker(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
   gfx.setCursor(4, kHeaderY);
-  gfx.print("FILES");
+  gfx.print(pickerMode ? "Pick a file" : "FILES");
   drawRightText(gfx, statusUntil != 0 ? statusText : "SELECT", kHeaderY);
   gfx.drawLine(0, kHeaderLineY, 199, kHeaderLineY, 1);
 

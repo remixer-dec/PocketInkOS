@@ -7,9 +7,9 @@
 #include "netapps/weather_app.h"
 #include "netapps/lightweight_json_parser.h"
 #include "shell/shell_home_layout.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 #include "secrets_config.h"
-#include "sys/device_clock.h"
+#include "sys/services/device_clock.h"
 #include "sys/psram_allocator.h"
 
 #include "../fonts/generated/WeatherSymbols_16pt7b.h"

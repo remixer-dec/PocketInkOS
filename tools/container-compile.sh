@@ -117,10 +117,19 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/app_config.cpp" \
+  "$ROOT/src/sys/app_api_services.cpp" \
+  "$ROOT/src/sys/services/app_api/service_utils.cpp" \
+  "$ROOT/src/sys/services/app_api/permission_service.cpp" \
+  "$ROOT/src/sys/services/app_api/file_service.cpp" \
+  "$ROOT/src/sys/services/app_api/modal_service.cpp" \
+  "$ROOT/src/sys/services/app_api/audio_capture_service.cpp" \
+  "$ROOT/src/sys/services/app_api/audio_service.cpp" \
+  "$ROOT/src/sys/services/connectivity_service.cpp" \
   "$ROOT/src/sys/drivers/epaper_driver_bsp.cpp" \
-  "$ROOT/src/sys/audio_capture.cpp" \
-  "$ROOT/src/sys/audio_playback_renderer.cpp" \
-  "$ROOT/src/sys/audio_power.cpp" \
+  "$ROOT/src/sys/drivers/audio_capture.cpp" \
+  "$ROOT/src/sys/wav_encoder.cpp" \
+  "$ROOT/src/sys/drivers/audio_playback_renderer.cpp" \
+  "$ROOT/src/sys/drivers/audio_power.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
   "$ROOT/src/apps/alarm_app.cpp" \
@@ -141,24 +150,26 @@ FILES=( \
   "$ROOT/src/fs/providers/svg_file_viewer.cpp" \
   "$ROOT/src/fs/providers/text_file_viewer.cpp" \
   "$ROOT/src/apps/files_app.cpp" \
-  "$ROOT/src/sys/battery_monitor.cpp" \
+  "$ROOT/src/sys/services/battery_monitor.cpp" \
   "$ROOT/src/games/cube_app.cpp" \
-  "$ROOT/src/sys/device_controls.cpp" \
-  "$ROOT/src/sys/device_clock.cpp" \
-  "$ROOT/src/sys/environment_monitor.cpp" \
-  "$ROOT/src/sys/lockscreen_guard.cpp" \
-  "$ROOT/src/sys/pcf85063_clock.cpp" \
+  "$ROOT/src/sys/services/device_controls.cpp" \
+  "$ROOT/src/sys/services/device_clock.cpp" \
+  "$ROOT/src/sys/services/environment_monitor.cpp" \
+  "$ROOT/src/sys/services/lockscreen_guard.cpp" \
+  "$ROOT/src/sys/drivers/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
   "$ROOT/src/sys/pinkjs_app.cpp" \
-  "$ROOT/src/sys/power_control.cpp" \
+  "$ROOT/src/sys/services/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
-  "$ROOT/src/sys/sd_storage.cpp" \
-  "$ROOT/src/sys/screenshot.cpp" \
+  "$ROOT/src/sys/services/sd_storage.cpp" \
+  "$ROOT/src/sys/system_fonts.cpp" \
+  "$ROOT/src/sys/services/screenshot.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
-  "$ROOT/src/sys/shell_buttons.cpp" \
+  "$ROOT/src/shell/shell_buttons.cpp" \
   "$ROOT/src/ui/components/audio_player_component.cpp" \
   "$ROOT/src/ui/components/date_time_picker_component.cpp" \
+  "$ROOT/src/ui/components/file_picker_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \
   "$ROOT/src/apps/paint_app.cpp" \
   "$ROOT/src/ui/qwerty_zoom/qwerty_zoom_keyboard_component.cpp" \
@@ -171,17 +182,18 @@ FILES=( \
   "$ROOT/src/shell/shell_dialog_layout.cpp" \
   "$ROOT/src/shell/shell_controller.cpp" \
   "$ROOT/src/shell/quick_settings.cpp" \
-  "$ROOT/src/sys/hw_button.cpp" \
+  "$ROOT/src/sys/drivers/hw_button.cpp" \
   "$ROOT/src/ui/components/touch_button.cpp" \
+  "$ROOT/src/ui/system_qr.cpp" \
   "$ROOT/src/ui/status_bar.cpp" \
   "$ROOT/src/games/sudoku_app.cpp" \
   "$ROOT/src/ui/components/t9_keyboard_component.cpp" \
   "$ROOT/src/ui/text_input_controller.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
-  "$ROOT/src/sys/touch_input.cpp" \
-  "$ROOT/src/sys/usb_status.cpp" \
-  "$ROOT/src/sys/time_sync.cpp" \
-  "$ROOT/src/sys/wifi_manager.cpp" \
+  "$ROOT/src/sys/drivers/touch_input.cpp" \
+  "$ROOT/src/sys/drivers/usb_status.cpp" \
+  "$ROOT/src/sys/services/time_sync.cpp" \
+  "$ROOT/src/sys/services/wifi_manager.cpp" \
   "$ROOT/src/games/wordle_app.cpp")
 
 if [[ "$NETWORK_APPS" != "0" ]]; then
@@ -209,7 +221,10 @@ if [[ "$TTS_APPS" != "0" ]]; then
 fi
 
 if [[ "$EXTENDED" != "0" ]]; then
-  FILES+=("$ROOT/src/fs/providers/audio_file_viewer.cpp")
+  FILES+=( \
+    "$ROOT/src/sys/audio.cpp" \
+    "$ROOT/src/apps/dictaphone_app.cpp" \
+    "$ROOT/src/fs/providers/audio_file_viewer.cpp")
 fi
 
 for file in "${FILES[@]}"; do

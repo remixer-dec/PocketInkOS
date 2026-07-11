@@ -45,6 +45,7 @@ struct SerialStub {
   explicit operator bool() const { return true; }
 };
 inline SerialStub Serial;
+#define SET_LOOP_TASK_STACK_SIZE(bytes) static_assert((bytes) > 0)
 struct ESPStub {
   void restart() {}
   uint32_t getFreeHeap() { return 256 * 1024; }

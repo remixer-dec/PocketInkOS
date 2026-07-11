@@ -2,9 +2,9 @@
 #define SHELL_HOME_LAYOUT_H
 
 #include "sys/app_display.h"
-#include "sys/battery_monitor.h"
-#include "sys/environment_monitor.h"
-#include "sys/sd_storage.h"
+#include "sys/services/battery_monitor.h"
+#include "sys/services/environment_monitor.h"
+#include "sys/services/sd_storage.h"
 #include "ui/status_bar.h"
 #include <stdint.h>
 

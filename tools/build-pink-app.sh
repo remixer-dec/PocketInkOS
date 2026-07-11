@@ -6,7 +6,7 @@ SRC="${1:-$ROOT/examples/pink/tetris/tetris.cpp}"
 OUT="${2:-$ROOT/build/pink/tetris.pink}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/pink/$(basename "${SRC%.*}")}"
 LINKER="${PINK_LINKER:-$ROOT/tools/pink_app.ld}"
-ABI_VERSION=8
+ABI_VERSION=10
 MAX_IMAGE_BYTES=$((64 * 1024))
 
 usage() {

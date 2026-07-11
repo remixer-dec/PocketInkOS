@@ -1,7 +1,7 @@
 #ifndef CUBE_APP_H
 #define CUBE_APP_H
 
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 
 class CubeApp {

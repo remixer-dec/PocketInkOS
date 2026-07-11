@@ -3,7 +3,7 @@
 
 #include "fs/file_viewer_registry.h"
 #include "fs/file_provider.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
 #include <Adafruit_GFX.h>
 #include <FS.h>
@@ -29,6 +29,13 @@ public:
   void restoreContext(const uint8_t *buffer, size_t length);
   bool consumePinkLaunch(char *path, size_t pathSize);
   bool consumeJsLaunch(char *path, size_t pathSize);
+  /// Runs the Files browser as a system-owned path selector.
+  bool beginPicker(const char *initialPath, const char *extensionFilter);
+  bool takePickedPath(char *path, size_t pathSize);
+  void cancelPicker();
+  bool pickerActive() const;
+  bool pickerSelectionReady() const;
+  bool pickerCancelled() const;
   void release();
 
 private:
@@ -90,6 +97,11 @@ private:
   File directoryScanRoot;
   bool pendingPinkLaunch = false;
   bool pendingJsLaunch = false;
+  bool pickerMode = false;
+  bool pickerHasSelection = false;
+  bool pickerWasCancelled = false;
+  char pickerSelectedPath[FILES_PATH_CAPACITY] = {};
+  char pickerFilter[80] = {};
 
   bool ensureDirectoryCache();
   void releaseDirectoryCache();
@@ -132,6 +144,7 @@ private:
   void markDirtyRegion(int16_t x, int16_t y, int16_t w, int16_t h);
   void markListDirty();
   const char *displayName(const char *path) const;
+  bool pickerAllows(const char *name) const;
 };
 
 #endif

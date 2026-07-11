@@ -1,7 +1,7 @@
 #include "shell/quick_settings.h"
-#include "shell/connectivity.h"
-#include "sys/device_controls.h"
-#include "sys/power_control.h"
+#include "sys/services/connectivity_service.h"
+#include "sys/services/device_controls.h"
+#include "sys/services/power_control.h"
 #include <Arduino.h>
 
 void QuickSettingsController::open(PowerDialogPage nextPage) {

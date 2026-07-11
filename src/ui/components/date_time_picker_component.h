@@ -1,7 +1,7 @@
 #ifndef DATE_TIME_PICKER_COMPONENT_H
 #define DATE_TIME_PICKER_COMPONENT_H
 
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
 #include <Adafruit_GFX.h>
 #include <stdint.h>
@@ -37,6 +37,8 @@ public:
   void draw(Adafruit_GFX &gfx);
   /// Handles touch input and returns true when state changed.
   bool handleTouch(const TouchPoint &point);
+  /// Resolves a touch inside a valid calendar day cell.
+  bool dateAtPoint(const TouchPoint &point, DatePickerDate &out) const;
   /// Advances transient UI state and returns true when redraw is needed.
   bool update();
 

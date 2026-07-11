@@ -4,7 +4,8 @@
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
-#include "sys/touch_input.h"
+#include "ui/system_qr.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,15 +27,14 @@ public:
 private:
   enum Mode { MODE_TEXT, MODE_HTTP, MODE_HTTPS };
   enum KeyboardMode { KEYBOARD_T9, KEYBOARD_QWERTY_ZOOM };
-  static const int QR_SIZE = 33;
-  static const int MAX_PAYLOAD = 46;
+  static const int MAX_PAYLOAD = SystemQrCode::maxPayload;
 
   Mode mode = MODE_TEXT;
   String inputText;
   bool keyboardOpen = false;
   KeyboardMode keyboardMode = KEYBOARD_T9;
   bool hasQr = false;
-  bool modules[QR_SIZE][QR_SIZE] = {};
+  SystemQrCode qr;
   UiPressFeedback press;
 
   void openKeyboard();
@@ -44,7 +44,6 @@ private:
   void drawMenu(Adafruit_GFX &gfx);
   void drawQr(Adafruit_GFX &gfx);
   void buildPayload(char *out, int outSize) const;
-  bool encodeQr(const char *text);
   T9KeyboardComponent inputKeyboard;
   QwertyZoomKeyboardComponent zoomKeyboard;
 };

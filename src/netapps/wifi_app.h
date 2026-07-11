@@ -3,8 +3,8 @@
 
 #include <Adafruit_GFX.h>
 #include <stddef.h>
-#include "sys/wifi_manager.h"
-#include "sys/touch_input.h"
+#include "sys/services/wifi_manager.h"
+#include "sys/drivers/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
 

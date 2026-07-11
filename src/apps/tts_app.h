@@ -1,8 +1,8 @@
 #ifndef TTS_APP_H
 #define TTS_APP_H
 
-#include "sys/audio_playback_renderer.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/audio_playback_renderer.h"
+#include "sys/drivers/touch_input.h"
 #include "tts/inflect_tts_wrapper.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"

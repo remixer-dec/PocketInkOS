@@ -26,6 +26,8 @@ struct FileProvider {
   bool (*mounted)() = nullptr;
   FileProviderCapacity (*capacity)() = nullptr;
   File (*open)(const char *path) = nullptr;
+  File (*openWrite)(const char *path, bool append) = nullptr;
+  bool (*remove)(const char *path) = nullptr;
   bool (*listDirectory)(const char *path, FileProviderEntryHandler handler,
                         void *context) = nullptr;
 };
@@ -36,6 +38,9 @@ size_t fileProviderCount();
 const FileProvider *defaultFileProvider();
 File openProviderPath(const FileProvider *provider, const char *path);
 File openProviderPath(const char *providerId, const char *path);
+File openProviderPathForWrite(const FileProvider *provider, const char *path,
+                              bool append);
+bool removeProviderPath(const FileProvider *provider, const char *path);
 bool listProviderDirectory(const FileProvider *provider, const char *path,
                            FileProviderEntryHandler handler, void *context);
 

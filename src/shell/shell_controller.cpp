@@ -1,20 +1,21 @@
 #include "shell/shell_controller.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
 #include "shell/shell_menu_layout.h"
 #include "shell/shell_context.h"
-#include "sys/battery_monitor.h"
-#include "sys/device_clock.h"
-#include "sys/environment_monitor.h"
+#include "sys/services/battery_monitor.h"
+#include "sys/app_api_services.h"
+#include "sys/services/device_clock.h"
+#include "sys/services/environment_monitor.h"
 #include "sys/global.h"
 #include "sys/pink_executable.h"
 #include "sys/pinkjs_app.h"
-#include "sys/power_control.h"
-#include "sys/screenshot.h"
-#include "sys/sd_storage.h"
+#include "sys/services/power_control.h"
+#include "sys/services/screenshot.h"
+#include "sys/services/sd_storage.h"
 #include "sys/system_config.h"
-#include "sys/usb_status.h"
+#include "sys/drivers/usb_status.h"
 #include <Arduino.h>
 #include <cstring>
 
@@ -122,6 +123,7 @@ void ShellController::switchTo(Screen next, ActiveApp *nextApp,
   }
   confirmQuit = false;
   quickSettings.close();
+  appOverlayVisible = appApiOverlayActive();
   dirty = true;
 }
 
@@ -210,6 +212,12 @@ bool ShellController::handleAppEvent(AppEventHandler handler) {
 }
 
 void ShellController::handleMenuButton() {
+  if (appApiOverlayActive()) {
+    if (appApiHandleOverlayMenuButton()) {
+      dirty = true;
+    }
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -237,6 +245,9 @@ void ShellController::handleMenuButton() {
 }
 
 void ShellController::handleMenuDoubleButton() {
+  if (appApiOverlayActive()) {
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -254,6 +265,9 @@ void ShellController::handleMenuDoubleButton() {
 }
 
 void ShellController::handleMenuLongButton() {
+  if (appApiOverlayActive()) {
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -282,6 +296,12 @@ void ShellController::switchKeyboardMode() {
 }
 
 void ShellController::handlePowerButton(AppEventHandler overrideHandler) {
+  if (appApiOverlayActive()) {
+    if (appApiHandleOverlayPowerButton()) {
+      dirty = true;
+    }
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -313,6 +333,9 @@ void ShellController::handlePowerSingleButton() {
 }
 
 void ShellController::handlePowerDoubleButton() {
+  if (appApiOverlayActive()) {
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -332,6 +355,9 @@ void ShellController::handlePowerDoubleButton() {
 }
 
 void ShellController::handlePowerLongButton() {
+  if (appApiOverlayActive()) {
+    return;
+  }
   if (quickSettings.isOpen()) {
     closeQuickSettings();
     return;
@@ -384,6 +410,9 @@ bool ShellController::handleQuitDialogTouch(const TouchPoint &point) {
     return true;
   }
   if (quitDialogHitYes(point)) {
+    if (returnToFilesAfterLaunch()) {
+      return true;
+    }
     switchTo(SCREEN_MENU);
     return true;
   }
@@ -391,6 +420,22 @@ bool ShellController::handleQuitDialogTouch(const TouchPoint &point) {
     cancelQuitDialog();
     return true;
   }
+  return true;
+}
+
+bool ShellController::returnToFilesAfterLaunch() {
+  if (filesLaunchReturnOwner == nullptr || activeApp != filesLaunchReturnOwner) {
+    return false;
+  }
+  AppCatalogEntry files;
+  if (!findAppById("files", files)) {
+    filesLaunchReturnOwner = nullptr;
+    return false;
+  }
+  filesLaunchReturnOwner = nullptr;
+  // Do not call launchApp(): Files deliberately keeps its path and selection
+  // across release(), and reset() would discard the folder we are returning to.
+  switchTo(SCREEN_APP, files.definition.runtime, &files.definition);
   return true;
 }
 
@@ -489,6 +534,7 @@ bool ShellController::handlePendingFilesPinkLaunch() {
       return false;
     }
   }
+  filesLaunchReturnOwner = app.definition.runtime;
   switchTo(SCREEN_APP, app.definition.runtime, &app.definition);
   return true;
 }
@@ -554,6 +600,25 @@ bool ShellController::handleScreenTouch(const TouchPoint &point) {
 }
 
 bool ShellController::dispatchTouch() {
+  if (appApiOverlayActive()) {
+    TouchPoint point;
+    if (!touch.read(point)) {
+      return false;
+    }
+    noteUserActivity();
+    appApiHandleOverlayTouch(point);
+    appOverlayVisible = appApiOverlayActive();
+    if (!appOverlayVisible) {
+      TouchPoint discarded;
+      uint8_t discardedCount = 0;
+      while (discardedCount < kMaxRawTouchEventsPerDispatch &&
+             touch.read(discarded)) {
+        discardedCount++;
+      }
+    }
+    dirty = true;
+    return true;
+  }
   if (activeDefinition != nullptr &&
       activeDefinition->behavior.onRawTouch != nullptr && !confirmQuit &&
       !quickSettings.isOpen()) {
@@ -586,6 +651,11 @@ bool ShellController::dispatchTouch() {
   if (handlePendingFilesPinkLaunch()) {
     return true;
   }
+  if (appApiOverlayActive()) {
+    appOverlayVisible = true;
+    dirty = true;
+    return true;
+  }
   if (screenTouched) {
     redrawActiveScreenPartial();
   }
@@ -596,7 +666,9 @@ void ShellController::render() {
   display.lock();
   display.clear();
   drawActiveScreen();
-  if (confirmQuit) {
+  if (appApiOverlayActive()) {
+    appApiDrawOverlay(display);
+  } else if (confirmQuit) {
     char dateText[16];
     char timeText[16];
     ShellData data =
@@ -678,12 +750,26 @@ bool ShellController::updateActiveApp() {
     return false;
   }
 
+  if (appApiUpdateOnMainCore()) {
+    dirty = true;
+  }
   bool handled = false;
   if (activeApp->update()) {
     dirty = true;
     handled = true;
   }
   if (applyAppEventResult(activeApp->consumePendingEvent())) {
+    handled = true;
+  }
+  const bool overlayActive = appApiOverlayActive();
+  if (overlayActive != appOverlayVisible) {
+    appOverlayVisible = overlayActive;
+    dirty = true;
+    handled = true;
+  }
+  char requestedApp[24];
+  if (appApiTakeOpenAppRequest(requestedApp, sizeof(requestedApp)) &&
+      launchAppById(requestedApp)) {
     handled = true;
   }
   return handled;

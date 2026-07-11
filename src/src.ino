@@ -4,22 +4,22 @@
 #define ENABLE_NETWORK_APPS 1
 #endif
 #include "sys/system_config.h"
-#include "sys/shell_buttons.h"
-#include "sys/audio_power.h"
-#include "sys/device_clock.h"
-#include "sys/battery_monitor.h"
-#include "sys/device_controls.h"
-#include "sys/environment_monitor.h"
+#include "shell/shell_buttons.h"
+#include "sys/drivers/audio_power.h"
+#include "sys/services/device_clock.h"
+#include "sys/services/battery_monitor.h"
+#include "sys/services/device_controls.h"
+#include "sys/services/environment_monitor.h"
 #include "sys/global.h"
 #include "sys/heap_debug.h"
-#include "sys/lockscreen_guard.h"
-#include "sys/power_control.h"
-#include "sys/pcf85063_clock.h"
+#include "sys/services/lockscreen_guard.h"
+#include "sys/services/power_control.h"
+#include "sys/drivers/pcf85063_clock.h"
 #include "sys/pink_executable.h"
 #include "sys/sleep_clock_context.h"
-#include "sys/sd_storage.h"
-#include "sys/usb_status.h"
-#include "shell/connectivity.h"
+#include "sys/services/sd_storage.h"
+#include "sys/drivers/usb_status.h"
+#include "sys/services/connectivity_service.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
 #include "shell/shell_lockscreen_layout.h"
@@ -274,7 +274,11 @@ bool syncDeviceClockFromRtc() {
   delay(5);
   touchI2cBegin();
   rtcClock.begin();
-  const bool updated = rtcClock.readToDeviceClock();
+  int64_t localUnix = 0;
+  const bool updated = rtcClock.readLocalUnix(localUnix);
+  if (updated) {
+    deviceClock.set(localUnix, 0);
+  }
   digitalWrite(EPD_TP_RST_PIN, LOW);
   return updated;
 #else
@@ -477,7 +481,10 @@ void setup() {
 #if ENABLE_RTC_CLOCK
   logSetupStage("rtc");
   rtcClock.begin();
-  rtcClock.readToDeviceClock();
+  int64_t localUnix = 0;
+  if (rtcClock.readLocalUnix(localUnix)) {
+    deviceClock.set(localUnix, 0);
+  }
   heapMark("after-rtc");
 #endif
   logSetupStage("battery");

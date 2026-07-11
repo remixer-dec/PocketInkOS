@@ -1,5 +1,5 @@
 #include "apps/calendar_app.h"
-#include "sys/device_clock.h"
+#include "sys/services/device_clock.h"
 #include "sys/global.h"
 
 namespace {

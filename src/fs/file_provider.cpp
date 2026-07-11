@@ -1,5 +1,5 @@
 #include "fs/file_provider.h"
-#include "sys/sd_storage.h"
+#include "sys/services/sd_storage.h"
 
 #include <SD_MMC.h>
 #include <cstdio>
@@ -25,6 +25,17 @@ File sdOpen(const char *path) {
     return File();
   }
   return SD_MMC.open(path);
+}
+
+File sdOpenWrite(const char *path, bool append) {
+  if (path == nullptr || path[0] == '\0') {
+    return File();
+  }
+  return SD_MMC.open(path, append ? FILE_APPEND : FILE_WRITE);
+}
+
+bool sdRemove(const char *path) {
+  return path != nullptr && path[0] != '\0' && SD_MMC.remove(path);
 }
 
 bool sdVfsPath(const char *path, char *out, size_t outSize) {
@@ -86,7 +97,8 @@ bool sdListDirectory(const char *path, FileProviderEntryHandler handler,
 }
 
 const FileProvider PROVIDERS[] = {
-    {"sd", "SD CARD", sdMounted, sdCapacity, sdOpen, sdListDirectory},
+    {"sd", "SD CARD", sdMounted, sdCapacity, sdOpen, sdOpenWrite, sdRemove,
+     sdListDirectory},
 };
 
 const size_t PROVIDER_COUNT = sizeof(PROVIDERS) / sizeof(PROVIDERS[0]);
@@ -127,6 +139,19 @@ File openProviderPath(const FileProvider *provider, const char *path) {
 
 File openProviderPath(const char *providerId, const char *path) {
   return openProviderPath(fileProviderById(providerId), path);
+}
+
+File openProviderPathForWrite(const FileProvider *provider, const char *path,
+                              bool append) {
+  if (provider == nullptr || provider->openWrite == nullptr) {
+    return File();
+  }
+  return provider->openWrite(path, append);
+}
+
+bool removeProviderPath(const FileProvider *provider, const char *path) {
+  return provider != nullptr && provider->remove != nullptr &&
+         provider->remove(path);
 }
 
 bool listProviderDirectory(const FileProvider *provider, const char *path,

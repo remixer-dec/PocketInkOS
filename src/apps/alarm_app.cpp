@@ -2,8 +2,8 @@
 #include "sys/psram_allocator.h"
 
 #include "fs/providers/resonatto/remidi_synth.h"
-#include "sys/audio_playback_renderer.h"
-#include "sys/device_clock.h"
+#include "sys/drivers/audio_playback_renderer.h"
+#include "sys/services/device_clock.h"
 #include "sys/global.h"
 #include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"

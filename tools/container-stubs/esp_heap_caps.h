@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define MALLOC_CAP_DMA 4
@@ -114,6 +115,28 @@ inline void heap_caps_free(void *p) {
     return;
   }
   std::free(p);
+}
+inline void *heap_caps_realloc(void *p, size_t n, int caps) {
+  if (p == nullptr) {
+    return heap_caps_malloc(n, caps);
+  }
+  if (n == 0) {
+    heap_caps_free(p);
+    return nullptr;
+  }
+  constexpr uint32_t kMagic = 0x48434150U;
+  auto *header = static_cast<heap_caps_tracking_header_t *>(p) - 1;
+  if (header->magic != kMagic) {
+    return std::realloc(p, n);
+  }
+  const size_t oldSize = header->size;
+  void *resized = heap_caps_malloc(n, caps);
+  if (resized == nullptr) {
+    return nullptr;
+  }
+  std::memcpy(resized, p, oldSize < n ? oldSize : n);
+  heap_caps_free(p);
+  return resized;
 }
 inline size_t heap_caps_get_free_size(int) { return 256 * 1024; }
 inline size_t heap_caps_get_largest_free_block(int) { return 128 * 1024; }

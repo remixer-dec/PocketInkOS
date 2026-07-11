@@ -10,6 +10,7 @@ using esp_err_t = int;
 #define I2S_NUM_0 0
 #define I2S_ROLE_MASTER 0
 #define I2S_DATA_BIT_WIDTH_16BIT 16
+#define I2S_SLOT_MODE_MONO 1
 #define I2S_SLOT_MODE_STEREO 2
 #define I2S_MCLK_MULTIPLE_256 256
 

@@ -1,7 +1,7 @@
 #ifndef TOUCH_BUTTON_H
 #define TOUCH_BUTTON_H
 
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stdint.h>
 

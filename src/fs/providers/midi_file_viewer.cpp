@@ -3,8 +3,8 @@
 #include "fs/file_provider.h"
 #include "fs/providers/resonatto/remidi.h"
 #include "fs/providers/resonatto/remidi_synth.h"
-#include "sys/audio_playback_renderer.h"
-#include "sys/device_controls.h"
+#include "sys/drivers/audio_playback_renderer.h"
+#include "sys/services/device_controls.h"
 #include "ui/components/audio_player_component.h"
 
 #include <Arduino.h>

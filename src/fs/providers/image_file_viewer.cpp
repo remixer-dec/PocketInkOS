@@ -3,6 +3,7 @@
 #include "sys/psram_allocator.h"
 
 #include <Arduino.h>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 
@@ -63,6 +64,7 @@ struct RasterMemoryReader {
 
 struct RasterDrawTarget {
   Adafruit_GFX *gfx;
+  const ImageTransform *transform = nullptr;
 };
 
 int readRasterByte(void *user) {
@@ -83,7 +85,16 @@ int readMemoryRasterByte(void *user) {
 void drawRasterPixel(void *user, int16_t x, int16_t y) {
   RasterDrawTarget *target = static_cast<RasterDrawTarget *>(user);
   if (target != nullptr && target->gfx != nullptr) {
-    target->gfx->drawPixel(x, y, 1);
+    if (target->transform == nullptr) {
+      target->gfx->drawPixel(x, y, 1);
+      return;
+    }
+    int16_t transformedX = 0;
+    int16_t transformedY = 0;
+    if (imageTransformPoint(*target->transform, x, y, transformedX,
+                            transformedY)) {
+      target->gfx->drawPixel(transformedX, transformedY, 1);
+    }
   }
 }
 
@@ -133,14 +144,25 @@ const char *extensionForPath(const char *path) {
 }
 
 RasterKind rasterKindForExtension(const char *extension) {
-  return equalsIgnoreCase(extension, "jpg") ||
-                 equalsIgnoreCase(extension, "jpeg") ||
-                 equalsIgnoreCase(extension, "jfif")
-             ? RasterKind::Jpeg
-             : (equalsIgnoreCase(extension, "webp")
-                    ? RasterKind::Webp
-                    : (equalsIgnoreCase(extension, "wbmp") ? RasterKind::Wbmp
-                                                            : RasterKind::Png));
+  if (equalsIgnoreCase(extension, "jpg") ||
+      equalsIgnoreCase(extension, "jpeg") ||
+      equalsIgnoreCase(extension, "jfif")) {
+    return RasterKind::Jpeg;
+  }
+  if (equalsIgnoreCase(extension, "webp")) {
+    return RasterKind::Webp;
+  }
+  if (equalsIgnoreCase(extension, "wbmp")) {
+    return RasterKind::Wbmp;
+  }
+  return equalsIgnoreCase(extension, "png") ? RasterKind::Png
+                                             : RasterKind::Unknown;
+}
+
+bool validTransform(const ImageTransform &transform) {
+  return std::isfinite(transform.a) && std::isfinite(transform.b) &&
+         std::isfinite(transform.c) && std::isfinite(transform.d) &&
+         std::isfinite(transform.tx) && std::isfinite(transform.ty);
 }
 
 RasterKind rasterKindForFile(File &file, const char *extension) {
@@ -642,6 +664,22 @@ const char *const IMAGE_VIEWER_EXTENSIONS[] = {"png", "jpg", "jpeg", "jfif",
 
 } // namespace
 
+bool imageTransformPoint(const ImageTransform &transform, int16_t x,
+                         int16_t y, int16_t &outX, int16_t &outY) {
+  const float transformedX =
+      transform.a * x + transform.c * y + transform.tx;
+  const float transformedY =
+      transform.b * x + transform.d * y + transform.ty;
+  if (!std::isfinite(transformedX) || !std::isfinite(transformedY) ||
+      transformedX < INT16_MIN || transformedX > INT16_MAX ||
+      transformedY < INT16_MIN || transformedY > INT16_MAX) {
+    return false;
+  }
+  outX = static_cast<int16_t>(lroundf(transformedX));
+  outY = static_cast<int16_t>(lroundf(transformedY));
+  return true;
+}
+
 void drawImageBuffer(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                      const char *extension, int16_t imageX, int16_t imageY,
                      int16_t imageW, int16_t imageH, uint8_t dither,
@@ -670,6 +708,76 @@ void drawImageBuffer(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
   } else {
     drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
   }
+}
+
+bool drawImageBufferTransformed(Adafruit_GFX &gfx, const uint8_t *data,
+                                size_t size, const char *extension,
+                                int16_t imageX, int16_t imageY, int16_t imageW,
+                                int16_t imageH, uint8_t dither,
+                                bool scaleToFit,
+                                const ImageTransform &transform) {
+  if (data == nullptr || size == 0 || extension == nullptr ||
+      extension[0] == '\0' || imageW <= 0 || imageH <= 0 ||
+      !validTransform(transform)) {
+    return false;
+  }
+  RasterMemoryReader source;
+  source.data = data;
+  source.size = size;
+  RasterDrawTarget target = {&gfx, &transform};
+  const RasterKind kind = rasterKindForExtension(extension);
+  if (kind == RasterKind::Jpeg) {
+    drawMemoryJpeg(gfx, source, target, imageX, imageY, imageW, imageH, dither,
+                   scaleToFit);
+  } else if (kind == RasterKind::Png) {
+    drawMemoryPng(gfx, source, target, imageX, imageY, imageW, imageH, dither,
+                  scaleToFit);
+  } else if (kind == RasterKind::Webp) {
+    drawMemoryWebp(gfx, data, size, target, imageX, imageY, imageW, imageH,
+                   dither, scaleToFit);
+  } else if (kind == RasterKind::Wbmp) {
+    drawMemoryWbmp(gfx, source, target, imageX, imageY, imageW, imageH,
+                   scaleToFit);
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
+                              const char *path, int16_t imageX,
+                              int16_t imageY, int16_t imageW, int16_t imageH,
+                              uint8_t dither, bool scaleToFit,
+                              const ImageTransform &transform) {
+  if (path == nullptr || path[0] == '\0' || imageW <= 0 || imageH <= 0 ||
+      !validTransform(transform)) {
+    return false;
+  }
+  File file = openProviderPath(providerId != nullptr ? providerId : "sd", path);
+  if (!file || file.isDirectory()) {
+    return false;
+  }
+  RasterFileReader source = {&file};
+  RasterDrawTarget target = {&gfx, &transform};
+  const RasterKind kind = rasterKindForFile(file, extensionForPath(path));
+  FileViewerRuntime runtime;
+  runtime.imageDither = dither;
+  runtime.imageScaleToFit = scaleToFit;
+  if (kind == RasterKind::Jpeg) {
+    drawRasterJpeg(gfx, file, source, target, imageX, imageY, imageW, imageH,
+                   runtime);
+  } else if (kind == RasterKind::Png) {
+    drawRasterPng(gfx, file, source, target, imageX, imageY, imageW, imageH,
+                  runtime);
+  } else if (kind == RasterKind::Webp) {
+    drawRasterWebp(gfx, file, target, imageX, imageY, imageW, imageH, runtime);
+  } else if (kind == RasterKind::Wbmp) {
+    drawRasterWbmp(gfx, file, source, target, imageX, imageY, imageW, imageH,
+                   runtime);
+  } else {
+    return false;
+  }
+  return true;
 }
 
 const FileViewerExtension IMAGE_FILE_VIEWER = {

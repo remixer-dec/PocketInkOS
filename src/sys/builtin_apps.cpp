@@ -6,6 +6,9 @@
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
 #include "apps/settings_app.h"
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
+#include "apps/dictaphone_app.h"
+#endif
 #include "apps/deghost_app.h"
 #include "apps/files_app.h"
 #include "apps/gfx_app.h"
@@ -19,8 +22,8 @@
 #include "games/wordle_app.h"
 #include "sys/app_display.h"
 #include "sys/pink_executable.h"
-#include "sys/sd_storage.h"
-#include "sys/wifi_manager.h"
+#include "sys/services/sd_storage.h"
+#include "sys/services/wifi_manager.h"
 #if ENABLE_TTS
 #include "apps/tts_app.h"
 #endif
@@ -48,6 +51,9 @@ GfxApp gfxApp;
 FilesApp filesApp;
 ContactLinksApp contactLinks;
 SettingsApp settingsApp;
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
+DictaphoneApp dictaphoneApp;
+#endif
 #if ENABLE_TTS
 TtsApp ttsApp;
 #endif
@@ -83,6 +89,9 @@ AppScreen<GfxApp, true> gfxScreen(gfxApp);
 AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
 AppScreen<SettingsApp, true> settingsScreen(settingsApp);
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
+AppScreen<DictaphoneApp, true> dictaphoneScreen(dictaphoneApp);
+#endif
 #if ENABLE_TTS
 AppScreen<TtsApp, true> ttsScreen(ttsApp);
 #endif
@@ -299,6 +308,26 @@ const AppDefinition builtInApps[] = {
                            .withRelease([]() { filesApp.release(); })
                            .build(),
                        true, sdStorageMounted),
+#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
+    builtInApp("dictaphone", "dictaphone", "$", MENU_APPS,
+               &dictaphoneScreen, []() { dictaphoneApp.reset(); },
+               defaultBehavior()
+                   .withEnter([]() { dictaphoneApp.onEnter(); })
+                   .withExit([]() { dictaphoneApp.onExit(); })
+                   .withMenuBtn(
+                       []() {
+                         return dictaphoneApp.handleMenuButton()
+                                    ? AppEventResult::Dirty
+                                    : AppEventResult::GoMenu;
+                       },
+                       []() {
+                         return dirtyIfHandled(
+                             dictaphoneApp.handleMenuDoubleButton());
+                       })
+                   .withRelease([]() { dictaphoneApp.release(); })
+                   .build(),
+               true, sdStorageMounted),
+#endif
     contactLinksApp,
     builtInApp("settings", "settings", "S", MENU_APPS, &settingsScreen,
                    []() { settingsApp.reset(); },

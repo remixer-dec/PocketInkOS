@@ -4,7 +4,7 @@
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 #include <stdint.h>

@@ -2,7 +2,7 @@
 #define CONTACT_LINKS_APP_H
 
 #include "apps/qr_app.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 
 class ContactLinksApp {

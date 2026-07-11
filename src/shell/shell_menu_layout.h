@@ -4,7 +4,7 @@
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
 #include "sys/builtin_apps.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <stdint.h>
 
 /// Walks categories backward for button navigation.

@@ -32,6 +32,7 @@ public:
   File open(const char *, const char *) { return File(); }
   bool mkdir(const char *) { return false; }
   bool remove(const char *) { return false; }
+  bool exists(const char *) { return false; }
 };
 
 } // namespace fs

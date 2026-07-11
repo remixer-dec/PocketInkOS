@@ -6,7 +6,7 @@
 
 #include "netapps/reddit_app.h"
 #include "netapps/lightweight_json_parser.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 
 #include <Arduino.h>
 #include <HTTPClient.h>

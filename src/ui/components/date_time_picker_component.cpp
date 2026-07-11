@@ -238,6 +238,23 @@ bool DateTimePickerComponent::handleTouch(const TouchPoint &point) {
   return true;
 }
 
+bool DateTimePickerComponent::dateAtPoint(const TouchPoint &point,
+                                          DatePickerDate &out) const {
+  if (yearKeyboardOpen || point.x < GRID_X ||
+      point.x >= GRID_X + CELL_W * 7 || point.y < GRID_Y ||
+      point.y >= GRID_Y + CELL_H * 6) {
+    return false;
+  }
+  const int col = (point.x - GRID_X) / CELL_W;
+  const int row = (point.y - GRID_Y) / CELL_H;
+  const int day = row * 7 + col - firstWeekday() + 1;
+  if (day < 1 || day > daysInMonth(viewedYear, viewedMonth)) {
+    return false;
+  }
+  out = {viewedYear, viewedMonth, day};
+  return true;
+}
+
 bool DateTimePickerComponent::update() {
   if (yearKeyboardOpen && yearKeyboard.update()) {
     return true;

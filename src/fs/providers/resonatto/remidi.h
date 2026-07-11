@@ -1,6 +1,8 @@
 #ifndef REMIDI_H
 #define REMIDI_H
 
+#include "sys/psram_allocator.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -172,7 +174,8 @@ inline bool ensureCapacity(void **buffer, uint32_t *capacity, uint32_t needed,
   if (next > maxItems) {
     return false;
   }
-  void *grown = realloc(*buffer, static_cast<size_t>(next) * itemSize);
+  void *grown =
+      psram::reallocate(*buffer, static_cast<size_t>(next) * itemSize);
   if (grown == nullptr) {
     return false;
   }
@@ -473,8 +476,8 @@ inline void assignEventTimes(ParseState &state, uint16_t division) {
 }
 
 inline void freeParseState(ParseState &state) {
-  free(state.tempos);
-  free(state.events);
+  psram::release(state.tempos);
+  psram::release(state.events);
   state.tempos = nullptr;
   state.events = nullptr;
   state.tempoCount = 0;
@@ -489,7 +492,7 @@ inline void remidi_free_sequence(remidi_sequence *sequence) {
   if (sequence == nullptr) {
     return;
   }
-  free(sequence->events);
+  psram::release(sequence->events);
   *sequence = remidi_sequence();
 }
 
@@ -564,7 +567,7 @@ inline remidi_result remidi_read_sequence(remidi_reader *reader,
   outSequence->eventCount = state.eventCount;
   outSequence->events = state.events;
 
-  free(state.tempos);
+  psram::release(state.tempos);
   state.tempos = nullptr;
   state.events = nullptr;
   return REMIDI_OK;

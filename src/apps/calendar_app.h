@@ -1,7 +1,7 @@
 #ifndef CALENDAR_APP_H
 #define CALENDAR_APP_H
 
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include "sys/app_config.h"
 #include "ui/components/date_time_picker_component.h"
 #include <Adafruit_GFX.h>

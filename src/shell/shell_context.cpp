@@ -1,8 +1,8 @@
 #include "shell/shell_context.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 #include "sys/builtin_apps.h"
-#include "sys/device_clock.h"
-#include "sys/device_controls.h"
+#include "sys/services/device_clock.h"
+#include "sys/services/device_controls.h"
 #include "sys/rtc_context.h"
 #include <cstring>
 

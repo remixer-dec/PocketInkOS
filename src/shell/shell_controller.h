@@ -7,7 +7,7 @@
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
 #include "sys/builtin_apps.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include "ui/text_input_controller.h"
 
 /// Hooks from the sketch runtime into ShellController.
@@ -102,6 +102,8 @@ private:
   unsigned long quitDialogOpenedAt = 0;
   int64_t lastHomeMinute = -1;
   bool screenshotPending = false;
+  bool appOverlayVisible = false;
+  ActiveApp *filesLaunchReturnOwner = nullptr;
   char screenshotNotice[24] = {};
   unsigned long screenshotNoticeUntil = 0;
   QuickSettingsController quickSettings;
@@ -138,6 +140,7 @@ private:
   void drawActiveScreen();
   void redrawActiveScreenPartial();
   bool handleScreenTouch(const TouchPoint &point);
+  bool returnToFilesAfterLaunch();
   void render();
   void showQuickSettingsActionFeedback(PowerDialogAction action);
   void requestScreenshot();

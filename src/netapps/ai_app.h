@@ -1,10 +1,10 @@
 #ifndef AI_APP_H
 #define AI_APP_H
 
-#include "sys/audio_capture.h"
+#include "sys/drivers/audio_capture.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <WiFiClientSecure.h>
 
@@ -29,7 +29,6 @@ private:
   enum State { STATE_IDLE, STATE_COMPOSING, STATE_RECORDING,
                STATE_CONNECTING, STATE_STREAMING, STATE_READY, STATE_FAILED };
   enum KeyboardMode { KEYBOARD_T9, KEYBOARD_QWERTY_ZOOM };
-  enum AudioFormat { AUDIO_WAV, AUDIO_PCM16 };
 
   static const int INPUT_MAX = 96;
   static const int TRANSCRIPT_MAX = 4096;
@@ -61,7 +60,6 @@ private:
   bool requestComplete = false;
   bool responseChunked = false;
   bool pendingAudio = false;
-  AudioFormat pendingAudioFormat = AUDIO_WAV;
   AudioCaptureResult capturedAudio;
   AudioCapture audioCapture;
   int modelIndex = 0;
@@ -124,7 +122,6 @@ private:
   void drawRightText(Adafruit_GFX &gfx, const char *text, int16_t y) const;
   void toggleModel();
   void beginVoiceCapture();
-  const char *audioFormatLabel() const;
   void releaseCapturedAudio();
   bool ensureTextStorage();
   void releaseTextStorage();

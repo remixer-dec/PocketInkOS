@@ -6,9 +6,10 @@
 
 #include "netapps/ai_app.h"
 #include "netapps/lightweight_json_parser.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 #include "secrets_config.h"
 #include "sys/psram_allocator.h"
+#include "sys/wav_encoder.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -223,7 +224,6 @@ void AiApp::reset() {
   requestComplete = false;
   responseChunked = false;
   pendingAudio = false;
-  pendingAudioFormat = AUDIO_WAV;
   releaseCapturedAudio();
   modelIndex = 0;
   requestPort = 443;
@@ -281,7 +281,7 @@ bool AiApp::update() {
       setStatus(error[0] ? error : "Audio failed");
       return true;
     }
-    if (capturedAudio.length >=
+    if (capturedAudio.length >= wav::kPcmHeaderSize +
         static_cast<size_t>(capturedAudio.sampleRate) * AUDIO_CAPTURE_MS /
             1000U * sizeof(int16_t)) {
       return stopVoiceRecording();
@@ -468,7 +468,6 @@ void AiApp::submitVoicePrompt() {
 
   pendingPrompt[0] = '\0';
   pendingAudio = true;
-  pendingAudioFormat = AUDIO_PCM16;
   followTail = true;
   scrollOffset = 0;
   responseHeaderWritten = false;
@@ -489,8 +488,8 @@ bool AiApp::startVoiceRecording() {
   char error[STATUS_MAX] = "";
   releaseCapturedAudio();
   pendingAudio = false;
-  if (!audioCapture.beginPcm16(capturedAudio, AUDIO_CAPTURE_MS, error,
-                               sizeof(error))) {
+  if (!audioCapture.beginWav(capturedAudio, AUDIO_CAPTURE_MS, error,
+                             sizeof(error))) {
     state = STATE_FAILED;
     setStatus(error[0] ? error : "Audio start failed");
     return true;
@@ -502,7 +501,7 @@ bool AiApp::startVoiceRecording() {
 
 bool AiApp::stopVoiceRecording() {
   audioCapture.finishPcm16(capturedAudio);
-  if (capturedAudio.length == 0) {
+  if (capturedAudio.length <= wav::kPcmHeaderSize) {
     pendingAudio = false;
     state = STATE_FAILED;
     setStatus("No audio captured");
@@ -745,7 +744,7 @@ bool AiApp::buildRequestBody(char *out, int outSize,
                        "{\"type\":\"input_audio\",\"input_audio\":{"
                        "\"data\":\"%s\",\"format\":\"%s\"}}]}]}",
                        currentModel(), escapedSystem, escapedPrompt,
-                       audioBase64, audioFormatLabel());
+                       audioBase64, "wav");
   } else {
     written = snprintf(out, outSize,
                        "{\"model\":\"%s\",\"stream\":true,"
@@ -798,8 +797,7 @@ bool AiApp::sendRequest(const char *endpoint, const char *escapedSystem,
   if (!writeBase64(capturedAudio.data, capturedAudio.length)) {
     return false;
   }
-  return writeAll("\",\"format\":\"") && writeAll(audioFormatLabel()) &&
-         writeAll("\"}}]}]}");
+  return writeAll("\",\"format\":\"wav\"}}]}]}");
 }
 
 bool AiApp::writeRequestHeader(const char *endpoint, int bodyLen) {
@@ -907,7 +905,7 @@ int AiApp::requestBodyLength(const char *escapedSystem,
   }
   length += static_cast<size_t>(encodedAudioLength);
   length += strlen("\",\"format\":\"");
-  length += strlen(audioFormatLabel());
+  length += strlen("wav");
   length += strlen("\"}}]}]}");
   if (length > 0x7fffffff) {
     return -1;
@@ -1160,10 +1158,6 @@ void AiApp::toggleModel() {
 
 void AiApp::beginVoiceCapture() {
   handlePowerButton();
-}
-
-const char *AiApp::audioFormatLabel() const {
-  return pendingAudioFormat == AUDIO_PCM16 ? "pcm16" : "wav";
 }
 
 void AiApp::releaseCapturedAudio() {

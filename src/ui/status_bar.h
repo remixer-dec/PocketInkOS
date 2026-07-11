@@ -2,7 +2,7 @@
 #define STATUS_BAR_H
 
 #include "sys/app_display.h"
-#include "sys/battery_monitor.h"
+#include "sys/services/battery_monitor.h"
 #include <stdint.h>
 
 /// Data needed to render the top status bar for shell and app screens.

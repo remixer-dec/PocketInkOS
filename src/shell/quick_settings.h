@@ -2,7 +2,7 @@
 #define SHELL_QUICK_SETTINGS_H
 
 #include "shell/shell_dialog_layout.h"
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 
 /// Shell-owned side effect invoked by quick settings without coupling to globals.
 typedef void (*QuickSettingsCallback)(void *context);

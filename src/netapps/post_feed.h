@@ -1,7 +1,7 @@
 #ifndef POST_FEED_H
 #define POST_FEED_H
 
-#include "sys/touch_input.h"
+#include "sys/drivers/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stdint.h>
 
