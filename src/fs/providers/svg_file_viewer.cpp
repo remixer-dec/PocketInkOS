@@ -1,5 +1,6 @@
 #include "fs/providers/svg_file_viewer.h"
 #include "fs/file_provider.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <cstdlib>
@@ -25,34 +26,13 @@
 #endif
 
 void *svgViewerAllocRaw(size_t bytes) {
-#if SVG_VIEWER_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-#endif
-  return malloc(bytes);
+  return psram::allocateOrDefault(bytes);
 }
 
-void svgViewerFreeRaw(void *ptr) {
-#if SVG_VIEWER_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+void svgViewerFreeRaw(void *ptr) { psram::release(ptr); }
 
 void *svgViewerReallocRaw(void *ptr, size_t bytes) {
-#if SVG_VIEWER_HAS_ESP_HEAP_RUNTIME
-  void *next =
-      heap_caps_realloc(ptr, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (next != nullptr || bytes == 0) {
-    return next;
-  }
-  return heap_caps_realloc(ptr, bytes, MALLOC_CAP_8BIT);
-#else
-  return realloc(ptr, bytes);
-#endif
+  return psram::reallocateOrDefault(ptr, bytes);
 }
 
 void *svgViewerIsvgMalloc(size_t bytes) {

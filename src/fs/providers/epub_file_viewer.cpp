@@ -4,18 +4,12 @@
 #include "fs/file_provider.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/inkreadable/inkepub.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <new>
 #include <stdlib.h>
 #include <string.h>
-
-#if __has_include(<esp_heap_caps.h>)
-#include <esp_heap_caps.h>
-#define EPUB_VIEWER_HAS_HEAP_CAPS 1
-#else
-#define EPUB_VIEWER_HAS_HEAP_CAPS 0
-#endif
 
 namespace {
 
@@ -60,22 +54,10 @@ File openEpubProviderFile(const char *providerId, const char *path) {
 uint32_t epubViewerMicros() { return micros(); }
 
 void *allocEpubMemory(size_t bytes) {
-#if EPUB_VIEWER_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-#endif
-  return malloc(bytes);
+  return psram::allocateOrDefault(bytes);
 }
 
-void freeEpubMemory(void *ptr) {
-#if EPUB_VIEWER_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+void freeEpubMemory(void *ptr) { psram::release(ptr); }
 
 EpubImageCache *imageCache(bool create = true) {
   static EpubImageCache *cache = nullptr;

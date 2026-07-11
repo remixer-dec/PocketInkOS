@@ -1,18 +1,12 @@
 #include "games/chess_app.h"
 #include "games/chess_fonts.h"
 #include "sys/rtc_context.h"
+#include "sys/psram_allocator.h"
 #include "ui/ui_helpers.h"
 #include <Arduino.h>
 #include <cstdlib>
 #include <cstring>
 #include <new>
-
-#if __has_include(<esp_heap_caps.h>)
-#include <esp_heap_caps.h>
-#define CHESS_APP_HAS_HEAP_CAPS 1
-#else
-#define CHESS_APP_HAS_HEAP_CAPS 0
-#endif
 
 static const int BOARD_X = 8;
 static const int BOARD_Y = 8;
@@ -42,24 +36,10 @@ static const PieceType PROMOTION_TYPES[4] = {
     PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight};
 
 static void *chessAppAlloc(size_t bytes) {
-#if CHESS_APP_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
-#else
-  return malloc(bytes);
-#endif
+  return psram::allocateOrDefault(bytes);
 }
 
-static void chessAppFree(void *ptr) {
-#if CHESS_APP_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+static void chessAppFree(void *ptr) { psram::release(ptr); }
 
 static uint8_t chessPromotionCode(PieceType type) {
   switch (type) {

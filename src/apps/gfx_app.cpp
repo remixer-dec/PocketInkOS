@@ -1,4 +1,5 @@
 #include "apps/gfx_app.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <cmath>
@@ -431,15 +432,14 @@ void GfxApp::start(AppDisplay &targetDisplay) {
   frame = 0;
   if (shader3Accum == nullptr) {
     shader3Accum = static_cast<uint8_t *>(
-        heap_caps_malloc(EPD_WIDTH * EPD_HEIGHT,
-                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        psram::allocate(EPD_WIDTH * EPD_HEIGHT));
   }
   display->requestFullRefresh();
 }
 
 void GfxApp::release() {
   if (shader3Accum != nullptr) {
-    heap_caps_free(shader3Accum);
+    psram::release(shader3Accum);
     shader3Accum = nullptr;
   }
   running = false;

@@ -1,36 +1,18 @@
 #include "fs/providers/image_file_viewer.h"
 #include "fs/file_provider.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
 
-#if __has_include(<esp_heap_caps.h>)
-#include <esp_heap_caps.h>
-#define IMAGE_VIEWER_HAS_HEAP_CAPS 1
-#else
-#define IMAGE_VIEWER_HAS_HEAP_CAPS 0
-#endif
-
 namespace {
 
 void *imageViewerMalloc(size_t bytes) {
-#if IMAGE_VIEWER_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-#endif
-  return malloc(bytes);
+  return psram::allocateOrDefault(bytes);
 }
 
-void imageViewerFree(void *ptr) {
-#if IMAGE_VIEWER_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+void imageViewerFree(void *ptr) { psram::release(ptr); }
 
 } // namespace
 

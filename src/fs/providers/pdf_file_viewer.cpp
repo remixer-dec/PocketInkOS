@@ -2,17 +2,11 @@
 #include "fs/providers/pdf_file_viewer.h"
 
 #include "fs/file_provider.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if __has_include(<esp_heap_caps.h>)
-#include <esp_heap_caps.h>
-#define PDF_VIEWER_HAS_HEAP_CAPS 1
-#else
-#define PDF_VIEWER_HAS_HEAP_CAPS 0
-#endif
 
 namespace {
 
@@ -30,22 +24,10 @@ File openPdfProviderFile(const char *providerId, const char *path) {
 }
 
 void *allocPdfMemory(size_t bytes) {
-#if PDF_VIEWER_HAS_HEAP_CAPS
-  void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr != nullptr) {
-    return ptr;
-  }
-#endif
-  return malloc(bytes);
+  return psram::allocateOrDefault(bytes);
 }
 
-void freePdfMemory(void *ptr) {
-#if PDF_VIEWER_HAS_HEAP_CAPS
-  heap_caps_free(ptr);
-#else
-  free(ptr);
-#endif
-}
+void freePdfMemory(void *ptr) { psram::release(ptr); }
 
 uint32_t pdfViewerMicros() { return micros(); }
 

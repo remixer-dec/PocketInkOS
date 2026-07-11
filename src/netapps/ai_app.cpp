@@ -8,10 +8,10 @@
 #include "netapps/lightweight_json_parser.h"
 #include "shell/connectivity.h"
 #include "secrets_config.h"
+#include "sys/psram_allocator.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
-#include <esp_heap_caps.h>
 #include <WiFi.h>
 #include <cstring>
 #include <cstdio>
@@ -1174,12 +1174,8 @@ bool AiApp::ensureTextStorage() {
   if (transcript != nullptr) {
     return true;
   }
-  transcript = static_cast<char *>(heap_caps_malloc(
-      TRANSCRIPT_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (transcript == nullptr) {
-    transcript = static_cast<char *>(
-        heap_caps_malloc(TRANSCRIPT_MAX, MALLOC_CAP_8BIT));
-  }
+  transcript =
+      static_cast<char *>(psram::allocateOrDefault(TRANSCRIPT_MAX));
   if (transcript == nullptr) {
     transcriptLen = 0;
     return false;
@@ -1191,7 +1187,7 @@ bool AiApp::ensureTextStorage() {
 
 void AiApp::releaseTextStorage() {
   if (transcript != nullptr) {
-    heap_caps_free(transcript);
+    psram::release(transcript);
     transcript = nullptr;
   }
   transcriptLen = 0;

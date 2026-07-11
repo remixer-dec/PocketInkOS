@@ -1,4 +1,5 @@
 #include "sys/pink_executable.h"
+#include "sys/psram_allocator.h"
 #include "shell/connectivity.h"
 #include "fs/file_provider.h"
 #include "sys/system_config.h"
@@ -479,17 +480,10 @@ void hostFillScreen(uint16_t color) {
 }
 
 void *hostPsramAlloc(size_t bytes) {
-  if (bytes == 0) {
-    return nullptr;
-  }
-  return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return bytes > 0 ? psram::allocate(bytes) : nullptr;
 }
 
-void hostPsramFree(void *ptr) {
-  if (ptr != nullptr) {
-    heap_caps_free(ptr);
-  }
-}
+void hostPsramFree(void *ptr) { psram::release(ptr); }
 
 bool hostConfigGet(const char *key, char *out, size_t outSize) {
   return configGetForApp(activeAppId, key, out, outSize);
@@ -928,6 +922,8 @@ size_t pinkExecutableCount(MenuCategory category) {
   return count;
 }
 
+size_t pinkExecutableAllCount() { return pinkAppCount; }
+
 bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
                                 AppDefinition *out, char *id, size_t idSize,
                                 char *label, size_t labelSize, char *icon,
@@ -956,6 +952,17 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
   }
   return populatePinkDefinition(*entry, out, id, idSize, label, labelSize,
                                 icon, iconSize);
+}
+
+bool pinkExecutableDefinitionAllAt(size_t index, AppDefinition *out, char *id,
+                                   size_t idSize, char *label,
+                                   size_t labelSize, char *icon,
+                                   size_t iconSize) {
+  if (pinkApps == nullptr || index >= pinkAppCount) {
+    return false;
+  }
+  return populatePinkDefinition(pinkApps[index], out, id, idSize, label,
+                                labelSize, icon, iconSize);
 }
 
 bool pinkExecutableDefinitionById(const char *id, AppDefinition *out,

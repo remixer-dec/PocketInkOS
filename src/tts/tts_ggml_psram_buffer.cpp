@@ -1,4 +1,5 @@
 #include "tts/tts_ggml_psram_buffer.h"
+#include "sys/psram_allocator.h"
 
 #include <ggml-backend-impl.h>
 #include <ggml-impl.h>
@@ -42,7 +43,7 @@ void *alignedBase(ggml_backend_buffer_t buffer) {
 
 void freeBuffer(ggml_backend_buffer_t buffer) {
   if (buffer != nullptr && buffer->context != nullptr) {
-    heap_caps_free(buffer->context);
+    psram::release(buffer->context);
   }
 }
 
@@ -92,8 +93,7 @@ const char *bufferTypeName(ggml_backend_buffer_type_t) { return "ESP32_PSRAM"; }
 
 ggml_backend_buffer_t allocBuffer(ggml_backend_buffer_type_t buft,
                                   size_t size) {
-  void *data = heap_caps_malloc(size + TENSOR_ALIGNMENT,
-                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  void *data = psram::allocate(size + TENSOR_ALIGNMENT);
   if (data == nullptr) {
     ttsLog("[tts] ggml psram alloc failed bytes=%u\n",
            static_cast<unsigned>(size + TENSOR_ALIGNMENT));

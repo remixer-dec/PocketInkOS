@@ -1,4 +1,5 @@
 #include "sys/audio_capture.h"
+#include "sys/psram_allocator.h"
 
 #include "sys/audio_power.h"
 #include "sys/touch_input.h"
@@ -64,11 +65,8 @@ bool AudioCapture::beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
       static_cast<size_t>(kSampleRate) * maxDurationMs / 1000U;
   activeCapacity = sampleCount * sizeof(int16_t);
   activeLength = 0;
-  activeBuffer = static_cast<uint8_t *>(
-      heap_caps_malloc(activeCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (activeBuffer == nullptr) {
-    activeBuffer = static_cast<uint8_t *>(malloc(activeCapacity));
-  }
+  activeBuffer =
+      static_cast<uint8_t *>(psram::allocateOrDefault(activeCapacity));
   if (activeBuffer == nullptr) {
     setError(error, errorSize, "No audio buffer");
     shutdownHardware();
@@ -78,7 +76,7 @@ bool AudioCapture::beginPcm16(AudioCaptureResult &out, uint32_t maxDurationMs,
   dmaBuffer = static_cast<int16_t *>(
       heap_caps_malloc(kDmaChunkBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
   if (dmaBuffer == nullptr) {
-    free(activeBuffer);
+    psram::release(activeBuffer);
     activeBuffer = nullptr;
     activeCapacity = 0;
     setError(error, errorSize, "No DMA audio buffer");
@@ -132,7 +130,7 @@ void AudioCapture::release(AudioCaptureResult &result) {
     dmaBuffer = nullptr;
   }
   if (activeBuffer != nullptr && result.data != activeBuffer) {
-    free(activeBuffer);
+    psram::release(activeBuffer);
   }
   activeBuffer = nullptr;
   activeCapacity = 0;
@@ -140,7 +138,7 @@ void AudioCapture::release(AudioCaptureResult &result) {
   active = false;
   shutdownHardware();
   if (result.data != nullptr) {
-    free(result.data);
+    psram::release(result.data);
   }
   result.data = nullptr;
   result.length = 0;

@@ -1,4 +1,5 @@
 #include "apps/alarm_app.h"
+#include "sys/psram_allocator.h"
 
 #include "fs/providers/resonatto/remidi_synth.h"
 #include "sys/audio_playback_renderer.h"
@@ -8,7 +9,6 @@
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
-#include <esp_heap_caps.h>
 
 #include <cstdio>
 #include <cstring>
@@ -125,11 +125,7 @@ bool AlarmApp::ensureState() {
   if (state != nullptr) {
     return true;
   }
-  void *memory = heap_caps_malloc(sizeof(State),
-                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (memory == nullptr) {
-    memory = heap_caps_malloc(sizeof(State), MALLOC_CAP_8BIT);
-  }
+  void *memory = psram::allocateOrDefault(sizeof(State));
   if (memory == nullptr) {
     return false;
   }
@@ -142,7 +138,7 @@ void AlarmApp::releaseState() {
     return;
   }
   state->~State();
-  heap_caps_free(state);
+  psram::release(state);
   state = nullptr;
 }
 
@@ -172,11 +168,7 @@ bool AlarmApp::ensureAudio() {
   if (audio != nullptr) {
     return true;
   }
-  void *memory = heap_caps_malloc(sizeof(AudioState),
-                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (memory == nullptr) {
-    memory = heap_caps_malloc(sizeof(AudioState), MALLOC_CAP_8BIT);
-  }
+  void *memory = psram::allocateOrDefault(sizeof(AudioState));
   if (memory == nullptr) {
     if (state != nullptr) {
       state->audioFailed = true;
@@ -196,7 +188,7 @@ void AlarmApp::releaseAudio() {
   }
   audio->renderer.stop();
   audio->~AudioState();
-  heap_caps_free(audio);
+  psram::release(audio);
   audio = nullptr;
 }
 

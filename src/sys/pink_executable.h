@@ -130,6 +130,13 @@ bool pinkExecutableDefinitionAt(MenuCategory category, size_t index,
                                 AppDefinition *out, char *id, size_t idSize,
                                 char *label, size_t labelSize, char *icon,
                                 size_t iconSize);
+/// Counts every discovered .pink app across all launcher categories.
+size_t pinkExecutableAllCount();
+/// Copies a .pink app by discovery order without launcher visibility filtering.
+bool pinkExecutableDefinitionAllAt(size_t index, AppDefinition *out, char *id,
+                                   size_t idSize, char *label,
+                                   size_t labelSize, char *icon,
+                                   size_t iconSize);
 /// Copies a discovered .pink app definition by stable id, including entries
 /// hidden from the launcher because they are the quick-access app.
 bool pinkExecutableDefinitionById(const char *id, AppDefinition *out,

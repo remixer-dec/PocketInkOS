@@ -2,6 +2,7 @@
 
 #include "tts/tts_ggml_psram_buffer.h"
 #include "inflect-nano.h"
+#include "sys/psram_allocator.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -81,17 +82,12 @@ void *inflectScratchAlloc(size_t bytes, inflect::ScratchMemoryKind kind) {
   if (bytes == 0) {
     return nullptr;
   }
-  uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-  if (kind == inflect::ScratchMemoryKind::InternalPreferred) {
-    void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (ptr != nullptr) {
-      return ptr;
-    }
-  }
-  return heap_caps_malloc(bytes, caps);
+  return kind == inflect::ScratchMemoryKind::InternalPreferred
+             ? psram::allocateInternalOrPsram(bytes)
+             : psram::allocate(bytes);
 }
 
-void inflectScratchFree(void *ptr) { heap_caps_free(ptr); }
+void inflectScratchFree(void *ptr) { psram::release(ptr); }
 
 void inflectTraceHeap(const char *label) {
 #if defined(ESP_PLATFORM)
@@ -235,8 +231,8 @@ bool PcmBuffer::reserve(size_t nextCapacity) {
     grown *= 2;
   }
 
-  int16_t *next = static_cast<int16_t *>(
-      heap_caps_malloc(grown * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  int16_t *next =
+      static_cast<int16_t *>(psram::allocate(grown * sizeof(int16_t)));
   if (next == nullptr) {
     ttsLog("[tts] psram pcm alloc failed frames=%u bytes=%u\n",
            static_cast<unsigned>(grown),
@@ -246,7 +242,7 @@ bool PcmBuffer::reserve(size_t nextCapacity) {
   if (pcm != nullptr && frames > 0) {
     memcpy(next, pcm, frames * sizeof(int16_t));
   }
-  heap_caps_free(pcm);
+  psram::release(pcm);
   pcm = next;
   capacity = grown;
   ttsLog("[tts] pcm capacity frames=%u bytes=%u\n",
@@ -269,7 +265,7 @@ bool PcmBuffer::appendMono(const int16_t *samples, size_t count) {
 
 void PcmBuffer::clear() {
   if (pcm != nullptr) {
-    heap_caps_free(pcm);
+    psram::release(pcm);
     pcm = nullptr;
   }
   frames = 0;

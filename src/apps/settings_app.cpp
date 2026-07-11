@@ -1,4 +1,5 @@
 #include "apps/settings_app.h"
+#include "sys/psram_allocator.h"
 
 #include "shell/shell_home_layout.h"
 #include "sys/app_config.h"
@@ -10,7 +11,6 @@
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
-#include <esp_heap_caps.h>
 #include <cstdio>
 #include <cstring>
 
@@ -585,11 +585,7 @@ bool SettingsApp::allocateInput(uint8_t capacity) {
     showPopup("NO MEMORY");
     return false;
   }
-  input = static_cast<char *>(heap_caps_malloc(
-      capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (input == nullptr) {
-    input = static_cast<char *>(heap_caps_malloc(capacity, MALLOC_CAP_8BIT));
-  }
+  input = static_cast<char *>(psram::allocateOrDefault(capacity));
   if (input == nullptr) {
     showPopup("NO MEMORY");
     return false;
@@ -601,7 +597,7 @@ bool SettingsApp::allocateInput(uint8_t capacity) {
 
 void SettingsApp::releaseInput() {
   if (input != nullptr) {
-    heap_caps_free(input);
+    psram::release(input);
     input = nullptr;
   }
   inputCapacity = 0;

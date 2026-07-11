@@ -5,6 +5,7 @@
 #if ENABLE_NETWORK_APPS
 
 #include "netapps/wifi_app.h"
+#include "sys/psram_allocator.h"
 #include "sys/global.h"
 #include "sys/system_config.h"
 #include "ui/icon_ascii_font.h"
@@ -184,11 +185,7 @@ static bool arpMacToText(uint32_t raw, char *out, size_t outSize) {
 }
 
 static void *appAlloc(size_t size) {
-  void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (ptr == nullptr) {
-    ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
-  }
-  return ptr;
+  return psram::allocateOrDefault(size);
 }
 
 static UiRect popupButtonRect(uint8_t index, uint8_t count) {
@@ -1538,8 +1535,7 @@ void WifiApp::startNetworkScan() {
   networkScanDeviceCount = 0;
 
   networkDevices = static_cast<NetworkDevice *>(
-      heap_caps_malloc(sizeof(NetworkDevice) * MAX_NET_DEVICES,
-                        MALLOC_CAP_SPIRAM));
+      psram::allocate(sizeof(NetworkDevice) * MAX_NET_DEVICES));
   if (networkDevices == nullptr) {
     networkScanState = SCAN_DONE;
     return;
@@ -1661,16 +1657,14 @@ void WifiApp::startPortScan(uint8_t ip0, uint8_t ip1, uint8_t ip2,
   if (mode == PORT_MODE_QUICK) {
     portScanTotal = QUICK_PORT_COUNT;
     portResults = static_cast<PortResult *>(
-        heap_caps_malloc(sizeof(PortResult) * QUICK_PORT_COUNT,
-                          MALLOC_CAP_SPIRAM));
+        psram::allocate(sizeof(PortResult) * QUICK_PORT_COUNT));
     if (portResults != nullptr) {
       memset(portResults, 0, sizeof(PortResult) * QUICK_PORT_COUNT);
     }
   } else {
     portScanTotal = 65535;
     portResults = static_cast<PortResult *>(
-        heap_caps_malloc(sizeof(PortResult) * MAX_PORT_RESULTS,
-                          MALLOC_CAP_SPIRAM));
+        psram::allocate(sizeof(PortResult) * MAX_PORT_RESULTS));
     if (portResults != nullptr) {
       memset(portResults, 0, sizeof(PortResult) * MAX_PORT_RESULTS);
     }

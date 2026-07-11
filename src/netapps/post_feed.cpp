@@ -5,10 +5,10 @@
 #if ENABLE_NETWORK_APPS
 
 #include "netapps/post_feed.h"
+#include "sys/psram_allocator.h"
 #include "ui/components/list_component.h"
 
 #include <Arduino.h>
-#include <esp_heap_caps.h>
 #include <cstring>
 
 PostFeed::PostFeed() {}
@@ -18,12 +18,7 @@ bool PostFeed::ensureStorage() {
     return true;
   }
   posts = static_cast<FeedPost *>(
-      heap_caps_malloc(sizeof(FeedPost) * MAX_POSTS,
-                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (posts == nullptr) {
-    posts = static_cast<FeedPost *>(
-        heap_caps_malloc(sizeof(FeedPost) * MAX_POSTS, MALLOC_CAP_8BIT));
-  }
+      psram::allocateOrDefault(sizeof(FeedPost) * MAX_POSTS));
   if (posts != nullptr) {
     memset(posts, 0, sizeof(FeedPost) * MAX_POSTS);
   }
@@ -43,7 +38,7 @@ void PostFeed::reset() {
 
 void PostFeed::release() {
   if (posts != nullptr) {
-    heap_caps_free(posts);
+    psram::release(posts);
     posts = nullptr;
   }
   postCount = 0;

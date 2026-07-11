@@ -10,13 +10,13 @@
 #include "shell/connectivity.h"
 #include "secrets_config.h"
 #include "sys/device_clock.h"
+#include "sys/psram_allocator.h"
 
 #include "../fonts/generated/WeatherSymbols_16pt7b.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <esp_heap_caps.h>
 #include <cstring>
 
 namespace {
@@ -306,28 +306,16 @@ void WeatherApp::reset() {
 
 bool WeatherApp::ensureStorage() {
   if (hours == nullptr) {
-    hours = static_cast<HourPoint *>(heap_caps_malloc(
-        sizeof(HourPoint) * MAX_HOURS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (hours == nullptr) {
-      hours = static_cast<HourPoint *>(
-          heap_caps_malloc(sizeof(HourPoint) * MAX_HOURS, MALLOC_CAP_8BIT));
-    }
+    hours = static_cast<HourPoint *>(
+        psram::allocateOrDefault(sizeof(HourPoint) * MAX_HOURS));
   }
   if (days == nullptr) {
-    days = static_cast<DayPoint *>(heap_caps_malloc(
-        sizeof(DayPoint) * MAX_DAYS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (days == nullptr) {
-      days = static_cast<DayPoint *>(
-          heap_caps_malloc(sizeof(DayPoint) * MAX_DAYS, MALLOC_CAP_8BIT));
-    }
+    days = static_cast<DayPoint *>(
+        psram::allocateOrDefault(sizeof(DayPoint) * MAX_DAYS));
   }
   if (daySummaries == nullptr) {
-    daySummaries = static_cast<DaySummary *>(heap_caps_malloc(
-        sizeof(DaySummary) * MAX_DAYS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (daySummaries == nullptr) {
-      daySummaries = static_cast<DaySummary *>(heap_caps_malloc(
-          sizeof(DaySummary) * MAX_DAYS, MALLOC_CAP_8BIT));
-    }
+    daySummaries = static_cast<DaySummary *>(
+        psram::allocateOrDefault(sizeof(DaySummary) * MAX_DAYS));
   }
   if (hours == nullptr || days == nullptr || daySummaries == nullptr) {
     release();
@@ -360,15 +348,15 @@ void WeatherApp::clearSamples() {
 
 void WeatherApp::release() {
   if (hours != nullptr) {
-    heap_caps_free(hours);
+    psram::release(hours);
     hours = nullptr;
   }
   if (days != nullptr) {
-    heap_caps_free(days);
+    psram::release(days);
     days = nullptr;
   }
   if (daySummaries != nullptr) {
-    heap_caps_free(daySummaries);
+    psram::release(daySummaries);
     daySummaries = nullptr;
   }
   clearSamples();
