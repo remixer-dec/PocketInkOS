@@ -730,6 +730,8 @@ private:
   bool strictEqual(Value left, Value right) const;
   int compare(Value left, Value right) const;
   Value concatenate(Value left, Value right);
+  bool appendStringAssignment(Value left, Value right, Value *result);
+  size_t valueReferenceCount(Value target, size_t limit) const;
 
   bool pushRoot(Value value);
   void popRoots(uint16_t count);
@@ -2356,6 +2358,133 @@ inline Value Runtime::concatenate(Value left, Value right) {
     std::memcpy(joined + leftText.size, rightText.data, rightText.size);
   }
   return result;
+}
+
+inline size_t Runtime::valueReferenceCount(Value target, size_t limit) const {
+  size_t count = 0;
+  auto found = [&count, limit, target](Value value) {
+    if (value.bits == target.bits && count < limit)
+      count++;
+  };
+  for (size_t i = 0; i < bindingCount_ && count < limit; i++)
+    found(bindings_[i].value);
+  for (size_t i = 0; i < temporaryRootCount_ && count < limit; i++)
+    found(temporaryRoots_[i]);
+  for (size_t i = 0; i < options_.maxHostRoots && count < limit; i++) {
+    if (hostRootUsed_[i] != 0)
+      found(hostRoots_[i]);
+  }
+  found(lastResult_);
+
+  for (uint32_t offset = 8; offset < heapUsed_ && count < limit;
+       offset += header(offset)->size) {
+    const detail::BlockHeader *block = header(offset);
+    switch (block->kind) {
+    case detail::BlockKind::Property: {
+      const detail::PropertyPayload *property = propertyPayload(offset);
+      found(property->key);
+      found(property->value);
+      break;
+    }
+    case detail::BlockKind::Values: {
+      const detail::ValuesPayload *values = valuesPayload(offset);
+      const Value *items = valuesData(values);
+      for (size_t i = 0; i < values->length && count < limit; i++)
+        found(items[i]);
+      break;
+    }
+    case detail::BlockKind::Promise: {
+      const auto *promise = static_cast<const detail::PromisePayload *>(
+          payload(offset));
+      found(promise->result);
+      found(promise->onFulfilled);
+      found(promise->onRejected);
+      found(promise->child);
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  return count;
+}
+
+inline bool Runtime::appendStringAssignment(Value left, Value right,
+                                            Value *result) {
+  if (result == nullptr || !isString(left) ||
+      valueReferenceCount(left, 2) != 1) {
+    return false;
+  }
+  Value suffix = toStringValue(right);
+  if (error_.message[0] != '\0') {
+    *result = undefined();
+    return true;
+  }
+  const StringView leftText = stringView(left);
+  const StringView rightText = stringView(suffix);
+  if (rightText.size > UINT32_MAX - leftText.size) {
+    *result = fail(ErrorCode{6});
+    return true;
+  }
+  const size_t length = leftText.size + rightText.size;
+  const uint32_t leftOffset =
+      static_cast<uint32_t>(detail::payloadOf(left));
+  detail::BlockHeader *leftBlock = header(leftOffset);
+  const size_t requiredSize = detail::align8(
+      sizeof(detail::BlockHeader) + sizeof(uint32_t) + length + 1U);
+
+  if (requiredSize > leftBlock->size &&
+      leftOffset + leftBlock->size == heapUsed_) {
+    size_t grownSize = leftBlock->size;
+    while (grownSize < requiredSize && grownSize <= UINT32_MAX / 2U)
+      grownSize *= 2U;
+    if (grownSize < requiredSize || grownSize > heapCapacity_ - leftOffset)
+      grownSize = requiredSize;
+    if (grownSize <= heapCapacity_ - leftOffset) {
+      std::memset(heap_ + heapUsed_, 0,
+                  grownSize - static_cast<size_t>(leftBlock->size));
+      leftBlock->size = static_cast<uint32_t>(grownSize);
+      heapUsed_ = leftOffset + leftBlock->size;
+      if (heapUsed_ > peakHeapUsed_)
+        peakHeapUsed_ = heapUsed_;
+    }
+  }
+
+  if (requiredSize <= leftBlock->size) {
+    char *characters = reinterpret_cast<char *>(
+        static_cast<uint8_t *>(payload(leftOffset)) + sizeof(uint32_t));
+    std::memmove(characters + leftText.size, rightText.data, rightText.size);
+    const uint32_t storedLength = static_cast<uint32_t>(length);
+    std::memcpy(payload(leftOffset), &storedLength, sizeof(storedLength));
+    characters[length] = '\0';
+    *result = left;
+    return true;
+  }
+
+  size_t capacity = leftBlock->size - sizeof(detail::BlockHeader) -
+                    sizeof(uint32_t) - 1U;
+  if (capacity == 0)
+    capacity = 8;
+  while (capacity < length && capacity <= UINT32_MAX / 2U)
+    capacity *= 2U;
+  if (capacity < length)
+    capacity = length;
+  const uint32_t offset = allocateBlock(
+      detail::BlockKind::String, sizeof(uint32_t) + capacity + 1U);
+  if (offset == 0) {
+    *result = undefined();
+    return true;
+  }
+  uint8_t *blockData = static_cast<uint8_t *>(payload(offset));
+  const uint32_t storedLength = static_cast<uint32_t>(length);
+  std::memcpy(blockData, &storedLength, sizeof(storedLength));
+  char *characters =
+      reinterpret_cast<char *>(blockData + sizeof(uint32_t));
+  std::memcpy(characters, leftText.data, leftText.size);
+  std::memcpy(characters + leftText.size, rightText.data, rightText.size);
+  characters[length] = '\0';
+  *result = detail::boxed(detail::Tag::String, offset);
+  return true;
 }
 
 inline bool Runtime::pushRoot(Value value) {
@@ -4378,7 +4507,17 @@ inline Parser::Expression Parser::assignment(bool execute) {
       binary = T::Slash;
     else if (operation == T::PercentAssign)
       binary = T::Percent;
-    value = applyBinary(binary, left.value, right.value, true);
+    const bool nestedDelimiter =
+        token_.type == T::RightParen || token_.type == T::RightBracket ||
+        token_.type == T::RightBrace || token_.type == T::Comma ||
+        token_.type == T::Colon;
+    const bool standaloneAssignment = token_.type == T::Semicolon ||
+                                      token_.type == T::End ||
+                                      (token_.newlineBefore && !nestedDelimiter);
+    if (operation != T::PlusAssign || !standaloneAssignment ||
+        !runtime_.appendStringAssignment(left.value, right.value, &value)) {
+      value = applyBinary(binary, left.value, right.value, true);
+    }
   }
   store(left.reference, value);
   return {value};

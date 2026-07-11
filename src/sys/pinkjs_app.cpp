@@ -54,14 +54,32 @@ constexpr size_t kPinkJsMaxSourceBytes = 96U * 1024U;
 constexpr size_t kPinkJsMaxHttpBytes = 64U * 1024U;
 constexpr uint32_t kPinkJsHttpTimeoutMs = 8000;
 constexpr uint8_t kPinkJsMaxTimers = 16;
+constexpr size_t kPinkJsJobsPerUpdate = 32;
 constexpr uint8_t kPinkJsFetchQueueDepth = 3;
 constexpr uint32_t kPinkJsWorkerStackBytes = 7168;
+constexpr uint32_t kPinkJsExecutorStackBytes = 40U * 1024U;
 constexpr UBaseType_t kPinkJsWorkerPriority = 1;
 constexpr BaseType_t kPinkJsWorkerCore = 0;
+constexpr UBaseType_t kPinkJsExecutorPriority = 1;
+constexpr BaseType_t kPinkJsExecutorCore = 1;
 constexpr size_t kIdCapacity = 20;
 constexpr size_t kStatusCapacity = 96;
 
 class PinkJsApp;
+
+using PinkJsExecutorOperation = void (*)(PinkJsApp &, void *);
+
+struct PinkJsExecutorCommand {
+  PinkJsExecutorOperation operation = nullptr;
+  void *context = nullptr;
+};
+
+enum PinkJsTouchCallback : uint8_t {
+  PinkJsTouchGeneric = 1U << 0U,
+  PinkJsTouchDown = 1U << 1U,
+  PinkJsTouchMove = 1U << 2U,
+  PinkJsTouchUp = 1U << 3U,
+};
 
 struct FetchHeader {
   char name[48] = {};
@@ -166,6 +184,61 @@ bool copyText(char *destination, size_t destinationSize, const char *source) {
   }
   destination[amount] = '\0';
   return length < destinationSize;
+}
+
+void drawPinkJsCentered(Adafruit_GFX &gfx, const char *text, int16_t y,
+                        uint8_t textSize) {
+  int16_t x1 = 0;
+  int16_t y1 = 0;
+  uint16_t width = 0;
+  uint16_t height = 0;
+  gfx.setTextSize(textSize);
+  gfx.getTextBounds(text != nullptr ? text : "", 0, 0, &x1, &y1, &width,
+                    &height);
+  gfx.setCursor((EPD_WIDTH - static_cast<int16_t>(width)) / 2 - x1, y);
+  gfx.print(text != nullptr ? text : "");
+}
+
+void drawPinkJsWrappedCentered(Adafruit_GFX &gfx, const char *text,
+                               int16_t firstY) {
+  constexpr size_t kLineCharacters = 30;
+  const size_t length = text != nullptr ? strlen(text) : 0;
+  size_t at = 0;
+  int16_t y = firstY;
+  char line[kLineCharacters + 1U];
+  while (at < length && y < EPD_HEIGHT) {
+    while (at < length && text[at] == ' ')
+      at++;
+    size_t end = at + kLineCharacters < length ? at + kLineCharacters : length;
+    if (end < length) {
+      size_t breakAt = end;
+      while (breakAt > at && text[breakAt] != ' ')
+        breakAt--;
+      if (breakAt > at)
+        end = breakAt;
+    }
+    const size_t amount = end - at;
+    memcpy(line, text + at, amount);
+    line[amount] = '\0';
+    drawPinkJsCentered(gfx, line, y, 1);
+    y += 14;
+    at = end;
+  }
+}
+
+bool pinkJsErrorNumber(const char *message, uint8_t *number) {
+  if (message == nullptr || number == nullptr || message[0] != 'E' ||
+      message[1] < '0' || message[1] > '9' || message[2] < '0' ||
+      message[2] > '9' || message[3] < '0' || message[3] > '9') {
+    return false;
+  }
+  const unsigned value = static_cast<unsigned>(message[1] - '0') * 100U +
+                         static_cast<unsigned>(message[2] - '0') * 10U +
+                         static_cast<unsigned>(message[3] - '0');
+  if (value == 0 || value > UINT8_MAX)
+    return false;
+  *number = static_cast<uint8_t>(value);
+  return true;
 }
 
 uint32_t hashPath(const char *text) {
@@ -442,6 +515,33 @@ pinkjs::Value nativeMillis(pinkjs::Runtime &runtime, const pinkjs::Value *,
     return runtime.fail(pinkjs::ErrorCode{159});
   }
   return runtime.number(static_cast<double>(millis()));
+}
+
+pinkjs::Value nativePinkJsHeapUsed(pinkjs::Runtime &runtime,
+                                   const pinkjs::Value *, size_t argc,
+                                   void *) {
+  return argc == 0
+             ? runtime.number(
+                   static_cast<double>(runtime.memoryStats().heapUsedBytes))
+             : runtime.fail(pinkjs::ErrorCode{157});
+}
+
+pinkjs::Value nativePinkJsHeapFree(pinkjs::Runtime &runtime,
+                                   const pinkjs::Value *, size_t argc,
+                                   void *) {
+  return argc == 0
+             ? runtime.number(
+                   static_cast<double>(runtime.memoryStats().heapFreeBytes))
+             : runtime.fail(pinkjs::ErrorCode{157});
+}
+
+pinkjs::Value nativePinkJsHeapPeak(pinkjs::Runtime &runtime,
+                                   const pinkjs::Value *, size_t argc,
+                                   void *) {
+  return argc == 0
+             ? runtime.number(static_cast<double>(
+                   runtime.memoryStats().peakHeapUsedBytes))
+             : runtime.fail(pinkjs::ErrorCode{157});
 }
 
 pinkjs::Value nativeNetworkConnected(pinkjs::Runtime &runtime,
@@ -737,13 +837,22 @@ public:
       return;
     }
     memcpy(path, nextPath, pathLength + 1U);
-    load();
+    if (!startExecutor()) {
+      copyText(status, sizeof(status), "NO EXECUTOR DRAM");
+      return;
+    }
+    if (!execute(loadOperation, nullptr)) {
+      copyText(status, sizeof(status), "EXECUTOR FAILED");
+      return;
+    }
     if (runtime != nullptr) {
       pendingStart = true;
     }
   }
 
   void stop() { unload(); }
+  void pause() { paused = true; }
+  void resume() { paused = false; }
 
   const char *id() const { return appId; }
 
@@ -760,49 +869,250 @@ public:
   void draw(Adafruit_GFX &gfx) override {
     if (pendingStart) {
       gfx.setTextColor(1);
-      gfx.setTextSize(2);
-      gfx.setCursor(28, 70);
-      gfx.print("PINKJS");
-      gfx.setTextSize(1);
-      gfx.setCursor(70, 102);
-      gfx.print("STARTING");
+      drawPinkJsCentered(gfx, "PINKJS", 70, 2);
+      drawPinkJsCentered(gfx, "STARTING", 102, 1);
       return;
     }
     if (status[0] != '\0') {
       gfx.setTextColor(1);
-      gfx.setTextSize(2);
-      gfx.setCursor(28, 70);
-      gfx.print("PINKJS");
-      gfx.setTextSize(1);
-      gfx.setCursor(12, 102);
-      gfx.print(status);
+      drawPinkJsCentered(gfx, "PINKJS", 54, 2);
+      drawPinkJsWrappedCentered(gfx, status, 86);
       return;
     }
-    pinkJsDrawTarget = &gfx;
-    run("onDraw", nullptr, 0, nullptr);
-    pinkJsDrawTarget = nullptr;
+    DrawContext context{&gfx};
+    execute(drawOperation, &context);
   }
 
   bool handleTouch(const TouchPoint &point) override {
-    return dispatchTouch("onTouch", "touch", point);
+    TouchContext context{point, false};
+    return execute(touchOperation, &context) && context.dirty;
   }
 
   bool update() override {
+    if (paused)
+      return false;
+    UpdateContext context;
+    return execute(updateOperation, &context) && context.dirty;
+  }
+
+  bool hasActiveSession() const override { return false; }
+
+  AppEventResult button(const char *callback) {
+    ButtonContext context{callback, AppEventResult::Unhandled};
+    return execute(buttonOperation, &context) ? context.result
+                                              : AppEventResult::Unhandled;
+  }
+
+  void rawTouch(const TouchEvent &event) {
+    const uint8_t callback = touchCallbackFor(event.type);
+    if ((touchCallbacks & (callback | PinkJsTouchGeneric)) == 0)
+      return;
+    RawTouchContext context{event};
+    execute(rawTouchOperation, &context);
+  }
+
+  size_t save(uint8_t *buffer, size_t capacity) {
+    SaveContext context{buffer, capacity, 0};
+    return execute(saveOperation, &context) ? context.length : 0;
+  }
+
+  void restore(const uint8_t *buffer, size_t length) {
+    RestoreContext context{buffer, length};
+    execute(restoreOperation, &context);
+  }
+
+private:
+  struct DrawContext {
+    Adafruit_GFX *gfx = nullptr;
+  };
+  struct TouchContext {
+    TouchPoint point = {};
+    bool dirty = false;
+  };
+  struct UpdateContext {
+    bool dirty = false;
+  };
+  struct ButtonContext {
+    const char *callback = nullptr;
+    AppEventResult result = AppEventResult::Unhandled;
+  };
+  struct RawTouchContext {
+    TouchEvent event = {};
+  };
+  struct SaveContext {
+    uint8_t *buffer = nullptr;
+    size_t capacity = 0;
+    size_t length = 0;
+  };
+  struct RestoreContext {
+    const uint8_t *buffer = nullptr;
+    size_t length = 0;
+  };
+
+  char *path = nullptr;
+  char appId[kIdCapacity] = {};
+  char status[kStatusCapacity] = {};
+  void *runtimeStorage = nullptr;
+  void *workspaceAllocation = nullptr;
+  size_t workspaceBytes = 0;
+  pinkjs::Runtime *runtime = nullptr;
+  AsyncState *asyncState = nullptr;
+  TimerState *timerState = nullptr;
+  PinkJsUiState *uiState = nullptr;
+  QueueHandle_t executorCommands = nullptr;
+  QueueHandle_t executorCompletions = nullptr;
+  TaskHandle_t executorTask = nullptr;
+  bool pendingDirty = false;
+  bool pendingStart = false;
+  bool started = false;
+  bool paused = false;
+  bool hasErrorCatalog = false;
+  uint8_t touchCallbacks = 0;
+
+  static uint8_t touchCallbackFor(TouchEventType type) {
+    switch (type) {
+    case TOUCH_EVENT_DOWN:
+      return PinkJsTouchDown;
+    case TOUCH_EVENT_MOVE:
+      return PinkJsTouchMove;
+    case TOUCH_EVENT_UP:
+      return PinkJsTouchUp;
+    }
+    return 0;
+  }
+
+  static void executorTaskMain(void *context) {
+    PinkJsApp *app = static_cast<PinkJsApp *>(context);
+    if (app != nullptr)
+      app->executorLoop();
+    vTaskDelete(nullptr);
+  }
+
+  void executorLoop() {
+    while (true) {
+      PinkJsExecutorCommand *command = nullptr;
+      if (xQueueReceive(executorCommands, &command, portMAX_DELAY) != pdPASS ||
+          command == nullptr) {
+        continue;
+      }
+      if (command->operation != nullptr)
+        command->operation(*this, command->context);
+      xQueueSend(executorCompletions, &command, portMAX_DELAY);
+      if (command->operation == nullptr)
+        return;
+    }
+  }
+
+  bool startExecutor() {
+    if (executorTask != nullptr)
+      return true;
+    executorCommands = xQueueCreate(1, sizeof(PinkJsExecutorCommand *));
+    executorCompletions = xQueueCreate(1, sizeof(PinkJsExecutorCommand *));
+    if (executorCommands == nullptr || executorCompletions == nullptr) {
+      stopExecutor();
+      return false;
+    }
+    if (xTaskCreatePinnedToCore(executorTaskMain, "pinkjs",
+                                kPinkJsExecutorStackBytes, this,
+                                kPinkJsExecutorPriority, &executorTask,
+                                kPinkJsExecutorCore) != pdPASS) {
+      executorTask = nullptr;
+      stopExecutor();
+      return false;
+    }
+    return true;
+  }
+
+  bool execute(PinkJsExecutorOperation operation, void *context) {
+    if (executorTask == nullptr || executorCommands == nullptr ||
+        executorCompletions == nullptr) {
+      return false;
+    }
+    PinkJsExecutorCommand command{operation, context};
+    PinkJsExecutorCommand *sent = &command;
+    if (xQueueSend(executorCommands, &sent, portMAX_DELAY) != pdPASS)
+      return false;
+    PinkJsExecutorCommand *completed = nullptr;
+    return xQueueReceive(executorCompletions, &completed, portMAX_DELAY) ==
+               pdPASS &&
+           completed == &command;
+  }
+
+  void stopExecutor() {
+    if (executorTask != nullptr && executorCommands != nullptr &&
+        executorCompletions != nullptr) {
+      PinkJsExecutorCommand command;
+      PinkJsExecutorCommand *sent = &command;
+      if (xQueueSend(executorCommands, &sent, portMAX_DELAY) == pdPASS) {
+        PinkJsExecutorCommand *completed = nullptr;
+        xQueueReceive(executorCompletions, &completed, portMAX_DELAY);
+      }
+      executorTask = nullptr;
+    }
+    if (executorCommands != nullptr) {
+      vQueueDelete(executorCommands);
+      executorCommands = nullptr;
+    }
+    if (executorCompletions != nullptr) {
+      vQueueDelete(executorCompletions);
+      executorCompletions = nullptr;
+    }
+  }
+
+  static void loadOperation(PinkJsApp &app, void *) { app.load(); }
+  static void unloadOperation(PinkJsApp &app, void *) { app.unloadRuntime(); }
+  static void drawOperation(PinkJsApp &app, void *raw) {
+    DrawContext *context = static_cast<DrawContext *>(raw);
+    if (context == nullptr || context->gfx == nullptr)
+      return;
+    pinkJsDrawTarget = context->gfx;
+    app.run("onDraw", nullptr, 0, nullptr);
+    pinkJsDrawTarget = nullptr;
+  }
+  static void touchOperation(PinkJsApp &app, void *raw) {
+    TouchContext *context = static_cast<TouchContext *>(raw);
+    if (context != nullptr) {
+      context->dirty =
+          app.dispatchTouch("onTouch", "touch", context->point);
+    }
+  }
+  static void updateOperation(PinkJsApp &app, void *raw) {
+    UpdateContext *context = static_cast<UpdateContext *>(raw);
+    if (context != nullptr)
+      context->dirty = app.updateRuntime();
+  }
+  static void buttonOperation(PinkJsApp &app, void *raw) {
+    ButtonContext *context = static_cast<ButtonContext *>(raw);
+    if (context != nullptr)
+      context->result = app.buttonRuntime(context->callback);
+  }
+  static void rawTouchOperation(PinkJsApp &app, void *raw) {
+    RawTouchContext *context = static_cast<RawTouchContext *>(raw);
+    if (context != nullptr)
+      app.rawTouchRuntime(context->event);
+  }
+  static void saveOperation(PinkJsApp &app, void *raw) {
+    SaveContext *context = static_cast<SaveContext *>(raw);
+    if (context != nullptr)
+      context->length = app.saveRuntime(context->buffer, context->capacity);
+  }
+  static void restoreOperation(PinkJsApp &app, void *raw) {
+    RestoreContext *context = static_cast<RestoreContext *>(raw);
+    if (context != nullptr)
+      app.restoreRuntime(context->buffer, context->length);
+  }
+
+  bool updateRuntime() {
     bool dirty = pendingDirty;
     pendingDirty = false;
     if (pendingStart) {
       pendingStart = false;
       started = true;
       run("onStart", nullptr, 0, nullptr);
+      refreshTouchCallbacks();
       dirty = true;
     }
     dirty = pumpAsyncCompletions() || dirty;
-    if (runtime != nullptr && status[0] == '\0') {
-      const pinkjs::RunResult jobs = runtime->drainJobs(8);
-      if (!jobs.ok) {
-        setRuntimeError();
-      }
-    }
     dirty = pumpTimers() || dirty;
     if (uiState != nullptr) {
       dirty = uiState->keyboard.update() || dirty;
@@ -813,12 +1123,15 @@ public:
     if (run("onUpdate", nullptr, 0, &result, &called) && called) {
       dirty = dirty || runtime->isTruthy(result.value);
     }
+    if (runtime != nullptr && status[0] == '\0') {
+      const pinkjs::RunResult jobs = runtime->drainJobs(kPinkJsJobsPerUpdate);
+      if (!jobs.ok)
+        setRuntimeError();
+    }
     return dirty;
   }
 
-  bool hasActiveSession() const override { return false; }
-
-  AppEventResult button(const char *callback) {
+  AppEventResult buttonRuntime(const char *callback) {
     pinkjs::RunResult result;
     bool called = false;
     if (!run(callback, nullptr, 0, &result, &called) || !called) {
@@ -828,32 +1141,33 @@ public:
                                            : AppEventResult::Handled;
   }
 
-  void rawTouch(const TouchEvent &event) {
+  void rawTouchRuntime(const TouchEvent &event) {
     const char *specific = "onTouch";
     const char *type = "touch";
+    uint8_t callback = PinkJsTouchGeneric;
     switch (event.type) {
     case TOUCH_EVENT_DOWN:
       specific = "onTouchDown";
       type = "down";
+      callback = PinkJsTouchDown;
       break;
     case TOUCH_EVENT_MOVE:
       specific = "onTouchMove";
       type = "move";
+      callback = PinkJsTouchMove;
       break;
     case TOUCH_EVENT_UP:
       specific = "onTouchUp";
       type = "up";
+      callback = PinkJsTouchUp;
       break;
     }
-    bool called = false;
-    const bool dirty = dispatchTouch(specific, type, event.point, &called);
-    pendingDirty = pendingDirty || dirty;
-    if (!called) {
-      pendingDirty = pendingDirty || dispatchTouch("onTouch", type, event.point);
-    }
+    const char *handler = (touchCallbacks & callback) != 0 ? specific
+                                                           : "onTouch";
+    pendingDirty = pendingDirty || dispatchTouch(handler, type, event.point);
   }
 
-  size_t save(uint8_t *buffer, size_t capacity) {
+  size_t saveRuntime(uint8_t *buffer, size_t capacity) {
     pinkjs::RunResult result;
     bool called = false;
     if (buffer == nullptr || capacity == 0 ||
@@ -867,7 +1181,7 @@ public:
     return amount;
   }
 
-  void restore(const uint8_t *buffer, size_t length) {
+  void restoreRuntime(const uint8_t *buffer, size_t length) {
     if (runtime == nullptr || buffer == nullptr) {
       return;
     }
@@ -880,35 +1194,76 @@ public:
     }
   }
 
-private:
-  char *path = nullptr;
-  char appId[kIdCapacity] = {};
-  char status[kStatusCapacity] = {};
-  void *runtimeStorage = nullptr;
-  void *workspaceAllocation = nullptr;
-  size_t workspaceBytes = 0;
-  pinkjs::Runtime *runtime = nullptr;
-  AsyncState *asyncState = nullptr;
-  TimerState *timerState = nullptr;
-  PinkJsUiState *uiState = nullptr;
-  bool pendingDirty = false;
-  bool pendingStart = false;
-  bool started = false;
+  bool readErrorDescription(uint8_t errorNumber, char *out,
+                            size_t outSize) const {
+    if (!hasErrorCatalog || out == nullptr || outSize == 0)
+      return false;
+    out[0] = '\0';
+    File file = openProviderPath("sd", "/misc/js_errors.txt");
+    if (!file || file.isDirectory())
+      return false;
+    uint16_t line = 1;
+    size_t length = 0;
+    while (file.available() > 0) {
+      const int next = file.read();
+      if (next < 0)
+        break;
+      if (next == '\n') {
+        if (line == errorNumber)
+          break;
+        line++;
+        continue;
+      }
+      if (line != errorNumber || next == '\r')
+        continue;
+      if (length + 1U < outSize) {
+        out[length++] = next >= 0x20 && next <= 0x7e
+                            ? static_cast<char>(next)
+                            : '?';
+      }
+    }
+    out[length] = '\0';
+    return line == errorNumber && length > 0;
+  }
 
   void setRuntimeError() {
     if (runtime == nullptr) {
       return;
     }
     const pinkjs::Error &error = runtime->error();
+    char described[72];
+    const char *message = error.message;
+    uint8_t errorNumber = 0;
+    char description[60];
+    if (pinkJsErrorNumber(error.message, &errorNumber) &&
+        readErrorDescription(errorNumber, description, sizeof(description))) {
+      snprintf(described, sizeof(described), "%.4s %.62s", error.message,
+               description);
+      message = described;
+    }
     if (error.line > 0) {
-      snprintf(status, sizeof(status), "L%lu:%lu %.70s",
+      snprintf(status, sizeof(status), "L%lu:%lu %.78s",
                static_cast<unsigned long>(error.line),
-               static_cast<unsigned long>(error.column), error.message);
+               static_cast<unsigned long>(error.column), message);
     } else {
-      copyText(status, sizeof(status), error.message);
+      copyText(status, sizeof(status), message);
     }
     Serial.print("[pinkjs] ");
     Serial.println(status);
+    const pinkjs::MemoryStats stats = runtime->memoryStats();
+#if PINKJS_HAS_ROM_PRINTF
+    esp_rom_printf("[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+                   static_cast<unsigned long>(stats.heapUsedBytes),
+                   static_cast<unsigned long>(stats.heapFreeBytes),
+                   static_cast<unsigned long>(stats.peakHeapUsedBytes),
+                   static_cast<unsigned long>(stats.workspaceBytes));
+#else
+    Serial.printf("[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+                  static_cast<unsigned long>(stats.heapUsedBytes),
+                  static_cast<unsigned long>(stats.heapFreeBytes),
+                  static_cast<unsigned long>(stats.peakHeapUsedBytes),
+                  static_cast<unsigned long>(stats.workspaceBytes));
+#endif
     pendingDirty = true;
   }
 
@@ -959,6 +1314,19 @@ private:
   }
 
   bool installBindings();
+  void refreshTouchCallbacks() {
+    touchCallbacks = 0;
+    if (runtime == nullptr)
+      return;
+    if (runtime->isCallable(runtime->get("onTouch")))
+      touchCallbacks |= PinkJsTouchGeneric;
+    if (runtime->isCallable(runtime->get("onTouchDown")))
+      touchCallbacks |= PinkJsTouchDown;
+    if (runtime->isCallable(runtime->get("onTouchMove")))
+      touchCallbacks |= PinkJsTouchMove;
+    if (runtime->isCallable(runtime->get("onTouchUp")))
+      touchCallbacks |= PinkJsTouchUp;
+  }
   void load();
   bool ensureAsyncWorker();
   bool pumpAsyncCompletions();
@@ -983,12 +1351,15 @@ private:
     workspaceBytes = 0;
   }
 
-  void unload() {
+  void unloadRuntime() {
     if (started && runtime != nullptr && status[0] == '\0') {
       run("onStop", nullptr, 0, nullptr);
     }
     pendingStart = false;
     started = false;
+    paused = false;
+    hasErrorCatalog = false;
+    touchCallbacks = 0;
     releaseTimers();
     releaseUiState();
     stopAsyncWorker();
@@ -1008,6 +1379,15 @@ private:
     if (activePinkJsApp == this) {
       activePinkJsApp = nullptr;
     }
+  }
+
+  void unload() {
+    if (executorTask != nullptr) {
+      execute(unloadOperation, nullptr);
+      stopExecutor();
+      return;
+    }
+    unloadRuntime();
   }
 };
 
@@ -1308,7 +1688,9 @@ bool PinkJsApp::pumpTimers() {
     } else {
       slot.dueAt = now + slot.intervalMs;
     }
+    logPinkJsStackLow("timer");
     const pinkjs::RunResult result = runtime->call(callback, argv, argc);
+    logPinkJsStackLow("timer");
     if (oneShot) {
       runtime->release(slot.callback);
       runtime->release(slot.arguments);
@@ -1867,6 +2249,9 @@ bool PinkJsApp::installBindings() {
   } bindings[] = {
       {"console.log", nativeConsoleLog},
       {"time.millis", nativeMillis},
+      {"pinkjs.heapUsed", nativePinkJsHeapUsed},
+      {"pinkjs.heapFree", nativePinkJsHeapFree},
+      {"pinkjs.heapPeak", nativePinkJsHeapPeak},
       {"network.connected", nativeNetworkConnected},
       {"http.get", nativeHttpGet},
       {"fetch", nativeFetch},
@@ -1934,6 +2319,9 @@ void PinkJsApp::load() {
     copyText(status, sizeof(status), "PATH MISSING");
     return;
   }
+  File errorCatalog = openProviderPath("sd", "/misc/js_errors.txt");
+  hasErrorCatalog = errorCatalog && !errorCatalog.isDirectory();
+  errorCatalog.close();
   File file = openProviderPath("sd", path);
   if (!file || file.isDirectory()) {
     copyText(status, sizeof(status), "OPEN FAILED");
@@ -1975,6 +2363,7 @@ void PinkJsApp::load() {
   pinkjs::Options options;
   options.maxBindings = 192;
   options.maxNatives = 64;
+  options.maxCallDepth = 24;
   options.maxSteps = 160000;
   options.nowMilliseconds = pinkJsNowMilliseconds;
   options.awaitPending = awaitPendingPromise;
@@ -1997,6 +2386,7 @@ void PinkJsApp::load() {
     releaseRuntime();
     return;
   }
+  refreshTouchCallbacks();
   status[0] = '\0';
   const pinkjs::MemoryStats stats = runtime->memoryStats();
   Serial.printf("[pinkjs] loaded %s workspace=%lu heap=%lu/%lu peak=%lu\n",
@@ -2015,10 +2405,18 @@ AppEventResult handleButton(const char *callback) {
 
 AppEventResult handleMenu() { return handleButton("onMenu"); }
 AppEventResult handleMenuDouble() { return handleButton("onMenuDouble"); }
-AppEventResult handleMenuLong() { return handleButton("onMenuLong"); }
+AppEventResult handleMenuLong() {
+  const AppEventResult result = handleButton("onMenuLong");
+  return result == AppEventResult::Dirty ? result
+                                         : AppEventResult::QuitRequested;
+}
 AppEventResult handlePower() { return handleButton("onPower"); }
 AppEventResult handlePowerDouble() { return handleButton("onPowerDouble"); }
 AppEventResult handlePowerLong() { return handleButton("onPowerLong"); }
+
+void pausePinkJsApp() { pinkJsApp.pause(); }
+void resumePinkJsApp() { pinkJsApp.resume(); }
+void releasePinkJsApp() { pinkJsApp.stop(); }
 
 void handleRawTouch(const TouchEvent &event) {
   if (activePinkJsApp != nullptr) {
@@ -2038,6 +2436,8 @@ void restoreContext(const uint8_t *buffer, size_t length) {
 
 AppBehavior pinkJsBehavior() {
   AppBehavior behavior;
+  behavior.onEnter = resumePinkJsApp;
+  behavior.onExit = pausePinkJsApp;
   behavior.onMenu = handleMenu;
   behavior.onMenuDouble = handleMenuDouble;
   behavior.onMenuLong = handleMenuLong;
@@ -2047,7 +2447,7 @@ AppBehavior pinkJsBehavior() {
   behavior.onRawTouch = handleRawTouch;
   behavior.onSaveContext = saveContext;
   behavior.onRestoreContext = restoreContext;
-  behavior.onExit = pinkJsAppStop;
+  behavior.onRelease = releasePinkJsApp;
   return behavior;
 }
 

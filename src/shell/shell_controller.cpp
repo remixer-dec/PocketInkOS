@@ -18,6 +18,12 @@
 #include <Arduino.h>
 #include <cstring>
 
+namespace {
+
+constexpr uint8_t kMaxRawTouchEventsPerDispatch = 16;
+
+} // namespace
+
 ShellController::ShellController(AppDisplay &display, TouchInput &touch,
                                  TextInputController &textInput)
     : display(display), touch(touch), textInput(textInput) {}
@@ -552,9 +558,12 @@ bool ShellController::dispatchTouch() {
       activeDefinition->behavior.onRawTouch != nullptr && !confirmQuit &&
       !quickSettings.isOpen()) {
     TouchEvent event;
-    while (touch.readEvent(event)) {
+    uint8_t handled = 0;
+    // The core-0 producer can refill this queue while a raw handler is slow.
+    while (handled < kMaxRawTouchEventsPerDispatch && touch.readEvent(event)) {
       noteUserActivity();
       activeDefinition->behavior.onRawTouch(event);
+      handled++;
     }
     return false;
   }
