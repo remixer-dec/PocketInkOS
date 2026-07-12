@@ -136,9 +136,17 @@
             <h2>External Apps</h2>
             <p>External <code>.pink</code> apps are scanned from <code>/bin/games</code>, <code>/bin/apps</code>, and <code>/bin/network</code> when the network category is compiled in.</p>
             <div class="command-list"><article><strong>Build the Tetris demo</strong><div class="command-row"><code class="command-value">tools/build-pink-app.sh examples/pink/tetris/tetris.cpp build/pink/tetris.pink</code></div><p>Builds the sample external app.</p></article></div>
-            <div class="spec-list"><article><strong>ABI compatibility</strong><p>The runtime currently accepts <code>.pink</code> ABI versions 7 through 8. <code>tools/build-pink-app.sh</code> emits ABI version 8, so rebuild external apps after ABI changes.</p></article>
+            <div class="spec-list"><article><strong>ABI compatibility</strong><p>The runtime accepts <code>.pink</code> ABI versions 7 through 11. <code>tools/build-pink-app.sh</code> emits ABI version 11; rebuild external apps to use SVG vector drawing through <code>drawVectorPath</code> and <code>drawVectorString</code>.</p></article>
                 <article><strong>Writable state</strong><p>Writable data and BSS are not relocated in the current <code>.pink</code> format. Keep mutable app state in the runtime memory block instead of global or static writable objects.</p></article>
                 <article><strong>API surface</strong><p>External apps include <code>examples/pink/include/pink_app_api.h</code> and use the helpers in <code>examples/pink/include/pink_runtime.cpp</code>.</p></article></div>
+          </section>
+
+          <section id="pocketinkjs-apps" class="doc-section">
+            <p class="eyebrow">Extension path</p>
+            <h2>PocketInkJS Apps</h2>
+            <p>PocketInkJS provides a lightweight app path for scripts stored on the SD card. It exists for rapid iteration and user-created apps that should not require the native <code>.pink</code> cross-compilation and ABI toolchain.</p>
+              <p>A PocketInkJS app participates in the normal shell lifecycle and can build interactive interfaces, use system-owned pickers, access bounded storage and network services, work with sensors and audio, and preserve app state through the host facade. The firmware retains ownership of hardware, permissions, modal UI, memory limits, and cleanup.</p>
+              <p>See the <a class="inline-link" href="./reference.html#pink-api-pocketinkjs-api">PocketInkJS API reference</a> for a complete listing of available system APIs.</p>
           </section>
           
         </main>

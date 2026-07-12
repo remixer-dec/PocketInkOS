@@ -4,7 +4,13 @@ const canHydrate =
   typeof DOMParser !== "undefined";
 const pageCache = new Map();
 const parser = canHydrate ? new DOMParser() : null;
-const docsPages = new Set(["/index.html", "/concepts.html", "/developers.html", "/reference.html"]);
+const docsPages = new Set([
+  "/index.html",
+  "/concepts.html",
+  "/developers.html",
+  "/pocketinkjs.html",
+  "/reference.html",
+]);
 const hasStaticShell =
   canHydrate && Boolean(document.querySelector("[data-static-docs]"));
 const viewerApps = new WeakMap();
@@ -672,6 +678,8 @@ function showApiLookup(entry, anchorRect) {
   header.appendChild(title);
 
   const definitionHref = entry.anchor || entry.href || "";
+  const controls = document.createElement("div");
+  controls.className = "api-lookup-controls";
   if (definitionHref) {
     const definitionLink = document.createElement("a");
     definitionLink.className = "api-lookup-definition-link";
@@ -679,8 +687,17 @@ function showApiLookup(entry, anchorRect) {
     definitionLink.dataset.apiLookupDefinitionLink = "true";
     definitionLink.setAttribute("aria-label", `Go to ${entry.name} definition`);
     definitionLink.textContent = "i";
-    header.appendChild(definitionLink);
+    controls.appendChild(definitionLink);
   }
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "api-lookup-close";
+  closeButton.type = "button";
+  closeButton.dataset.apiLookupClose = "true";
+  closeButton.setAttribute("aria-label", "Close definition popup");
+  closeButton.textContent = "x";
+  controls.appendChild(closeButton);
+  header.appendChild(controls);
 
   bubble.appendChild(header);
 
@@ -992,6 +1009,14 @@ if (hasStaticShell) {
 
       showApiLookup(entry, selected.rect);
     });
+  });
+
+  document.addEventListener("click", (event) => {
+    const closeButton = event.target.closest("[data-api-lookup-close]");
+    if (!closeButton) return;
+
+    event.preventDefault();
+    hideApiLookup();
   });
 
   document.addEventListener("click", (event) => {
