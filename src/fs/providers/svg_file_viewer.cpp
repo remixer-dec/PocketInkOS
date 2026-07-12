@@ -109,8 +109,6 @@ static const int16_t kFullscreenImageX = 0;
 static const int16_t kFullscreenImageY = 0;
 static const int16_t kFullscreenImageW = 200;
 static const int16_t kFullscreenImageH = 200;
-static const size_t kRasterBytes =
-    ((static_cast<size_t>(kFullscreenImageW) + 7U) / 8U) * kFullscreenImageH;
 static const size_t kMaxSvgBytesPsram = 2048U * 1024U;
 
 enum class SvgViewerError : uint8_t {
@@ -196,16 +194,54 @@ bool readSvg(File &file, char **outText, SvgViewerError *outError) {
 }
 
 void drawRaster(Adafruit_GFX &gfx, const uint8_t *raster, int16_t imageX,
-                int16_t imageY, int16_t imageW, int16_t imageH) {
+                int16_t imageY, int16_t imageW, int16_t imageH,
+                const ImageTransform &transform) {
   const int16_t stride = (imageW + 7) / 8;
   for (int16_t y = 0; y < imageH; y++) {
     const uint8_t *row = raster + static_cast<size_t>(y) * stride;
     for (int16_t x = 0; x < imageW; x++) {
       if ((row[x / 8] & (0x80 >> (x & 7))) != 0) {
-        gfx.drawPixel(imageX + x, imageY + y, 1);
+        int16_t transformedX = 0;
+        int16_t transformedY = 0;
+        if (imageTransformPoint(transform, imageX + x, imageY + y,
+                                transformedX, transformedY)) {
+          gfx.drawPixel(transformedX, transformedY, 1);
+        }
       }
     }
   }
+}
+
+bool drawVectorText(Adafruit_GFX &gfx, char *svg, int16_t imageX,
+                    int16_t imageY, int16_t imageW, int16_t imageH,
+                    const ImageTransform &transform) {
+  if (svg == nullptr || imageW <= 0 || imageH <= 0 ||
+      imageW > kFullscreenImageW || imageH > kFullscreenImageH) {
+    return false;
+  }
+  isvg_tape tape;
+  isvg_init(&tape);
+  if (!isvg_parse(&tape, svg)) {
+    isvg_free(&tape);
+    return false;
+  }
+  const size_t stride = (static_cast<size_t>(imageW) + 7U) / 8U;
+  if (stride > SIZE_MAX / static_cast<size_t>(imageH)) {
+    isvg_free(&tape);
+    return false;
+  }
+  const size_t rasterBytes = stride * static_cast<size_t>(imageH);
+  uint8_t *raster = static_cast<uint8_t *>(svgViewerAllocRaw(rasterBytes));
+  if (raster == nullptr) {
+    isvg_free(&tape);
+    return false;
+  }
+  memset(raster, 0, rasterBytes);
+  isvg_rasterize(&tape, raster, imageW, imageH);
+  isvg_free(&tape);
+  drawRaster(gfx, raster, imageX, imageY, imageW, imageH, transform);
+  svgViewerFreeRaw(raster);
+  return true;
 }
 
 void drawSvgViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
@@ -236,30 +272,14 @@ void drawSvgViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
   const int16_t imageW = runtime.fullscreen ? kFullscreenImageW : kImageW;
   const int16_t imageH = runtime.fullscreen ? kFullscreenImageH : kImageH;
 
-  isvg_tape tape;
-  isvg_init(&tape);
-  const bool parsed = isvg_parse(&tape, svg);
+  const bool drawn = drawVectorText(gfx, svg, imageX, imageY, imageW, imageH,
+                                    ImageTransform{});
   freeSvgText(svg);
-
-  if (!parsed) {
-    isvg_free(&tape);
-    gfx.setCursor(58, 92);
-    gfx.print("PARSE FAILED");
-    return;
-  }
-
-  uint8_t *raster = static_cast<uint8_t *>(svgViewerAllocRaw(kRasterBytes));
-  if (raster == nullptr) {
-    isvg_free(&tape);
+  if (!drawn) {
     gfx.setCursor(56, 92);
-    gfx.print("ALLOC FAILED");
+    gfx.print("RENDER FAILED");
     return;
   }
-  memset(raster, 0, kRasterBytes);
-  isvg_rasterize(&tape, raster, imageW, imageH);
-  isvg_free(&tape);
-  drawRaster(gfx, raster, imageX, imageY, imageW, imageH);
-  svgViewerFreeRaw(raster);
 }
 
 void scrollSvgViewer(FileViewerRuntime &, int8_t) {}
@@ -271,6 +291,42 @@ uint32_t svgVisibleBytes(const FileViewerRuntime &runtime) {
 const char *const SVG_VIEWER_EXTENSIONS[] = {"svg"};
 
 } // namespace
+
+bool drawVectorStringTransformed(Adafruit_GFX &gfx, const char *svg,
+                                 size_t size, int16_t x, int16_t y,
+                                 int16_t width, int16_t height,
+                                 const ImageTransform &transform) {
+  if (svg == nullptr || size == 0 || size > maxSvgBytes()) {
+    return false;
+  }
+  char *mutableSvg = allocSvgText(size + 1U);
+  if (mutableSvg == nullptr) {
+    return false;
+  }
+  memcpy(mutableSvg, svg, size);
+  mutableSvg[size] = '\0';
+  const bool drawn =
+      drawVectorText(gfx, mutableSvg, x, y, width, height, transform);
+  freeSvgText(mutableSvg);
+  return drawn;
+}
+
+bool drawVectorPathTransformed(Adafruit_GFX &gfx, const char *providerId,
+                               const char *path, int16_t x, int16_t y,
+                               int16_t width, int16_t height,
+                               const ImageTransform &transform) {
+  File file = openProviderPath(providerId, path);
+  if (!file || file.isDirectory()) {
+    return false;
+  }
+  char *svg = nullptr;
+  if (!readSvg(file, &svg, nullptr)) {
+    return false;
+  }
+  const bool drawn = drawVectorText(gfx, svg, x, y, width, height, transform);
+  freeSvgText(svg);
+  return drawn;
+}
 
 const FileViewerExtension SVG_FILE_VIEWER = {
     "svg",

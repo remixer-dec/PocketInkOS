@@ -1,17 +1,22 @@
 #include "sys/pink_executable.h"
+#include "fs/providers/image_file_viewer.h"
+#include "fs/providers/svg_file_viewer.h"
+#include "sys/app_api_services.h"
 #include "sys/psram_allocator.h"
-#include "shell/connectivity.h"
+#include "sys/services/connectivity_service.h"
 #include "fs/file_provider.h"
 #include "sys/system_config.h"
 #include "sys/global.h"
-#include "sys/lockscreen_guard.h"
-#include "sys/sd_storage.h"
-#include "ui/icon_ascii_font.h"
+#include "sys/services/lockscreen_guard.h"
+#include "sys/services/sd_storage.h"
+#include "sys/system_fonts.h"
+#include "ui/system_qr.h"
 #include <Arduino.h>
 #include <cstdlib>
 #include <cstring>
 #include <esp_heap_caps.h>
 #include <stdio.h>
+#include <new>
 
 #ifndef MALLOC_CAP_EXEC
 #define MALLOC_CAP_EXEC 0
@@ -413,13 +418,13 @@ void hostSetFont(uint8_t font) {
   }
   switch (font) {
   case PINK_FONT_ICON_8:
-    pinkDrawTarget->setFont(&iconASCII8pt7b);
+    systemFontApply(*pinkDrawTarget, size_t{1});
     break;
   case PINK_FONT_ICON_12:
-    pinkDrawTarget->setFont(&iconASCII12pt7b);
+    systemFontApply(*pinkDrawTarget, size_t{2});
     break;
   default:
-    pinkDrawTarget->setFont();
+    systemFontApply(*pinkDrawTarget, size_t{0});
     break;
   }
 }
@@ -493,8 +498,249 @@ bool hostConfigSet(const char *key, const char *value) {
   return configSetForApp(activeAppId, key, value);
 }
 
+int8_t apiStatus(AppApiStatus status) {
+  return static_cast<int8_t>(status);
+}
+
+ImageTransform imageTransform(const PinkImageTransform *transform) {
+  ImageTransform out;
+  if (transform != nullptr) {
+    out.a = transform->a;
+    out.b = transform->b;
+    out.c = transform->c;
+    out.d = transform->d;
+    out.tx = transform->tx;
+    out.ty = transform->ty;
+  }
+  return out;
+}
+
+int8_t hostDrawImagePath(const char *path, int16_t x, int16_t y, int16_t w,
+                         int16_t h, uint8_t dither, bool scaleToFit,
+                         const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr) {
+    return PINK_API_ERROR;
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return PINK_API_ERROR;
+  }
+  return drawImagePathTransformed(*pinkDrawTarget, "sd", path, x, y, w, h,
+                                  dither, scaleToFit,
+                                  imageTransform(transform))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostDrawImageBuffer(const uint8_t *data, size_t size,
+                           const char *format, int16_t x, int16_t y, int16_t w,
+                           int16_t h, uint8_t dither, bool scaleToFit,
+                           const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr) {
+    return PINK_API_ERROR;
+  }
+  return drawImageBufferTransformed(*pinkDrawTarget, data, size, format, x, y,
+                                    w, h, dither, scaleToFit,
+                                    imageTransform(transform))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostDrawVectorPath(const char *path, int16_t x, int16_t y, int16_t w,
+                          int16_t h, const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr || path == nullptr) {
+    return PINK_API_ERROR;
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return PINK_API_ERROR;
+  }
+  return drawVectorPathTransformed(*pinkDrawTarget, "sd", path, x, y, w, h,
+                                   imageTransform(transform))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostDrawVectorString(const char *svg, size_t size, int16_t x,
+                            int16_t y, int16_t w, int16_t h,
+                            const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr || svg == nullptr) {
+    return PINK_API_ERROR;
+  }
+  return drawVectorStringTransformed(*pinkDrawTarget, svg, size, x, y, w, h,
+                                     imageTransform(transform))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostFileRead(const char *path, size_t offset, uint8_t *out,
+                    size_t capacity, size_t *outRead, size_t *outFileSize) {
+  return apiStatus(
+      appApiReadFile(path, offset, out, capacity, outRead, outFileSize));
+}
+
+int8_t hostFileWrite(const char *path, const uint8_t *data, size_t size,
+                     bool append) {
+  return apiStatus(appApiWriteFile(path, data, size, append));
+}
+
+int8_t hostFileDelete(const char *path) {
+  return apiStatus(appApiDeleteFile(path));
+}
+
+int8_t hostFilePicker(const char *initialPath, const char *extensionFilter,
+                      char *outPath, size_t outSize) {
+  const AppApiStatus status =
+      appApiRequestFilePicker(initialPath, extensionFilter);
+  if (status == AppApiStatus::Ok || status == AppApiStatus::Denied) {
+    return apiStatus(appApiTakePickedFile(outPath, outSize));
+  }
+  return apiStatus(status);
+}
+
+bool hostOpenApp(const char *appId) { return appApiRequestOpenApp(appId); }
+
+int8_t hostGpioConfigure(uint8_t pin, uint8_t mode) {
+  if (mode > static_cast<uint8_t>(AppApiGpioMode::Output)) {
+    return PINK_API_ERROR;
+  }
+  return apiStatus(appApiGpioConfigure(pin, static_cast<AppApiGpioMode>(mode)));
+}
+
+int8_t hostGpioRead(uint8_t pin, int *value) {
+  return apiStatus(appApiGpioRead(pin, value));
+}
+
+int8_t hostGpioWrite(uint8_t pin, bool high) {
+  return apiStatus(appApiGpioWrite(pin, high));
+}
+
+bool hostSensorSnapshot(PinkSensorSnapshot *out, bool refresh) {
+  if (out == nullptr) {
+    return false;
+  }
+  const EnvironmentSnapshot snapshot = appApiSensorSnapshot(refresh);
+  out->temperatureValid = snapshot.ambientTemperatureValid;
+  out->humidityValid = snapshot.ambientHumidityValid;
+  out->cpuTemperatureValid = snapshot.chipTemperatureValid;
+  out->reserved = 0;
+  out->temperatureC = snapshot.ambientTemperatureC;
+  out->humidityPct = snapshot.ambientHumidityPct;
+  out->cpuTemperatureC = snapshot.chipTemperatureC;
+  return true;
+}
+
+int8_t hostWifiScan() { return apiStatus(appApiWifiScan()); }
+size_t hostWifiNetworkCount() { return appApiWifiNetworkCount(); }
+
+bool hostWifiNetworkAt(size_t index, PinkWifiNetwork *out) {
+  if (out == nullptr) {
+    return false;
+  }
+  AppApiWifiNetwork network;
+  if (!appApiWifiNetworkAt(index, network)) {
+    return false;
+  }
+  copyText(out->ssid, sizeof(out->ssid), network.ssid);
+  out->rssi = network.rssi;
+  return true;
+}
+
+size_t hostFontCount() { return systemFontCount(); }
+
+bool hostFontInfo(size_t index, char *name, size_t nameSize,
+                  uint8_t *nominalSize) {
+  SystemFontInfo info;
+  if (!systemFontInfo(index, info) || !copyText(name, nameSize, info.name)) {
+    return false;
+  }
+  if (nominalSize != nullptr) {
+    *nominalSize = info.nominalSize;
+  }
+  return true;
+}
+
+bool hostSetFontByName(const char *name) {
+  return pinkDrawTarget != nullptr && systemFontApply(*pinkDrawTarget, name);
+}
+
+int8_t hostCaptureWav(uint32_t durationMs, const uint8_t **data, size_t *size) {
+  return apiStatus(appApiCaptureWav(durationMs, data, size));
+}
+
+int8_t hostCapturePcm16(uint32_t durationMs, const uint8_t **data,
+                        size_t *size) {
+  return apiStatus(appApiCapturePcm16(durationMs, data, size));
+}
+
+int32_t hostAudioLoadPath(const char *path) {
+  return appApiAudioLoadPath(path);
+}
+bool hostAudioFormatSupported(const char *format) {
+  return appApiAudioFormatSupported(format);
+}
+int32_t hostAudioLoadBuffer(const uint8_t *data, size_t size,
+                            const char *format) {
+  return appApiAudioLoadBuffer(data, size, format);
+}
+int8_t hostAudioPlay(uint32_t handle) {
+  return apiStatus(appApiAudioPlay(handle));
+}
+int8_t hostAudioStop(uint32_t handle) {
+  return apiStatus(appApiAudioStop(handle));
+}
+int8_t hostAudioUpdate(uint32_t handle) {
+  return apiStatus(appApiAudioUpdate(handle));
+}
+void hostAudioRelease(uint32_t handle) { appApiAudioRelease(handle); }
+
+int8_t hostGetDateInput(int initialYear, int initialMonth, int initialDay,
+                        int *year, int *month, int *day) {
+  if (year == nullptr || month == nullptr || day == nullptr) {
+    return PINK_API_ERROR;
+  }
+  DatePickerDate selected;
+  const AppApiStatus status = appApiGetDateInput(
+      {initialYear, initialMonth, initialDay}, selected);
+  if (status == AppApiStatus::Ok) {
+    *year = selected.year;
+    *month = selected.month;
+    *day = selected.day;
+  }
+  return apiStatus(status);
+}
+
+bool hostDrawQr(const char *text, int16_t x, int16_t y, int16_t size,
+                uint16_t color) {
+  if (pinkDrawTarget == nullptr) {
+    return false;
+  }
+  SystemQrCode qr;
+  if (!qr.encode(text)) {
+    return false;
+  }
+  qr.draw(*pinkDrawTarget, x, y, size, color);
+  return true;
+}
+
+int8_t hostGetKeyboardInput(const char *initialText, uint8_t layout,
+                            size_t maxLength, char *out, size_t outSize) {
+  return apiStatus(appApiGetKeyboardInput(initialText, layout, maxLength, out,
+                                          outSize));
+}
+
+uint32_t pinkFeatureFlags() {
+  uint32_t flags = PINK_FEATURE_READ_FILES | PINK_FEATURE_WRITE_FILES |
+                   PINK_FEATURE_DELETE_FILES | PINK_FEATURE_AUDIO_CAPTURE |
+                   PINK_FEATURE_GPIO | PINK_FEATURE_SENSORS;
+#if ENABLE_NETWORK_APPS
+  flags |= PINK_FEATURE_WIFI_SCAN;
+#endif
+  return flags;
+}
+
 PinkHost makeHost() {
-  PinkHost host;
+  PinkHost host = {};
   host.abiVersion = PINK_EXECUTABLE_ABI_VERSION;
   host.screenWidth = EPD_WIDTH;
   host.screenHeight = EPD_HEIGHT;
@@ -525,8 +771,39 @@ PinkHost makeHost() {
   host.configGet = hostConfigGet;
   host.configSet = hostConfigSet;
   host.hostSize = sizeof(PinkHost);
-  host.featureFlags = 0;
+  host.featureFlags = pinkFeatureFlags();
   host.reserved2 = 0;
+  host.drawImagePath = hostDrawImagePath;
+  host.drawImageBuffer = hostDrawImageBuffer;
+  host.fileRead = hostFileRead;
+  host.fileWrite = hostFileWrite;
+  host.filePicker = hostFilePicker;
+  host.openApp = hostOpenApp;
+  host.gpioConfigure = hostGpioConfigure;
+  host.gpioRead = hostGpioRead;
+  host.gpioWrite = hostGpioWrite;
+  host.sensorSnapshot = hostSensorSnapshot;
+  host.wifiScan = hostWifiScan;
+  host.wifiNetworkCount = hostWifiNetworkCount;
+  host.wifiNetworkAt = hostWifiNetworkAt;
+  host.fontCount = hostFontCount;
+  host.fontInfo = hostFontInfo;
+  host.setFontByName = hostSetFontByName;
+  host.audioLoadPath = hostAudioLoadPath;
+  host.audioFormatSupported = hostAudioFormatSupported;
+  host.audioLoadBuffer = hostAudioLoadBuffer;
+  host.audioPlay = hostAudioPlay;
+  host.audioStop = hostAudioStop;
+  host.audioUpdate = hostAudioUpdate;
+  host.audioRelease = hostAudioRelease;
+  host.drawQr = hostDrawQr;
+  host.fileDelete = hostFileDelete;
+  host.audioCaptureWav = hostCaptureWav;
+  host.getDateInput = hostGetDateInput;
+  host.getKeyboardInput = hostGetKeyboardInput;
+  host.audioCapturePcm16 = hostCapturePcm16;
+  host.drawVectorPath = hostDrawVectorPath;
+  host.drawVectorString = hostDrawVectorString;
   return host;
 }
 
@@ -543,6 +820,7 @@ public:
     }
     activeMemory = memory;
     activeMemorySize = sizeof(memory);
+    appApiBeginSession(activeAppId);
     load();
     activePinkApp = this;
     sendSimpleEvent(PINK_EVENT_START);
@@ -649,6 +927,9 @@ private:
       sendSimpleEvent(PINK_EVENT_STOP);
     }
     releasePinkSleepGuards();
+    if (appApiSessionMatches(activeAppId)) {
+      appApiEndSession();
+    }
     if (code != nullptr) {
       heap_caps_free(code);
       code = nullptr;
@@ -796,7 +1077,7 @@ private:
     }
     pinkDrawTarget = gfx;
     event.eventSize = sizeof(PinkEvent);
-    event.featureFlags = 0;
+    event.featureFlags = pinkFeatureFlags();
     PinkHost host = makeHost();
     entry(&host, &event);
     pinkDrawTarget = nullptr;

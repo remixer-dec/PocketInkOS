@@ -1,10 +1,13 @@
 #include "sys/pinkjs_app.h"
 
 #include "fs/file_provider.h"
-#include "shell/connectivity.h"
-#include "sys/device_clock.h"
+#include "fs/providers/image_file_viewer.h"
+#include "fs/providers/svg_file_viewer.h"
+#include "sys/services/connectivity_service.h"
+#include "sys/app_api_services.h"
+#include "sys/services/device_clock.h"
 #include "sys/global.h"
-#include "sys/lockscreen_guard.h"
+#include "sys/services/lockscreen_guard.h"
 #include "sys/psram_allocator.h"
 #ifndef PINKJS_USE_LIGHTWEIGHT_JSON_PARSER
 #define PINKJS_USE_LIGHTWEIGHT_JSON_PARSER 0
@@ -14,14 +17,13 @@
 #include "netapps/lightweight_json_parser.h"
 #endif
 #include "sys/runtime/pinkjs/pinkjs.h"
-#include "sys/sd_storage.h"
+#include "sys/services/sd_storage.h"
 #include "sys/system_config.h"
-#include "ui/icon_ascii_font.h"
-#include "ui/components/date_time_picker_component.h"
+#include "sys/system_fonts.h"
 #include "ui/components/list_component.h"
-#include "ui/components/t9_keyboard_component.h"
 #include "ui/components/touch_button.h"
 #include "ui/ui_helpers.h"
+#include "ui/system_qr.h"
 #include <Arduino.h>
 #if ENABLE_NETWORK_APPS
 #include <HTTPClient.h>
@@ -29,6 +31,7 @@
 #endif
 #include <cstdlib>
 #include <atomic>
+#include <cstdarg>
 #include <climits>
 #include <cstring>
 #include <esp_heap_caps.h>
@@ -87,7 +90,7 @@ struct FetchHeader {
 };
 
 struct FetchRequest {
-  pinkjs::Value promise = {};
+  pinkjs::RootHandle promise = pinkjs::kInvalidRoot;
   char url[512] = {};
   char method[12] = "GET";
   uint8_t *body = nullptr;
@@ -99,7 +102,7 @@ struct FetchRequest {
 };
 
 struct FetchCompletion {
-  pinkjs::Value promise = {};
+  pinkjs::RootHandle promise = pinkjs::kInvalidRoot;
   char url[512] = {};
   uint8_t *body = nullptr;
   size_t bodyBytes = 0;
@@ -128,11 +131,19 @@ struct TimerState {
   uint32_t nextId = 1;
 };
 
-struct PinkJsUiState {
-  T9KeyboardComponent keyboard;
-  DateTimePickerComponent datePicker;
-  char keyboardText[256] = {};
+enum class PinkJsSystemModal : uint8_t {
+  None,
+  FilePicker,
+  Keyboard,
+  DatePicker,
+  AudioCapture,
+  AudioCapturePcm16,
 };
+
+bool activeSystemModalIdle();
+bool beginActiveSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+                            uint32_t captureDurationMs = 0,
+                            DatePickerDate initialDate = {});
 
 void setFetchError(FetchCompletion *completion, pinkjs::ErrorCode error) {
   completion->error = error;
@@ -148,8 +159,19 @@ void pinkJsLogWrite(const char *text) {
 #if PINKJS_HAS_ROM_PRINTF
   esp_rom_printf("%s", text != nullptr ? text : "");
 #else
-  Serial.print(text != nullptr ? text : "");
+  std::fputs(text != nullptr ? text : "", stdout);
 #endif
+}
+
+void pinkJsLogPrintf(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+#if PINKJS_HAS_ROM_PRINTF
+  esp_rom_vprintf(format, args);
+#else
+  std::vprintf(format, args);
+#endif
+  va_end(args);
 }
 
 void logPinkJsStackLow(const char *callback) {
@@ -158,15 +180,9 @@ void logPinkJsStackLow(const char *callback) {
   if (highWaterMark >= pinkJsLowestStackHwm)
     return;
   pinkJsLowestStackHwm = highWaterMark;
-#if PINKJS_HAS_ROM_PRINTF
-  esp_rom_printf("[pinkjs] stack low callback=%s hwm=%u\n",
-                 callback != nullptr ? callback : "?",
-                 static_cast<unsigned>(highWaterMark));
-#else
-  Serial.printf("[pinkjs] stack low callback=%s hwm=%u\n",
-                callback != nullptr ? callback : "?",
-                static_cast<unsigned>(highWaterMark));
-#endif
+  pinkJsLogPrintf("[pinkjs] stack low callback=%s hwm=%u\n",
+                  callback != nullptr ? callback : "?",
+                  static_cast<unsigned>(highWaterMark));
 #else
   (void)callback;
 #endif
@@ -460,6 +476,20 @@ bool numericArguments(pinkjs::Runtime &runtime, const pinkjs::Value *args,
   return true;
 }
 
+bool copyJsString(pinkjs::Runtime &runtime, pinkjs::Value value, char *out,
+                  size_t outSize) {
+  if (!runtime.isString(value) || out == nullptr || outSize == 0) {
+    return false;
+  }
+  const pinkjs::StringView text = runtime.stringView(value);
+  if (text.size >= outSize) {
+    return false;
+  }
+  memcpy(out, text.data, text.size);
+  out[text.size] = '\0';
+  return true;
+}
+
 int16_t toI16(double value) {
   if (value < -32768.0) {
     return INT16_MIN;
@@ -573,24 +603,33 @@ pinkjs::Value nativeSetWakeLock(pinkjs::Runtime &runtime,
 
 pinkjs::Value nativeUiSetFont(pinkjs::Runtime &runtime,
                               const pinkjs::Value *args, size_t argc, void *) {
-  if (!numericArguments(runtime, args, argc, 1)) {
-    return runtime.undefined();
-  }
+  if (argc != 1)
+    return runtime.fail(pinkjs::ErrorCode{157});
   if (pinkJsDrawTarget == nullptr) {
     return runtime.undefined();
   }
+  if (runtime.isString(args[0])) {
+    char name[32];
+    return copyJsString(runtime, args[0], name, sizeof(name)) &&
+                   systemFontApply(*pinkJsDrawTarget, name)
+               ? runtime.boolean(true)
+               : runtime.boolean(false);
+  }
+  if (!runtime.isNumber(args[0]) ||
+      !std::isfinite(runtime.toNumber(args[0])))
+    return runtime.fail(pinkjs::ErrorCode{158});
   switch (toI16(runtime.toNumber(args[0]))) {
   case 1:
-    pinkJsDrawTarget->setFont(&iconASCII8pt7b);
+    systemFontApply(*pinkJsDrawTarget, size_t{1});
     break;
   case 2:
-    pinkJsDrawTarget->setFont(&iconASCII12pt7b);
+    systemFontApply(*pinkJsDrawTarget, size_t{2});
     break;
   default:
-    pinkJsDrawTarget->setFont();
+    systemFontApply(*pinkJsDrawTarget, size_t{0});
     break;
   }
-  return runtime.undefined();
+  return runtime.boolean(true);
 }
 
 pinkjs::Value nativeUiSetTextSize(pinkjs::Runtime &runtime,
@@ -694,6 +733,835 @@ pinkjs::Value nativeUiFillScreen(pinkjs::Runtime &runtime,
     pinkJsDrawTarget->fillScreen(toU16(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
+}
+
+pinkjs::Value apiStatusValue(pinkjs::Runtime &runtime, AppApiStatus status) {
+  return runtime.number(static_cast<int8_t>(status));
+}
+
+double imageOptionNumber(pinkjs::Runtime &runtime, pinkjs::Value options,
+                         const char *key, double fallback) {
+  if (runtime.typeOf(options) != pinkjs::ValueType::Object) {
+    return fallback;
+  }
+  const pinkjs::Value value = runtime.objectGet(options, key);
+  return runtime.isNumber(value) && std::isfinite(runtime.toNumber(value))
+             ? runtime.toNumber(value)
+             : fallback;
+}
+
+bool imageOptions(pinkjs::Runtime &runtime, pinkjs::Value options, int16_t &x,
+                  int16_t &y, int16_t &w, int16_t &h, uint8_t &dither,
+                  bool &fit, ImageTransform &transform) {
+  if (runtime.typeOf(options) != pinkjs::ValueType::Undefined &&
+      runtime.typeOf(options) != pinkjs::ValueType::Object) {
+    return false;
+  }
+  x = toI16(imageOptionNumber(runtime, options, "x", 0));
+  y = toI16(imageOptionNumber(runtime, options, "y", 0));
+  w = toI16(imageOptionNumber(runtime, options, "width", EPD_WIDTH));
+  h = toI16(imageOptionNumber(runtime, options, "height", EPD_HEIGHT));
+  dither = toU8(imageOptionNumber(runtime, options, "dither", 1));
+  if (runtime.typeOf(options) == pinkjs::ValueType::Object) {
+    const pinkjs::Value fitValue = runtime.objectGet(options, "scaleToFit");
+    fit = runtime.typeOf(fitValue) == pinkjs::ValueType::Undefined
+              ? true
+              : runtime.toBoolean(fitValue);
+    const pinkjs::Value matrix = runtime.objectGet(options, "matrix");
+    if (runtime.typeOf(matrix) == pinkjs::ValueType::Array) {
+      if (runtime.arrayLength(matrix) != 6) {
+        return false;
+      }
+      float *values[] = {&transform.a, &transform.b, &transform.c,
+                         &transform.d, &transform.tx, &transform.ty};
+      for (size_t i = 0; i < 6; i++) {
+        const pinkjs::Value value = runtime.arrayAt(matrix, i);
+        if (!runtime.isNumber(value) ||
+            !std::isfinite(runtime.toNumber(value))) {
+          return false;
+        }
+        *values[i] = static_cast<float>(runtime.toNumber(value));
+      }
+    } else {
+      transform.a = static_cast<float>(
+          imageOptionNumber(runtime, options, "a", transform.a));
+      transform.b = static_cast<float>(
+          imageOptionNumber(runtime, options, "b", transform.b));
+      transform.c = static_cast<float>(
+          imageOptionNumber(runtime, options, "c", transform.c));
+      transform.d = static_cast<float>(
+          imageOptionNumber(runtime, options, "d", transform.d));
+      transform.tx = static_cast<float>(
+          imageOptionNumber(runtime, options, "tx", transform.tx));
+      transform.ty = static_cast<float>(
+          imageOptionNumber(runtime, options, "ty", transform.ty));
+    }
+  } else {
+    fit = true;
+  }
+  return w > 0 && h > 0;
+}
+
+pinkjs::Value nativeUiImagePath(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *args, size_t argc,
+                                void *) {
+  if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
+    return runtime.fail("ui.imagePath expects path and optional options");
+  }
+  if (pinkJsDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("image path is too long");
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return runtime.boolean(false);
+  }
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t w = 0;
+  int16_t h = 0;
+  uint8_t dither = 1;
+  bool fit = true;
+  ImageTransform transform;
+  if (!imageOptions(runtime, argc == 2 ? args[1] : runtime.undefined(), x, y,
+                    w, h, dither, fit, transform)) {
+    return runtime.fail("invalid image options");
+  }
+  return runtime.boolean(drawImagePathTransformed(
+      *pinkJsDrawTarget, "sd", path, x, y, w, h, dither, fit, transform));
+}
+
+pinkjs::Value nativeUiImageBuffer(pinkjs::Runtime &runtime,
+                                  const pinkjs::Value *args, size_t argc,
+                                  void *) {
+  if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
+      !runtime.isString(args[1])) {
+    return runtime.fail(
+        "ui.imageBuffer expects binary string, format, and options");
+  }
+  if (pinkJsDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  char format[12];
+  if (!copyJsString(runtime, args[1], format, sizeof(format))) {
+    return runtime.fail("image format is too long");
+  }
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t w = 0;
+  int16_t h = 0;
+  uint8_t dither = 1;
+  bool fit = true;
+  ImageTransform transform;
+  if (!imageOptions(runtime, argc == 3 ? args[2] : runtime.undefined(), x, y,
+                    w, h, dither, fit, transform)) {
+    return runtime.fail("invalid image options");
+  }
+  const pinkjs::StringView data = runtime.stringView(args[0]);
+  return runtime.boolean(drawImageBufferTransformed(
+      *pinkJsDrawTarget, reinterpret_cast<const uint8_t *>(data.data),
+      data.size, format, x, y, w, h, dither, fit, transform));
+}
+
+pinkjs::Value nativeUiVectorPath(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 void *) {
+  if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
+    return runtime.fail("ui.vectorPath expects path and optional options");
+  }
+  if (pinkJsDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("vector path is too long");
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return runtime.boolean(false);
+  }
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t w = 0;
+  int16_t h = 0;
+  uint8_t dither = 1;
+  bool fit = true;
+  ImageTransform transform;
+  if (!imageOptions(runtime, argc == 2 ? args[1] : runtime.undefined(), x, y,
+                    w, h, dither, fit, transform)) {
+    return runtime.fail("invalid vector options");
+  }
+  (void)dither;
+  (void)fit;
+  return runtime.boolean(drawVectorPathTransformed(
+      *pinkJsDrawTarget, "sd", path, x, y, w, h, transform));
+}
+
+pinkjs::Value nativeUiVectorString(pinkjs::Runtime &runtime,
+                                   const pinkjs::Value *args, size_t argc,
+                                   void *) {
+  if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
+    return runtime.fail("ui.vectorString expects SVG text and optional options");
+  }
+  if (pinkJsDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t w = 0;
+  int16_t h = 0;
+  uint8_t dither = 1;
+  bool fit = true;
+  ImageTransform transform;
+  if (!imageOptions(runtime, argc == 2 ? args[1] : runtime.undefined(), x, y,
+                    w, h, dither, fit, transform)) {
+    return runtime.fail("invalid vector options");
+  }
+  (void)dither;
+  (void)fit;
+  const pinkjs::StringView svg = runtime.stringView(args[0]);
+  return runtime.boolean(drawVectorStringTransformed(
+      *pinkJsDrawTarget, svg.data, svg.size, x, y, w, h, transform));
+}
+
+pinkjs::Value readPinkJsFile(pinkjs::Runtime &runtime,
+                             const pinkjs::Value *args, size_t argc) {
+  if (argc < 1 || argc > 3 || !runtime.isString(args[0])) {
+    return runtime.fail("file read expects path, offset?, maxBytes?");
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("file path is too long");
+  }
+  size_t offset = 0;
+  size_t maxBytes = 4096;
+  if (argc > 1) {
+    const double value = runtime.toNumber(args[1]);
+    if (!runtime.isNumber(args[1]) || !std::isfinite(value) || value < 0 ||
+        value > UINT32_MAX || std::floor(value) != value) {
+      return runtime.fail("invalid file offset");
+    }
+    offset = static_cast<size_t>(value);
+  }
+  if (argc > 2) {
+    const double value = runtime.toNumber(args[2]);
+    if (!runtime.isNumber(args[2]) || !std::isfinite(value) || value < 1 ||
+        value > 65536 || std::floor(value) != value) {
+      return runtime.fail("invalid file read size");
+    }
+    maxBytes = static_cast<size_t>(value);
+  }
+  uint8_t *buffer = static_cast<uint8_t *>(psram::allocate(maxBytes));
+  if (buffer == nullptr) {
+    return runtime.fail("no PSRAM for file read");
+  }
+  size_t bytes = 0;
+  size_t fileSize = 0;
+  const AppApiStatus status =
+      appApiReadFile(path, offset, buffer, maxBytes, &bytes, &fileSize);
+  if (status == AppApiStatus::Error) {
+    psram::release(buffer);
+    return runtime.fail("file read failed");
+  }
+  pinkjs::Value result = runtime.makeObject();
+  pinkjs::Value data = runtime.makeString(
+      reinterpret_cast<const char *>(buffer), bytes);
+  psram::release(buffer);
+  runtime.objectSet(result, "data", data);
+  runtime.objectSet(result, "bytes", runtime.number(bytes));
+  runtime.objectSet(result, "size", runtime.number(fileSize));
+  runtime.objectSet(result, "offset", runtime.number(offset));
+  runtime.objectSet(result, "eof",
+                    runtime.boolean(status == AppApiStatus::End));
+  return result;
+}
+
+pinkjs::Value nativeFilesReadText(pinkjs::Runtime &runtime,
+                                  const pinkjs::Value *args, size_t argc,
+                                  void *) {
+  return readPinkJsFile(runtime, args, argc);
+}
+
+pinkjs::Value nativeFilesReadBinary(pinkjs::Runtime &runtime,
+                                    const pinkjs::Value *args, size_t argc,
+                                    void *) {
+  return readPinkJsFile(runtime, args, argc);
+}
+
+bool jsStringEquals(pinkjs::Runtime &runtime, pinkjs::Value value,
+                    const char *expected) {
+  if (!runtime.isString(value) || expected == nullptr) {
+    return false;
+  }
+  const pinkjs::StringView text = runtime.stringView(value);
+  const size_t length = strlen(expected);
+  return text.size == length &&
+         (length == 0 || memcmp(text.data, expected, length) == 0);
+}
+
+bool fsEncodingSupported(pinkjs::Runtime &runtime, pinkjs::Value value) {
+  return runtime.isUndefined(value) || jsStringEquals(runtime, value, "utf8") ||
+         jsStringEquals(runtime, value, "utf-8") ||
+         jsStringEquals(runtime, value, "binary") ||
+         jsStringEquals(runtime, value, "buffer");
+}
+
+pinkjs::Value resolvedPromise(pinkjs::Runtime &runtime,
+                              pinkjs::Value result) {
+  if (runtime.error().message[0] != '\0') {
+    return runtime.rejectCurrentError();
+  }
+  pinkjs::Value promise = runtime.makePromise();
+  if (!runtime.isUndefined(promise)) {
+    runtime.settlePromise(promise, result, false);
+  }
+  return promise;
+}
+
+struct PinkJsDirectoryContext {
+  pinkjs::Runtime *runtime = nullptr;
+  pinkjs::Value entries = {};
+  size_t count = 0;
+  bool truncated = false;
+};
+
+bool appendPinkJsDirectoryEntry(const char *name, bool, uint32_t, void *raw) {
+  PinkJsDirectoryContext *context =
+      static_cast<PinkJsDirectoryContext *>(raw);
+  if (context == nullptr || context->runtime == nullptr) {
+    return false;
+  }
+  constexpr size_t kMaxDirectoryEntries = 256;
+  if (context->count >= kMaxDirectoryEntries) {
+    context->truncated = true;
+    return false;
+  }
+  context->count++;
+  return context->runtime->arrayPush(
+      context->entries, context->runtime->makeString(name != nullptr ? name
+                                                                     : ""));
+}
+
+pinkjs::Value nativeFsReadFileSync(pinkjs::Runtime &runtime,
+                                   const pinkjs::Value *args, size_t argc,
+                                   void *) {
+  if (argc < 1 || argc > 2 || !runtime.isString(args[0]) ||
+      (argc == 2 && !fsEncodingSupported(runtime, args[1]))) {
+    return runtime.fail(
+        "fs.readFileSync expects path and utf8, binary, or buffer encoding");
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("file path is too long");
+  }
+  size_t fileSize = 0;
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, &fileSize) ==
+      AppApiStatus::Error) {
+    return runtime.fail("file read failed");
+  }
+  constexpr size_t kMaxReadFileSyncBytes = 64U * 1024U;
+  if (fileSize > kMaxReadFileSyncBytes) {
+    return runtime.fail("fs.readFileSync is limited to 65536 bytes");
+  }
+  if (fileSize == 0) {
+    return runtime.makeString("");
+  }
+  uint8_t *buffer = static_cast<uint8_t *>(psram::allocate(fileSize));
+  if (buffer == nullptr) {
+    return runtime.fail("no PSRAM for file read");
+  }
+  size_t bytes = 0;
+  const AppApiStatus status =
+      appApiReadFile(path, 0, buffer, fileSize, &bytes, nullptr);
+  if ((status != AppApiStatus::Ok && status != AppApiStatus::End) ||
+      bytes != fileSize) {
+    psram::release(buffer);
+    return runtime.fail("file read failed");
+  }
+  const pinkjs::Value result = runtime.makeString(
+      reinterpret_cast<const char *>(buffer), fileSize);
+  psram::release(buffer);
+  return result;
+}
+
+pinkjs::Value nativeFsExistsSync(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 void *) {
+  char path[288];
+  if (argc != 1 || !copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("fs.existsSync expects a file path");
+  }
+  return runtime.boolean(appApiReadFile(path, 0, nullptr, 0, nullptr,
+                                        nullptr) != AppApiStatus::Error);
+}
+
+pinkjs::Value nativeFsStatSync(pinkjs::Runtime &runtime,
+                               const pinkjs::Value *args, size_t argc,
+                               void *) {
+  char path[288];
+  if (argc != 1 || !copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("fs.statSync expects a file path");
+  }
+  size_t fileSize = 0;
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, &fileSize) ==
+      AppApiStatus::Error) {
+    return runtime.fail("file stat failed");
+  }
+  pinkjs::Value result = runtime.makeObject();
+  runtime.objectSet(result, "size", runtime.number(fileSize));
+  runtime.objectSet(result, "isFile", runtime.boolean(true));
+  runtime.objectSet(result, "isDirectory", runtime.boolean(false));
+  return result;
+}
+
+pinkjs::Value nativeFsReaddirSync(pinkjs::Runtime &runtime,
+                                  const pinkjs::Value *args, size_t argc,
+                                  void *) {
+  if (argc < 1 || argc > 2 || !runtime.isString(args[0]) ||
+      (argc == 2 && !fsEncodingSupported(runtime, args[1]))) {
+    return runtime.fail(
+        "fs.readdirSync expects path and optional string encoding");
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("directory path is too long");
+  }
+  PinkJsDirectoryContext context;
+  context.runtime = &runtime;
+  context.entries = runtime.makeArray();
+  const AppApiStatus status = appApiListDirectory(
+      path, appendPinkJsDirectoryEntry, &context);
+  if (runtime.error().message[0] != '\0') {
+    return runtime.undefined();
+  }
+  if (status != AppApiStatus::Ok) {
+    return runtime.fail("directory read failed");
+  }
+  if (context.truncated) {
+    return runtime.fail("fs.readdirSync is limited to 256 entries");
+  }
+  return context.entries;
+}
+
+pinkjs::Value fsWriteFile(pinkjs::Runtime &runtime,
+                          const pinkjs::Value *args, size_t argc,
+                          bool append) {
+  if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
+      !runtime.isString(args[1]) ||
+      (argc == 3 && !fsEncodingSupported(runtime, args[2]))) {
+    return runtime.fail(
+        "fs write expects path, string data, and optional encoding");
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("file path is too long");
+  }
+  const pinkjs::StringView data = runtime.stringView(args[1]);
+  return apiStatusValue(
+      runtime,
+      appApiWriteFile(path, reinterpret_cast<const uint8_t *>(data.data),
+                      data.size, append));
+}
+
+pinkjs::Value nativeFsWriteFileSync(pinkjs::Runtime &runtime,
+                                    const pinkjs::Value *args, size_t argc,
+                                    void *) {
+  return fsWriteFile(runtime, args, argc, false);
+}
+
+pinkjs::Value nativeFsAppendFileSync(pinkjs::Runtime &runtime,
+                                     const pinkjs::Value *args, size_t argc,
+                                     void *) {
+  return fsWriteFile(runtime, args, argc, true);
+}
+
+pinkjs::Value nativeFsUnlinkSync(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 void *) {
+  char path[288];
+  return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
+             ? apiStatusValue(runtime, appApiDeleteFile(path))
+             : runtime.fail("fs.unlinkSync expects a file path");
+}
+
+pinkjs::Value nativeFsReadFile(pinkjs::Runtime &runtime,
+                               const pinkjs::Value *args, size_t argc,
+                               void *userData) {
+  return resolvedPromise(
+      runtime, nativeFsReadFileSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFsWriteFile(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *args, size_t argc,
+                                void *userData) {
+  return resolvedPromise(
+      runtime, nativeFsWriteFileSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFsAppendFile(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 void *userData) {
+  return resolvedPromise(
+      runtime, nativeFsAppendFileSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFsReaddir(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc,
+                              void *userData) {
+  return resolvedPromise(
+      runtime, nativeFsReaddirSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFsStat(pinkjs::Runtime &runtime,
+                           const pinkjs::Value *args, size_t argc,
+                           void *userData) {
+  return resolvedPromise(runtime,
+                         nativeFsStatSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFsUnlink(pinkjs::Runtime &runtime,
+                             const pinkjs::Value *args, size_t argc,
+                             void *userData) {
+  return resolvedPromise(runtime,
+                         nativeFsUnlinkSync(runtime, args, argc, userData));
+}
+
+pinkjs::Value nativeFilesWrite(pinkjs::Runtime &runtime,
+                               const pinkjs::Value *args, size_t argc,
+                               void *) {
+  if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
+      !runtime.isString(args[1])) {
+    return runtime.fail("files.write expects path, data, append?");
+  }
+  char path[288];
+  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
+    return runtime.fail("file path is too long");
+  }
+  const pinkjs::StringView data = runtime.stringView(args[1]);
+  return apiStatusValue(
+      runtime,
+      appApiWriteFile(path, reinterpret_cast<const uint8_t *>(data.data),
+                      data.size, argc == 3 && runtime.toBoolean(args[2])));
+}
+
+pinkjs::Value nativeFilesPick(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc, void *) {
+  if (argc > 2 || (argc > 0 && !runtime.isString(args[0])) ||
+      (argc > 1 && !runtime.isString(args[1]))) {
+    return runtime.fail("files.pick expects initialPath? and filter?");
+  }
+  char initial[288] = "/";
+  char filter[80] = {};
+  if ((argc > 0 && !copyJsString(runtime, args[0], initial, sizeof(initial))) ||
+      (argc > 1 && !copyJsString(runtime, args[1], filter, sizeof(filter)))) {
+    return runtime.fail("file picker argument is too long");
+  }
+  pinkjs::Value promise = runtime.makePromise();
+  if (runtime.isUndefined(promise)) {
+    return promise;
+  }
+  if (!activeSystemModalIdle()) {
+    runtime.settlePromise(promise, runtime.makeString("file picker is busy"),
+                          true);
+    return promise;
+  }
+  const AppApiStatus status = appApiRequestFilePicker(initial, filter);
+  if (status != AppApiStatus::Pending ||
+      !beginActiveSystemModal(PinkJsSystemModal::FilePicker, promise)) {
+    runtime.settlePromise(promise, runtime.makeString("file picker is busy"),
+                          true);
+  }
+  return promise;
+}
+
+pinkjs::Value nativeFilesDelete(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *args, size_t argc,
+                                void *) {
+  char path[288];
+  return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
+             ? apiStatusValue(runtime, appApiDeleteFile(path))
+             : runtime.fail("files.delete expects a path");
+}
+
+pinkjs::Value nativeAppOpen(pinkjs::Runtime &runtime,
+                            const pinkjs::Value *args, size_t argc, void *) {
+  char appId[24];
+  return argc == 1 && copyJsString(runtime, args[0], appId, sizeof(appId))
+             ? runtime.boolean(appApiRequestOpenApp(appId))
+             : runtime.fail("app.open expects an app id");
+}
+
+pinkjs::Value nativeGpioMode(pinkjs::Runtime &runtime,
+                             const pinkjs::Value *args, size_t argc, void *) {
+  if (!numericArguments(runtime, args, argc, 2)) {
+    return runtime.undefined();
+  }
+  const double pin = runtime.toNumber(args[0]);
+  const double mode = runtime.toNumber(args[1]);
+  if (pin < 0 || pin > UINT8_MAX || std::floor(pin) != pin || mode < 0 ||
+      mode > 2 || std::floor(mode) != mode)
+    return runtime.fail("invalid GPIO pin or mode");
+  return apiStatusValue(runtime, appApiGpioConfigure(
+                                     toU8(pin),
+                                     static_cast<AppApiGpioMode>(
+                                         toU8(mode))));
+}
+
+pinkjs::Value nativeGpioRead(pinkjs::Runtime &runtime,
+                             const pinkjs::Value *args, size_t argc, void *) {
+  if (!numericArguments(runtime, args, argc, 1)) {
+    return runtime.undefined();
+  }
+  const double pin = runtime.toNumber(args[0]);
+  if (pin < 0 || pin > UINT8_MAX || std::floor(pin) != pin)
+    return runtime.fail("invalid GPIO pin");
+  int value = 0;
+  const AppApiStatus status =
+      appApiGpioRead(toU8(pin), &value);
+  pinkjs::Value result = runtime.makeObject();
+  runtime.objectSet(result, "status", apiStatusValue(runtime, status));
+  runtime.objectSet(result, "value", runtime.number(value));
+  return result;
+}
+
+pinkjs::Value nativeGpioWrite(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc, void *) {
+  if (argc != 2 || !runtime.isNumber(args[0])) {
+    return runtime.fail("gpio.write expects pin and value");
+  }
+  const double pin = runtime.toNumber(args[0]);
+  if (!std::isfinite(pin) || pin < 0 || pin > UINT8_MAX ||
+      std::floor(pin) != pin)
+    return runtime.fail("invalid GPIO pin");
+  return apiStatusValue(
+      runtime, appApiGpioWrite(toU8(pin),
+                               runtime.toBoolean(args[1])));
+}
+
+pinkjs::Value nativeSensorsRead(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *args, size_t argc,
+                                void *) {
+  if (argc > 1) {
+    return runtime.fail("sensors.read expects refresh?");
+  }
+  const EnvironmentSnapshot snapshot =
+      appApiSensorSnapshot(argc == 1 && runtime.toBoolean(args[0]));
+  pinkjs::Value result = runtime.makeObject();
+  runtime.objectSet(result, "temperatureValid",
+                    runtime.boolean(snapshot.ambientTemperatureValid));
+  runtime.objectSet(result, "humidityValid",
+                    runtime.boolean(snapshot.ambientHumidityValid));
+  runtime.objectSet(result, "cpuTemperatureValid",
+                    runtime.boolean(snapshot.chipTemperatureValid));
+  runtime.objectSet(result, "temperatureC",
+                    runtime.number(snapshot.ambientTemperatureC));
+  runtime.objectSet(result, "humidityPct",
+                    runtime.number(snapshot.ambientHumidityPct));
+  runtime.objectSet(result, "cpuTemperatureC",
+                    runtime.number(snapshot.chipTemperatureC));
+  return result;
+}
+
+pinkjs::Value nativeNetworkScan(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *, size_t argc, void *) {
+  return argc == 0 ? apiStatusValue(runtime, appApiWifiScan())
+                   : runtime.fail("network.scan expects no arguments");
+}
+
+pinkjs::Value nativeNetworkNetworks(pinkjs::Runtime &runtime,
+                                    const pinkjs::Value *, size_t argc,
+                                    void *) {
+  if (argc != 0) {
+    return runtime.fail("network.networks expects no arguments");
+  }
+  pinkjs::Value result = runtime.makeArray(appApiWifiNetworkCount());
+  for (size_t i = 0; i < appApiWifiNetworkCount(); i++) {
+    AppApiWifiNetwork network;
+    if (!appApiWifiNetworkAt(i, network)) {
+      continue;
+    }
+    pinkjs::Value item = runtime.makeObject();
+    runtime.objectSet(item, "ssid", runtime.makeString(network.ssid));
+    runtime.objectSet(item, "rssi", runtime.number(network.rssi));
+    runtime.arrayPush(result, item);
+  }
+  return result;
+}
+
+pinkjs::Value nativeUiFonts(pinkjs::Runtime &runtime, const pinkjs::Value *,
+                            size_t argc, void *) {
+  if (argc != 0) {
+    return runtime.fail("ui.fonts expects no arguments");
+  }
+  pinkjs::Value result = runtime.makeArray(systemFontCount());
+  for (size_t i = 0; i < systemFontCount(); i++) {
+    SystemFontInfo info;
+    if (!systemFontInfo(i, info)) {
+      continue;
+    }
+    pinkjs::Value item = runtime.makeObject();
+    runtime.objectSet(item, "name", runtime.makeString(info.name));
+    runtime.objectSet(item, "size", runtime.number(info.nominalSize));
+    runtime.arrayPush(result, item);
+  }
+  return result;
+}
+
+pinkjs::Value nativeAudioCapture(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 bool wav) {
+  if (!numericArguments(runtime, args, argc, 1)) {
+    return runtime.undefined();
+  }
+  const double duration = runtime.toNumber(args[0]);
+  if (duration < 1 || duration > 60000 || std::floor(duration) != duration) {
+    return runtime.fail("invalid capture duration");
+  }
+  pinkjs::Value promise = runtime.makePromise();
+  if (runtime.isUndefined(promise)) {
+    return promise;
+  }
+  if (!activeSystemModalIdle()) {
+    runtime.settlePromise(promise, runtime.makeString("audio capture is busy"),
+                          true);
+    return promise;
+  }
+  const uint32_t durationMs = static_cast<uint32_t>(duration);
+  const uint8_t *data = nullptr;
+  size_t size = 0;
+  const AppApiStatus status = wav ? appApiCaptureWav(durationMs, &data, &size)
+                                  : appApiCapturePcm16(durationMs, &data, &size);
+  if (status != AppApiStatus::Pending ||
+      !beginActiveSystemModal(wav ? PinkJsSystemModal::AudioCapture
+                                  : PinkJsSystemModal::AudioCapturePcm16,
+                              promise, durationMs)) {
+    runtime.settlePromise(promise, runtime.makeString("audio capture is busy"),
+                          true);
+  }
+  return promise;
+}
+
+pinkjs::Value nativeAudioCaptureWav(pinkjs::Runtime &runtime,
+                                    const pinkjs::Value *args, size_t argc,
+                                    void *) {
+  return nativeAudioCapture(runtime, args, argc, true);
+}
+
+pinkjs::Value nativeAudioCapturePcm16(pinkjs::Runtime &runtime,
+                                      const pinkjs::Value *args, size_t argc,
+                                      void *) {
+  return nativeAudioCapture(runtime, args, argc, false);
+}
+
+pinkjs::Value nativeAudioLoad(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc, void *) {
+  char path[288];
+  return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
+             ? runtime.number(appApiAudioLoadPath(path))
+             : runtime.fail("audio.load expects a path");
+}
+
+pinkjs::Value nativeAudioSupports(pinkjs::Runtime &runtime,
+                                  const pinkjs::Value *args, size_t argc,
+                                  void *) {
+  char format[24];
+  return argc == 1 && copyJsString(runtime, args[0], format, sizeof(format))
+             ? runtime.boolean(appApiAudioFormatSupported(format))
+             : runtime.fail("audio.supports expects a format");
+}
+
+pinkjs::Value nativeAudioLoadBuffer(pinkjs::Runtime &runtime,
+                                    const pinkjs::Value *args, size_t argc,
+                                    void *) {
+  if (argc != 2 || !runtime.isString(args[0]) || !runtime.isString(args[1])) {
+    return runtime.fail("audio.loadBuffer expects data and format");
+  }
+  char format[24];
+  if (!copyJsString(runtime, args[1], format, sizeof(format))) {
+    return runtime.fail("audio format is too long");
+  }
+  const pinkjs::StringView data = runtime.stringView(args[0]);
+  return runtime.number(appApiAudioLoadBuffer(
+      reinterpret_cast<const uint8_t *>(data.data), data.size, format));
+}
+
+pinkjs::Value nativeAudioPlay(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc, void *) {
+  if (!numericArguments(runtime, args, argc, 1))
+    return runtime.undefined();
+  const double handle = runtime.toNumber(args[0]);
+  return handle >= 1 && handle <= UINT32_MAX && std::floor(handle) == handle
+             ? apiStatusValue(runtime,
+                              appApiAudioPlay(static_cast<uint32_t>(handle)))
+             : runtime.fail("invalid audio handle");
+}
+
+pinkjs::Value nativeAudioStop(pinkjs::Runtime &runtime,
+                              const pinkjs::Value *args, size_t argc, void *) {
+  if (!numericArguments(runtime, args, argc, 1))
+    return runtime.undefined();
+  const double handle = runtime.toNumber(args[0]);
+  return handle >= 1 && handle <= UINT32_MAX && std::floor(handle) == handle
+             ? apiStatusValue(runtime,
+                              appApiAudioStop(static_cast<uint32_t>(handle)))
+             : runtime.fail("invalid audio handle");
+}
+
+pinkjs::Value nativeAudioUpdate(pinkjs::Runtime &runtime,
+                                const pinkjs::Value *args, size_t argc,
+                                void *) {
+  if (!numericArguments(runtime, args, argc, 1))
+    return runtime.undefined();
+  const double handle = runtime.toNumber(args[0]);
+  return handle >= 1 && handle <= UINT32_MAX && std::floor(handle) == handle
+             ? apiStatusValue(runtime,
+                              appApiAudioUpdate(static_cast<uint32_t>(handle)))
+             : runtime.fail("invalid audio handle");
+}
+
+pinkjs::Value nativeAudioRelease(pinkjs::Runtime &runtime,
+                                 const pinkjs::Value *args, size_t argc,
+                                 void *) {
+  if (!numericArguments(runtime, args, argc, 1)) {
+    return runtime.undefined();
+  }
+  const double handle = runtime.toNumber(args[0]);
+  if (handle < 1 || handle > UINT32_MAX || std::floor(handle) != handle)
+    return runtime.fail("invalid audio handle");
+  appApiAudioRelease(static_cast<uint32_t>(handle));
+  return runtime.undefined();
+}
+
+pinkjs::Value nativeUiQr(pinkjs::Runtime &runtime, const pinkjs::Value *args,
+                         size_t argc, void *) {
+  if (argc < 4 || argc > 5 || !runtime.isString(args[0])) {
+    return runtime.fail("ui.qr expects text, x, y, size, color?");
+  }
+  for (size_t i = 1; i < argc; i++) {
+    if (!runtime.isNumber(args[i]) ||
+        !std::isfinite(runtime.toNumber(args[i]))) {
+      return runtime.fail("invalid QR position or size");
+    }
+  }
+  if (pinkJsDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  char text[SystemQrCode::maxPayload + 1];
+  if (!copyJsString(runtime, args[0], text, sizeof(text))) {
+    return runtime.boolean(false);
+  }
+  SystemQrCode qr;
+  if (!qr.encode(text)) {
+    return runtime.boolean(false);
+  }
+  qr.draw(*pinkJsDrawTarget, toI16(runtime.toNumber(args[1])),
+          toI16(runtime.toNumber(args[2])),
+          toI16(runtime.toNumber(args[3])),
+          argc == 5 ? toU16(runtime.toNumber(args[4])) : 1);
+  return runtime.boolean(true);
 }
 
 int64_t pinkJsNowMilliseconds(void *) {
@@ -830,6 +1698,10 @@ public:
     pinkJsLowestStackHwm = UINT_MAX;
     copyText(appId, sizeof(appId), nextId);
     activePinkJsApp = this;
+    if (!appApiBeginSession(appId)) {
+      copyText(status, sizeof(status), "NO API PSRAM");
+      return;
+    }
     const size_t pathLength = nextPath != nullptr ? strlen(nextPath) : 0;
     path = static_cast<char *>(allocatePsram(pathLength + 1U));
     if (path == nullptr) {
@@ -863,7 +1735,12 @@ public:
                               bool repeating);
   pinkjs::Value cancelTimer(pinkjs::Runtime &vm, const pinkjs::Value *args,
                             size_t argc);
-  PinkJsUiState *uiComponents();
+  bool beginSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+                        uint32_t captureDurationMs = 0,
+                        DatePickerDate initialDate = {});
+  bool systemModalIdle() const {
+    return systemModal == PinkJsSystemModal::None;
+  }
   bool waitForPromise(pinkjs::Runtime &vm, pinkjs::Value promise);
 
   void draw(Adafruit_GFX &gfx) override {
@@ -958,7 +1835,10 @@ private:
   pinkjs::Runtime *runtime = nullptr;
   AsyncState *asyncState = nullptr;
   TimerState *timerState = nullptr;
-  PinkJsUiState *uiState = nullptr;
+  pinkjs::RootHandle systemModalPromise = pinkjs::kInvalidRoot;
+  DatePickerDate systemModalDate = {};
+  uint32_t systemModalCaptureDurationMs = 0;
+  PinkJsSystemModal systemModal = PinkJsSystemModal::None;
   QueueHandle_t executorCommands = nullptr;
   QueueHandle_t executorCompletions = nullptr;
   TaskHandle_t executorTask = nullptr;
@@ -1114,19 +1994,20 @@ private:
     }
     dirty = pumpAsyncCompletions() || dirty;
     dirty = pumpTimers() || dirty;
-    if (uiState != nullptr) {
-      dirty = uiState->keyboard.update() || dirty;
-      dirty = uiState->datePicker.update() || dirty;
+    dirty = pumpSystemModal() || dirty;
+    // Promise reactions are microtasks: run them immediately after host
+    // completions and before entering the next app callback. In particular,
+    // picker results must reach their .then(...) handler before onUpdate can
+    // trigger another collection/callback boundary.
+    if (runtime != nullptr && status[0] == '\0') {
+      const pinkjs::RunResult jobs = runtime->drainJobs(kPinkJsJobsPerUpdate);
+      if (!jobs.ok)
+        setRuntimeError();
     }
     pinkjs::RunResult result;
     bool called = false;
     if (run("onUpdate", nullptr, 0, &result, &called) && called) {
       dirty = dirty || runtime->isTruthy(result.value);
-    }
-    if (runtime != nullptr && status[0] == '\0') {
-      const pinkjs::RunResult jobs = runtime->drainJobs(kPinkJsJobsPerUpdate);
-      if (!jobs.ok)
-        setRuntimeError();
     }
     return dirty;
   }
@@ -1134,8 +2015,17 @@ private:
   AppEventResult buttonRuntime(const char *callback) {
     pinkjs::RunResult result;
     bool called = false;
-    if (!run(callback, nullptr, 0, &result, &called) || !called) {
+    if (!run(callback, nullptr, 0, &result, &called)) {
       return AppEventResult::Unhandled;
+    }
+    if (!called) {
+      pinkjs::Value event = runtime->makeObject();
+      runtime->objectSet(event, "type", runtime->makeString(
+                                            callback != nullptr ? callback
+                                                                : "button"));
+      if (!run("onButton", &event, 1, &result, &called) || !called) {
+        return AppEventResult::Unhandled;
+      }
     }
     return runtime->isTruthy(result.value) ? AppEventResult::Dirty
                                            : AppEventResult::Handled;
@@ -1248,22 +2138,36 @@ private:
     } else {
       copyText(status, sizeof(status), message);
     }
-    Serial.print("[pinkjs] ");
-    Serial.println(status);
+    char caret[sizeof(error.sourceLine)] = {};
+    if (error.sourceLine[0] != '\0') {
+      const uint16_t caretAt =
+          error.sourceColumn < sizeof(caret) - 1U
+              ? error.sourceColumn
+              : static_cast<uint16_t>(sizeof(caret) - 2U);
+      for (uint16_t i = 0; i < caretAt; i++) {
+        caret[i] = error.sourceLine[i] == '\t' ? '\t' : ' ';
+      }
+      caret[caretAt] = '^';
+    }
     const pinkjs::MemoryStats stats = runtime->memoryStats();
-#if PINKJS_HAS_ROM_PRINTF
-    esp_rom_printf("[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
-                   static_cast<unsigned long>(stats.heapUsedBytes),
-                   static_cast<unsigned long>(stats.heapFreeBytes),
-                   static_cast<unsigned long>(stats.peakHeapUsedBytes),
-                   static_cast<unsigned long>(stats.workspaceBytes));
-#else
-    Serial.printf("[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
-                  static_cast<unsigned long>(stats.heapUsedBytes),
-                  static_cast<unsigned long>(stats.heapFreeBytes),
-                  static_cast<unsigned long>(stats.peakHeapUsedBytes),
-                  static_cast<unsigned long>(stats.workspaceBytes));
-#endif
+    if (error.sourceLine[0] != '\0') {
+      pinkJsLogPrintf(
+          "[pinkjs] %s\n[pinkjs] > %s\n[pinkjs]   %s\n"
+          "[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+          status, error.sourceLine, caret,
+          static_cast<unsigned long>(stats.heapUsedBytes),
+          static_cast<unsigned long>(stats.heapFreeBytes),
+          static_cast<unsigned long>(stats.peakHeapUsedBytes),
+          static_cast<unsigned long>(stats.workspaceBytes));
+    } else {
+      pinkJsLogPrintf(
+          "[pinkjs] %s\n"
+          "[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+          status, static_cast<unsigned long>(stats.heapUsedBytes),
+          static_cast<unsigned long>(stats.heapFreeBytes),
+          static_cast<unsigned long>(stats.peakHeapUsedBytes),
+          static_cast<unsigned long>(stats.workspaceBytes));
+    }
     pendingDirty = true;
   }
 
@@ -1331,9 +2235,9 @@ private:
   bool ensureAsyncWorker();
   bool pumpAsyncCompletions();
   bool pumpTimers();
+  bool pumpSystemModal();
   void stopAsyncWorker();
   void releaseTimers();
-  void releaseUiState();
 
   void releaseRuntime() {
     if (runtime != nullptr) {
@@ -1361,9 +2265,16 @@ private:
     hasErrorCatalog = false;
     touchCallbacks = 0;
     releaseTimers();
-    releaseUiState();
+    if (runtime != nullptr && systemModalPromise != pinkjs::kInvalidRoot) {
+      runtime->release(systemModalPromise);
+    }
+    systemModal = PinkJsSystemModal::None;
+    systemModalPromise = pinkjs::kInvalidRoot;
     stopAsyncWorker();
     releaseSleepGuards();
+    if (appApiSessionMatches(appId)) {
+      appApiEndSession();
+    }
     releaseRuntime();
     if (pinkJsLogBuffer != nullptr) {
       heap_caps_free(pinkJsLogBuffer);
@@ -1390,6 +2301,18 @@ private:
     unloadRuntime();
   }
 };
+
+bool activeSystemModalIdle() {
+  return activePinkJsApp != nullptr && activePinkJsApp->systemModalIdle();
+}
+
+bool beginActiveSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+                            uint32_t captureDurationMs,
+                            DatePickerDate initialDate) {
+  return activePinkJsApp != nullptr &&
+         activePinkJsApp->beginSystemModal(kind, promise, captureDurationMs,
+                                           initialDate);
+}
 
 bool PinkJsApp::ensureAsyncWorker() {
   if (asyncState != nullptr)
@@ -1438,17 +2361,16 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
   if (argc == 2 && vm.typeOf(args[1]) != pinkjs::ValueType::Object)
     return vm.fail(pinkjs::ErrorCode{169});
 
-  pinkjs::Value promise = vm.makePromise();
-  if (vm.isUndefined(promise))
-    return promise;
   FetchRequest *request =
       static_cast<FetchRequest *>(allocatePsram(sizeof(FetchRequest)));
   if (request == nullptr) {
+    pinkjs::Value promise = vm.makePromise();
+    if (vm.isUndefined(promise))
+      return promise;
     vm.settlePromise(promise, vm.makeString("no PSRAM for fetch request"), true);
     return promise;
   }
   new (request) FetchRequest();
-  request->promise = promise;
   memcpy(request->url, url.data, url.size);
   request->url[url.size] = '\0';
 
@@ -1546,10 +2468,22 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
       }
     }
   }
+  pinkjs::Value promise = vm.makePromise();
+  if (vm.isUndefined(promise)) {
+    releaseFetchRequest(request);
+    return promise;
+  }
+  const pinkjs::RootHandle retained = vm.retain(promise);
+  if (retained == pinkjs::kInvalidRoot) {
+    releaseFetchRequest(request);
+    return vm.undefined();
+  }
+  request->promise = retained;
   if (!ensureAsyncWorker() ||
       xQueueSend(asyncState->requests, &request, 0) != pdPASS) {
     releaseFetchRequest(request);
     vm.settlePromise(promise, vm.makeString("fetch worker is busy"), true);
+    vm.release(retained);
   }
   return promise;
 }
@@ -1563,11 +2497,12 @@ bool PinkJsApp::pumpAsyncCompletions() {
     completedAny = true;
     if (completion == nullptr)
       continue;
+    const pinkjs::Value promise = runtime->retained(completion->promise);
     if (completion->error != pinkjs::ErrorCode{}) {
       char error[5];
       pinkjs::formatErrorCode(completion->error, error);
-      runtime->settlePromise(completion->promise,
-                             runtime->makeString(error, 4), true);
+      runtime->settlePromise(promise, runtime->makeString(error, 4), true);
+      runtime->release(completion->promise);
       releaseFetchCompletion(completion);
       continue;
     }
@@ -1588,7 +2523,8 @@ bool PinkJsApp::pumpAsyncCompletions() {
     runtime->objectSet(response, "text", runtime->get("__responseText"));
     runtime->objectSet(response, "json", runtime->get("__responseJson"));
     if (runtime->error().message[0] == '\0')
-      runtime->settlePromise(completion->promise, response, false);
+      runtime->settlePromise(promise, response, false);
+    runtime->release(completion->promise);
     releaseFetchCompletion(completion);
   }
   if (runtime->error().message[0] != '\0')
@@ -1721,22 +2657,98 @@ void PinkJsApp::releaseTimers() {
   timerState = nullptr;
 }
 
-PinkJsUiState *PinkJsApp::uiComponents() {
-  if (uiState != nullptr)
-    return uiState;
-  void *memory = allocatePsram(sizeof(PinkJsUiState));
-  if (memory == nullptr)
-    return nullptr;
-  uiState = new (memory) PinkJsUiState();
-  return uiState;
+bool PinkJsApp::beginSystemModal(PinkJsSystemModal kind,
+                                 pinkjs::Value promise,
+                                 uint32_t captureDurationMs,
+                                 DatePickerDate initialDate) {
+  if (systemModal != PinkJsSystemModal::None || runtime == nullptr) {
+    return false;
+  }
+  const pinkjs::RootHandle retained = runtime->retain(promise);
+  if (retained == pinkjs::kInvalidRoot) {
+    return false;
+  }
+  systemModal = kind;
+  systemModalPromise = retained;
+  systemModalCaptureDurationMs = captureDurationMs;
+  systemModalDate = initialDate;
+  return true;
 }
 
-void PinkJsApp::releaseUiState() {
-  if (uiState == nullptr)
-    return;
-  uiState->~PinkJsUiState();
-  heap_caps_free(uiState);
-  uiState = nullptr;
+bool PinkJsApp::pumpSystemModal() {
+  if (systemModal == PinkJsSystemModal::None || runtime == nullptr) {
+    return false;
+  }
+  AppApiStatus status = AppApiStatus::Pending;
+  pinkjs::Value result = runtime->undefined();
+  switch (systemModal) {
+  case PinkJsSystemModal::FilePicker: {
+    char path[288];
+    status = appApiTakePickedFile(path, sizeof(path));
+    if (status == AppApiStatus::Ok) {
+      result = runtime->makeString(path);
+    }
+    break;
+  }
+  case PinkJsSystemModal::Keyboard: {
+    char text[256];
+    status = appApiGetKeyboardInput("", 0, 255, text, sizeof(text));
+    if (status == AppApiStatus::Ok) {
+      result = runtime->makeString(text);
+    }
+    break;
+  }
+  case PinkJsSystemModal::DatePicker: {
+    DatePickerDate selected;
+    status = appApiGetDateInput(systemModalDate, selected);
+    if (status == AppApiStatus::Ok) {
+      result = runtime->makeObject();
+      runtime->objectSet(result, "year", runtime->number(selected.year));
+      runtime->objectSet(result, "month", runtime->number(selected.month));
+      runtime->objectSet(result, "day", runtime->number(selected.day));
+    }
+    break;
+  }
+  case PinkJsSystemModal::AudioCapture: {
+    const uint8_t *data = nullptr;
+    size_t size = 0;
+    status = appApiCaptureWav(systemModalCaptureDurationMs, &data, &size);
+    if (status == AppApiStatus::End && data != nullptr) {
+      result = runtime->makeString(reinterpret_cast<const char *>(data), size);
+      status = AppApiStatus::Ok;
+    }
+    break;
+  }
+  case PinkJsSystemModal::AudioCapturePcm16: {
+    const uint8_t *data = nullptr;
+    size_t size = 0;
+    status = appApiCapturePcm16(systemModalCaptureDurationMs, &data, &size);
+    if (status == AppApiStatus::End && data != nullptr) {
+      result = runtime->makeString(reinterpret_cast<const char *>(data), size);
+      status = AppApiStatus::Ok;
+    }
+    break;
+  }
+  case PinkJsSystemModal::None:
+    return false;
+  }
+  if (status == AppApiStatus::Pending) {
+    return false;
+  }
+  const bool rejected = status != AppApiStatus::Ok &&
+                        status != AppApiStatus::Denied;
+  if (status == AppApiStatus::Denied) {
+    result = runtime->boolean(false);
+  } else if (rejected) {
+    result = runtime->makeString("system input failed");
+  }
+  const pinkjs::Value promise = runtime->retained(systemModalPromise);
+  runtime->settlePromise(promise, result, rejected);
+  runtime->release(systemModalPromise);
+  systemModal = PinkJsSystemModal::None;
+  systemModalPromise = pinkjs::kInvalidRoot;
+  systemModalCaptureDurationMs = 0;
+  return true;
 }
 
 void PinkJsApp::stopAsyncWorker() {
@@ -2074,169 +3086,73 @@ pinkjs::Value nativeUiSelectHit(pinkjs::Runtime &runtime,
   return runtime.undefined();
 }
 
-pinkjs::Value nativeKeyboardSetText(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
-                                    void *) {
-  if (activePinkJsApp == nullptr || argc != 1 || !runtime.isString(args[0]))
-    return runtime.fail(pinkjs::ErrorCode{208});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  const pinkjs::StringView text = runtime.stringView(args[0]);
-  if (text.size >= sizeof(state->keyboardText))
-    return runtime.fail(pinkjs::ErrorCode{210});
-  memcpy(state->keyboardText, text.data, text.size);
-  state->keyboardText[text.size] = '\0';
-  return args[0];
+pinkjs::Value nativeGetKeyboardInput(pinkjs::Runtime &runtime,
+                                     const pinkjs::Value *args, size_t argc,
+                                     void *) {
+  if (activePinkJsApp == nullptr || argc < 1 || argc > 3 ||
+      !runtime.isString(args[0])) {
+    return runtime.fail("ui.getKeyboardInput expects initialText, layout?, maxLength?");
+  }
+  const double layoutValue = argc > 1 ? runtime.toNumber(args[1]) : 0;
+  const double maxValue = argc > 2 ? runtime.toNumber(args[2]) : 255;
+  if (!std::isfinite(layoutValue) || !std::isfinite(maxValue) ||
+      layoutValue < 0 || layoutValue > 2 || maxValue < 1 || maxValue > 255 ||
+      std::floor(layoutValue) != layoutValue || std::floor(maxValue) != maxValue) {
+    return runtime.fail("invalid keyboard options");
+  }
+  char initial[256];
+  if (!copyJsString(runtime, args[0], initial, sizeof(initial)) ||
+      strlen(initial) > static_cast<size_t>(maxValue)) {
+    return runtime.fail("initial keyboard text is too long");
+  }
+  pinkjs::Value promise = runtime.makePromise();
+  if (runtime.isUndefined(promise)) {
+    return promise;
+  }
+  if (!activePinkJsApp->systemModalIdle() ||
+      appApiGetKeyboardInput(initial, static_cast<uint8_t>(layoutValue),
+                             static_cast<size_t>(maxValue), initial,
+                             sizeof(initial)) != AppApiStatus::Pending ||
+      !activePinkJsApp->beginSystemModal(PinkJsSystemModal::Keyboard,
+                                         promise)) {
+    runtime.settlePromise(promise, runtime.makeString("keyboard is busy"), true);
+  }
+  return promise;
 }
 
-pinkjs::Value nativeKeyboardGetText(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *, size_t argc,
-                                    void *) {
-  if (activePinkJsApp == nullptr || argc != 0)
-    return runtime.fail(pinkjs::ErrorCode{211});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  return state != nullptr ? runtime.makeString(state->keyboardText)
-                          : runtime.fail(pinkjs::ErrorCode{209});
-}
-
-pinkjs::Value nativeKeyboardSetLayout(pinkjs::Runtime &runtime,
-                                      const pinkjs::Value *args, size_t argc,
-                                      void *) {
-  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 1))
-    return runtime.undefined();
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  const int layout = static_cast<int>(runtime.toNumber(args[0]));
-  state->keyboard.setLayout(layout == 1   ? T9KeyboardComponent::Layout::Numbers
-                            : layout == 2 ? T9KeyboardComponent::Layout::Numeric
-                                          : T9KeyboardComponent::Layout::Text);
-  return runtime.undefined();
-}
-
-pinkjs::Value nativeKeyboardDraw(pinkjs::Runtime &runtime,
+pinkjs::Value nativeGetDateInput(pinkjs::Runtime &runtime,
                                  const pinkjs::Value *args, size_t argc,
                                  void *) {
-  if (activePinkJsApp == nullptr || argc > 1)
-    return runtime.fail(pinkjs::ErrorCode{212});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  if (pinkJsDrawTarget != nullptr)
-    state->keyboard.draw(*pinkJsDrawTarget, state->keyboardText,
-                         argc > 0 ? static_cast<int>(runtime.toNumber(args[0]))
-                                  : 255);
-  return runtime.undefined();
-}
-
-pinkjs::Value nativeKeyboardTouch(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
-                                  void *) {
-  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 2))
-    return runtime.undefined();
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  const KeyboardEvent event = state->keyboard.hitTest(
-      TouchPoint{toU16(runtime.toNumber(args[0])),
-                 toU16(runtime.toNumber(args[1]))},
-      state->keyboardText, sizeof(state->keyboardText));
-  static const char *const actions[] = {"none", "char", "backspace", "space",
-                                        "shift", "nav", "ok"};
-  const size_t action = static_cast<size_t>(event.action);
-  pinkjs::Value result = runtime.makeObject();
-  runtime.objectSet(result, "action",
-                    runtime.makeString(action < sizeof(actions) / sizeof(actions[0])
-                                           ? actions[action]
-                                           : "none"));
-  char value[2] = {event.value, '\0'};
-  runtime.objectSet(result, "value", runtime.makeString(value));
-  runtime.objectSet(result, "text", runtime.makeString(state->keyboardText));
-  return result;
-}
-
-pinkjs::Value nativeKeyboardToggleCaps(pinkjs::Runtime &runtime,
-                                       const pinkjs::Value *, size_t argc,
-                                       void *) {
-  if (activePinkJsApp == nullptr || argc != 0)
-    return runtime.fail(pinkjs::ErrorCode{213});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  state->keyboard.toggleCaps();
-  return runtime.undefined();
-}
-
-pinkjs::Value nativeDatePickerReset(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
-                                    void *) {
-  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 3))
-    return runtime.undefined();
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  state->datePicker.reset({static_cast<int>(runtime.toNumber(args[0])),
-                           static_cast<int>(runtime.toNumber(args[1])),
-                           static_cast<int>(runtime.toNumber(args[2]))});
-  return runtime.undefined();
-}
-
-pinkjs::Value nativeDatePickerDraw(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *, size_t argc,
-                                   void *) {
-  if (activePinkJsApp == nullptr || argc != 0)
-    return runtime.fail(pinkjs::ErrorCode{214});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  if (pinkJsDrawTarget != nullptr)
-    state->datePicker.draw(*pinkJsDrawTarget);
-  return runtime.undefined();
-}
-
-pinkjs::Value nativeDatePickerTouch(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
-                                    void *) {
-  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 2))
-    return runtime.undefined();
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  return runtime.boolean(state->datePicker.handleTouch(
-      {toU16(runtime.toNumber(args[0])), toU16(runtime.toNumber(args[1]))}));
-}
-
-pinkjs::Value nativeDatePickerValue(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *, size_t argc,
-                                    void *) {
-  if (activePinkJsApp == nullptr || argc != 0)
-    return runtime.fail(pinkjs::ErrorCode{215});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  const DatePickerDate date = state->datePicker.selectedDate();
-  const TimePickerTime time = state->datePicker.selectedTime();
-  pinkjs::Value result = runtime.makeObject();
-  runtime.objectSet(result, "year", runtime.number(date.year));
-  runtime.objectSet(result, "month", runtime.number(date.month));
-  runtime.objectSet(result, "day", runtime.number(date.day));
-  runtime.objectSet(result, "hour", runtime.number(time.hour));
-  runtime.objectSet(result, "minute", runtime.number(time.minute));
-  return result;
-}
-
-pinkjs::Value nativeDatePickerOptions(pinkjs::Runtime &runtime,
-                                      const pinkjs::Value *args, size_t argc,
-                                      void *) {
-  if (activePinkJsApp == nullptr || argc != 2)
-    return runtime.fail(pinkjs::ErrorCode{216});
-  PinkJsUiState *state = activePinkJsApp->uiComponents();
-  if (state == nullptr)
-    return runtime.fail(pinkjs::ErrorCode{209});
-  state->datePicker.setTimePickerEnabled(runtime.toBoolean(args[0]));
-  state->datePicker.setMondayFirst(runtime.toBoolean(args[1]));
-  return runtime.undefined();
+  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 3)) {
+    return runtime.fail("ui.getDateInput expects year, month, day");
+  }
+  const double yearValue = runtime.toNumber(args[0]);
+  const double monthValue = runtime.toNumber(args[1]);
+  const double dayValue = runtime.toNumber(args[2]);
+  if (yearValue < 1 || yearValue > 9999 || monthValue < 1 ||
+      monthValue > 12 || dayValue < 1 || dayValue > 31 ||
+      std::floor(yearValue) != yearValue ||
+      std::floor(monthValue) != monthValue || std::floor(dayValue) != dayValue)
+    return runtime.fail("invalid date picker date");
+  const int year = static_cast<int>(yearValue);
+  const int month = static_cast<int>(monthValue);
+  const int day = static_cast<int>(dayValue);
+  if (day > DateTimePickerComponent::daysInMonth(year, month))
+    return runtime.fail("invalid date picker date");
+  const DatePickerDate initial{year, month, day};
+  pinkjs::Value promise = runtime.makePromise();
+  DatePickerDate ignored;
+  if (runtime.isUndefined(promise)) {
+    return promise;
+  }
+  if (!activePinkJsApp->systemModalIdle() ||
+      appApiGetDateInput(initial, ignored) != AppApiStatus::Pending ||
+      !activePinkJsApp->beginSystemModal(PinkJsSystemModal::DatePicker,
+                                         promise, 0, initial)) {
+    runtime.settlePromise(promise, runtime.makeString("date picker is busy"),
+                          true);
+  }
+  return promise;
 }
 
 bool PinkJsApp::installBindings() {
@@ -2253,6 +3169,8 @@ bool PinkJsApp::installBindings() {
       {"pinkjs.heapFree", nativePinkJsHeapFree},
       {"pinkjs.heapPeak", nativePinkJsHeapPeak},
       {"network.connected", nativeNetworkConnected},
+      {"network.scan", nativeNetworkScan},
+      {"network.networks", nativeNetworkNetworks},
       {"http.get", nativeHttpGet},
       {"fetch", nativeFetch},
       {"setTimeout", nativeSetTimeout},
@@ -2262,7 +3180,40 @@ bool PinkJsApp::installBindings() {
       {"app.setWakeLock", nativeSetWakeLock},
       {"app.configGet", nativeConfigGet},
       {"app.configSet", nativeConfigSet},
+      {"app.open", nativeAppOpen},
+      {"files.readText", nativeFilesReadText},
+      {"files.readBinary", nativeFilesReadBinary},
+      {"files.write", nativeFilesWrite},
+      {"files.delete", nativeFilesDelete},
+      {"files.pick", nativeFilesPick},
+      {"fs.readFile", nativeFsReadFile},
+      {"fs.readFileSync", nativeFsReadFileSync},
+      {"fs.writeFile", nativeFsWriteFile},
+      {"fs.writeFileSync", nativeFsWriteFileSync},
+      {"fs.appendFile", nativeFsAppendFile},
+      {"fs.appendFileSync", nativeFsAppendFileSync},
+      {"fs.readdir", nativeFsReaddir},
+      {"fs.readdirSync", nativeFsReaddirSync},
+      {"fs.existsSync", nativeFsExistsSync},
+      {"fs.stat", nativeFsStat},
+      {"fs.statSync", nativeFsStatSync},
+      {"fs.unlink", nativeFsUnlink},
+      {"fs.unlinkSync", nativeFsUnlinkSync},
+      {"gpio.mode", nativeGpioMode},
+      {"gpio.read", nativeGpioRead},
+      {"gpio.write", nativeGpioWrite},
+      {"sensors.read", nativeSensorsRead},
+      {"audio.captureWav", nativeAudioCaptureWav},
+      {"audio.capturePcm16", nativeAudioCapturePcm16},
+      {"audio.supports", nativeAudioSupports},
+      {"audio.load", nativeAudioLoad},
+      {"audio.loadBuffer", nativeAudioLoadBuffer},
+      {"audio.play", nativeAudioPlay},
+      {"audio.stop", nativeAudioStop},
+      {"audio.update", nativeAudioUpdate},
+      {"audio.release", nativeAudioRelease},
       {"ui.setFont", nativeUiSetFont},
+      {"ui.fonts", nativeUiFonts},
       {"ui.setTextSize", nativeUiSetTextSize},
       {"ui.setTextColor", nativeUiSetTextColor},
       {"ui.setCursor", nativeUiSetCursor},
@@ -2272,27 +3223,32 @@ bool PinkJsApp::installBindings() {
       {"ui.drawRect", nativeUiDrawRect},
       {"ui.fillRect", nativeUiFillRect},
       {"ui.fillScreen", nativeUiFillScreen},
+      {"ui.imagePath", nativeUiImagePath},
+      {"ui.imageBuffer", nativeUiImageBuffer},
+      {"ui.vectorPath", nativeUiVectorPath},
+      {"ui.vectorString", nativeUiVectorString},
+      {"ui.qr", nativeUiQr},
       {"ui.button", nativeUiButton},
       {"ui.buttonContains", nativeUiButtonContains},
       {"ui.listTouch", nativeUiListTouch},
       {"ui.selectDraw", nativeUiSelectDraw},
       {"ui.selectHit", nativeUiSelectHit},
-      {"ui.keyboard.setText", nativeKeyboardSetText},
-      {"ui.keyboard.getText", nativeKeyboardGetText},
-      {"ui.keyboard.setLayout", nativeKeyboardSetLayout},
-      {"ui.keyboard.draw", nativeKeyboardDraw},
-      {"ui.keyboard.touch", nativeKeyboardTouch},
-      {"ui.keyboard.toggleCaps", nativeKeyboardToggleCaps},
-      {"ui.datePicker.reset", nativeDatePickerReset},
-      {"ui.datePicker.draw", nativeDatePickerDraw},
-      {"ui.datePicker.touch", nativeDatePickerTouch},
-      {"ui.datePicker.value", nativeDatePickerValue},
-      {"ui.datePicker.options", nativeDatePickerOptions},
+      {"ui.getKeyboardInput", nativeGetKeyboardInput},
+      {"ui.getDateInput", nativeGetDateInput},
   };
   for (const auto &binding : bindings) {
     if (!runtime->bind(binding.path, binding.function)) {
       return false;
     }
+  }
+  if (!runtime->set("fs.promises.readFile", runtime->get("fs.readFile")) ||
+      !runtime->set("fs.promises.writeFile", runtime->get("fs.writeFile")) ||
+      !runtime->set("fs.promises.appendFile",
+                    runtime->get("fs.appendFile")) ||
+      !runtime->set("fs.promises.readdir", runtime->get("fs.readdir")) ||
+      !runtime->set("fs.promises.stat", runtime->get("fs.stat")) ||
+      !runtime->set("fs.promises.unlink", runtime->get("fs.unlink"))) {
+    return false;
   }
   if (!runtime->bindMethod("__responseText", nativeResponseText) ||
       !runtime->bindMethod("__responseJson", nativeResponseJson))
@@ -2310,6 +3266,15 @@ bool PinkJsApp::installBindings() {
          runtime->set("ui.KEYBOARD_TEXT", runtime->number(0)) &&
          runtime->set("ui.KEYBOARD_NUMBERS", runtime->number(1)) &&
          runtime->set("ui.KEYBOARD_NUMERIC", runtime->number(2)) &&
+         runtime->set("api.ERROR", runtime->number(-1)) &&
+         runtime->set("api.DENIED", runtime->number(-2)) &&
+         runtime->set("api.UNSUPPORTED", runtime->number(-3)) &&
+         runtime->set("api.PENDING", runtime->number(0)) &&
+         runtime->set("api.OK", runtime->number(1)) &&
+         runtime->set("api.END", runtime->number(2)) &&
+         runtime->set("gpio.INPUT", runtime->number(0)) &&
+         runtime->set("gpio.INPUT_PULLUP", runtime->number(1)) &&
+         runtime->set("gpio.OUTPUT", runtime->number(2)) &&
          runtime->set("app.id", runtime->makeString(appId)) &&
          runtime->set("app.path", runtime->makeString(path));
 }
@@ -2362,7 +3327,8 @@ void PinkJsApp::load() {
   }
   pinkjs::Options options;
   options.maxBindings = 192;
-  options.maxNatives = 64;
+  options.maxNatives = 96;
+  options.maxHostRoots = 48;
   options.maxCallDepth = 24;
   options.maxSteps = 160000;
   options.nowMilliseconds = pinkJsNowMilliseconds;
@@ -2389,11 +3355,11 @@ void PinkJsApp::load() {
   refreshTouchCallbacks();
   status[0] = '\0';
   const pinkjs::MemoryStats stats = runtime->memoryStats();
-  Serial.printf("[pinkjs] loaded %s workspace=%lu heap=%lu/%lu peak=%lu\n",
-                path, static_cast<unsigned long>(workspaceBytes),
-                static_cast<unsigned long>(stats.heapUsedBytes),
-                static_cast<unsigned long>(stats.heapBytes),
-                static_cast<unsigned long>(stats.peakHeapUsedBytes));
+  pinkJsLogPrintf("[pinkjs] loaded %s workspace=%lu heap=%lu/%lu peak=%lu\n",
+                  path, static_cast<unsigned long>(workspaceBytes),
+                  static_cast<unsigned long>(stats.heapUsedBytes),
+                  static_cast<unsigned long>(stats.heapBytes),
+                  static_cast<unsigned long>(stats.peakHeapUsedBytes));
 }
 
 PinkJsApp pinkJsApp;

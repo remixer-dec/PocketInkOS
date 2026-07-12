@@ -86,8 +86,10 @@ struct Options {
 
 struct Error {
   char message[96] = {};
+  char sourceLine[160] = {};
   uint32_t line = 0;
   uint32_t column = 0;
+  uint16_t sourceColumn = 0;
 };
 
 struct RunResult {
@@ -268,6 +270,7 @@ struct PromisePayload {
   Value onFulfilled = {};
   Value onRejected = {};
   Value child = {};
+  uint32_t nextJob = 0;
   uint8_t state = 0; // 0 pending, 1 fulfilled, 2 rejected, 3 adopted.
   uint8_t queued = 0;
   uint16_t reserved = 0;
@@ -537,6 +540,7 @@ public:
   Value makeArray(size_t reserve = 0);
   Value makeSet();
   Value makePromise();
+  Value rejectCurrentError();
   bool arrayPush(Value array, Value value);
   size_t arrayLength(Value array) const;
   Value arrayAt(Value array, size_t index) const;
@@ -619,6 +623,8 @@ private:
   uint32_t heapCapacity_ = 0;
   uint32_t heapUsed_ = 0;
   uint32_t peakHeapUsed_ = 0;
+  uint32_t promiseJobHead_ = 0;
+  uint32_t promiseJobTail_ = 0;
   uint16_t bindingCount_ = 0;
   uint16_t globalBindingCount_ = 0;
   uint16_t nativeCount_ = 0;
@@ -715,6 +721,7 @@ private:
   detail::PromisePayload *promisePayload(Value promise);
   const detail::PromisePayload *promisePayload(Value promise) const;
   Value awaitValue(Value value);
+  bool queuePromiseReaction(Value promise);
   bool adoptPromise(Value promise, Value result, bool rejected);
   Value promiseThen(Value promise, Value onFulfilled, Value onRejected);
   Value callValue(Value function, Value receiver, const Value *args,
@@ -877,16 +884,40 @@ inline void Runtime::setErrorLocation(const char *source, size_t offset) {
   }
   uint32_t line = 1;
   uint32_t column = 1;
-  for (size_t i = 0; i < offset && source[i] != '\0'; i++) {
-    if (source[i] == '\n') {
+  size_t at = 0;
+  size_t lineStart = 0;
+  for (; at < offset && source[at] != '\0'; at++) {
+    if (source[at] == '\n') {
       line++;
       column = 1;
+      lineStart = at + 1U;
     } else {
       column++;
     }
   }
   error_.line = line;
   error_.column = column;
+
+  size_t copyStart = lineStart;
+  if (at - copyStart >= sizeof(error_.sourceLine)) {
+    copyStart = at - sizeof(error_.sourceLine) / 2U;
+  }
+  size_t lineEnd = at;
+  while (source[lineEnd] != '\0' && source[lineEnd] != '\r' &&
+         source[lineEnd] != '\n') {
+    lineEnd++;
+  }
+  const size_t available = lineEnd - copyStart;
+  const size_t amount = available < sizeof(error_.sourceLine) - 1U
+                            ? available
+                            : sizeof(error_.sourceLine) - 1U;
+  if (amount > 0) {
+    std::memcpy(error_.sourceLine, source + copyStart, amount);
+  }
+  error_.sourceLine[amount] = '\0';
+  const size_t sourceColumn = at - copyStart;
+  error_.sourceColumn = static_cast<uint16_t>(
+      sourceColumn < amount ? sourceColumn : (amount > 0 ? amount - 1U : 0U));
 }
 
 inline bool Runtime::step(const char *source, size_t offset) {
@@ -1421,7 +1452,25 @@ inline Value Runtime::makePromise() {
   promise->onFulfilled = undefined();
   promise->onRejected = undefined();
   promise->child = undefined();
+  promise->nextJob = 0;
+  promise->state = 0;
+  promise->queued = 0;
+  promise->reserved = 0;
   return detail::boxed(detail::Tag::Promise, offset);
+}
+
+inline Value Runtime::rejectCurrentError() {
+  if (error_.message[0] == '\0') {
+    return undefined();
+  }
+  char message[sizeof(error_.message)];
+  std::snprintf(message, sizeof(message), "%s", error_.message);
+  clearError();
+  Value promise = makePromise();
+  if (!isUndefined(promise)) {
+    adoptPromise(promise, makeString(message), true);
+  }
+  return promise;
 }
 
 inline Value Runtime::makeDate(double milliseconds) {
@@ -2550,6 +2599,33 @@ inline Value Runtime::promiseResult(Value promise) const {
              : undefined();
 }
 
+inline bool Runtime::queuePromiseReaction(Value promise) {
+  detail::PromisePayload *data = promisePayload(promise);
+  if (data == nullptr) {
+    setError(ErrorCode{5}, nullptr, 0);
+    return false;
+  }
+  if (data->queued != 0) {
+    return true;
+  }
+  const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(promise));
+  data->nextJob = 0;
+  if (promiseJobTail_ != 0) {
+    detail::PromisePayload *tail = promisePayload(
+        detail::boxed(detail::Tag::Promise, promiseJobTail_));
+    if (tail == nullptr) {
+      setError(ErrorCode{5}, nullptr, 0);
+      return false;
+    }
+    tail->nextJob = offset;
+  } else {
+    promiseJobHead_ = offset;
+  }
+  promiseJobTail_ = offset;
+  data->queued = 1;
+  return true;
+}
+
 inline bool Runtime::adoptPromise(Value promise, Value result, bool rejected) {
   detail::PromisePayload *data = promisePayload(promise);
   if (data == nullptr || data->state != 0) {
@@ -2567,8 +2643,9 @@ inline bool Runtime::adoptPromise(Value promise, Value result, bool rejected) {
     data->state = rejected ? 2U : 1U;
     data->result = result;
   }
-  if (!isUndefined(data->child)) {
-    data->queued = 1;
+  if (data->state != 3 && !isUndefined(data->child) &&
+      !queuePromiseReaction(promise)) {
+    return false;
   }
   return error_.message[0] == '\0';
 }
@@ -2603,8 +2680,8 @@ inline Value Runtime::promiseThen(Value promise, Value onFulfilled,
   data->onFulfilled = onFulfilled;
   data->onRejected = onRejected;
   data->child = child;
-  if (data->state != 0) {
-    data->queued = 1;
+  if (data->state == 1 || data->state == 2) {
+    queuePromiseReaction(promise);
   }
   return child;
 }
@@ -2682,54 +2759,80 @@ inline RunResult Runtime::drainJobs(size_t maximum) {
   stepsRemaining_ = options_.maxSteps;
   running_ = true;
   size_t completed = 0;
-  for (uint32_t offset = 8; offset < heapUsed_ && completed < maximum;) {
-    detail::BlockHeader *block = header(offset);
-    const uint32_t next = offset + block->size;
-    if (block->kind == detail::BlockKind::Promise) {
-      Value promise = detail::boxed(detail::Tag::Promise, offset);
-      detail::PromisePayload *data = promisePayload(promise);
-      if (data != nullptr && data->state == 3) {
-        const PromiseState adoptedState = promiseState(data->result);
-        if (adoptedState != PromiseState::Pending) {
-          data->state = adoptedState == PromiseState::Fulfilled ? 1U : 2U;
-          data->result = promiseResult(data->result);
-          if (!isUndefined(data->child)) {
-            data->queued = 1;
+  auto refreshAdopted = [this]() {
+    for (uint32_t offset = 8; offset < heapUsed_;) {
+      detail::BlockHeader *block = header(offset);
+      const uint32_t next = offset + block->size;
+      if (block->kind == detail::BlockKind::Promise) {
+        Value promise = detail::boxed(detail::Tag::Promise, offset);
+        detail::PromisePayload *data = promisePayload(promise);
+        if (data != nullptr && data->state == 3) {
+          const PromiseState adoptedState = promiseState(data->result);
+          if (adoptedState != PromiseState::Pending) {
+            data->state = adoptedState == PromiseState::Fulfilled ? 1U : 2U;
+            data->result = promiseResult(data->result);
+            if (!isUndefined(data->child)) {
+              queuePromiseReaction(promise);
+            }
           }
         }
       }
-      if (data != nullptr && data->queued != 0 && data->state != 0 &&
-          data->state != 3 && !isUndefined(data->child)) {
-        const bool rejected = data->state == 2;
-        const Value input = data->result;
-        const Value handler = rejected ? data->onRejected : data->onFulfilled;
-        const Value child = data->child;
-        const bool finallyHandler = data->reserved != 0;
-        data->queued = 0;
-        data->reserved = 0;
-        data->onFulfilled = undefined();
-        data->onRejected = undefined();
-        data->child = undefined();
-        if (isCallable(handler)) {
-          Value output = finallyHandler
-                             ? callValue(handler, undefined(), nullptr, 0)
-                             : callValue(handler, undefined(), &input, 1);
-          if (error_.message[0] != '\0') {
-            char message[sizeof(error_.message)];
-            std::snprintf(message, sizeof(message), "%s", error_.message);
-            clearError();
-            adoptPromise(child, makeString(message), true);
-          } else {
-            adoptPromise(child, finallyHandler ? input : output,
-                         finallyHandler ? rejected : false);
-          }
-        } else {
-          adoptPromise(child, input, rejected);
-        }
-        completed++;
+      offset = next;
+    }
+  };
+
+  refreshAdopted();
+  while (completed < maximum) {
+    if (promiseJobHead_ == 0) {
+      refreshAdopted();
+      if (promiseJobHead_ == 0) {
+        break;
       }
     }
-    offset = next;
+    const uint32_t offset = promiseJobHead_;
+    Value promise = detail::boxed(detail::Tag::Promise, offset);
+    detail::PromisePayload *data = promisePayload(promise);
+    if (data == nullptr) {
+      setError(ErrorCode{5}, nullptr, 0);
+      break;
+    }
+    promiseJobHead_ = data->nextJob;
+    if (promiseJobHead_ == 0) {
+      promiseJobTail_ = 0;
+    }
+    data->nextJob = 0;
+    data->queued = 0;
+    if ((data->state != 1 && data->state != 2) ||
+        isUndefined(data->child)) {
+      continue;
+    }
+
+    const bool rejected = data->state == 2;
+    const Value input = data->result;
+    const Value handler = rejected ? data->onRejected : data->onFulfilled;
+    const Value child = data->child;
+    const bool finallyHandler = data->reserved != 0;
+    data->reserved = 0;
+    data->onFulfilled = undefined();
+    data->onRejected = undefined();
+    data->child = undefined();
+    if (isCallable(handler)) {
+      Value output = finallyHandler
+                         ? callValue(handler, undefined(), nullptr, 0)
+                         : callValue(handler, undefined(), &input, 1);
+      if (error_.message[0] != '\0') {
+        char message[sizeof(error_.message)];
+        std::snprintf(message, sizeof(message), "%s", error_.message);
+        clearError();
+        adoptPromise(child, makeString(message), true);
+      } else {
+        adoptPromise(child, finallyHandler ? input : output,
+                     finallyHandler ? rejected : false);
+      }
+    } else {
+      adoptPromise(child, input, rejected);
+    }
+    completed++;
   }
   running_ = false;
   collectGarbage();
@@ -2796,18 +2899,19 @@ inline void Runtime::collectGarbage() {
       markValue(hostRoots_[i], workCount, overflow);
     }
   }
-  // Pending host promises and queued reactions stay alive even if script code
-  // does not retain the value while a core-0 operation is in flight.
+  // Adopted Promises wait on another Promise and therefore retain themselves.
+  // Host operations use explicit roots; queued reactions are rooted below.
   for (uint32_t offset = 8; offset < heapUsed_;
        offset += header(offset)->size) {
     if (header(offset)->kind == detail::BlockKind::Promise) {
       const auto *promise = static_cast<const detail::PromisePayload *>(
           payload(offset));
-      if (promise->state == 0 || promise->state == 3 || promise->queued != 0) {
+      if (promise->state == 3) {
         markOffset(offset, workCount, overflow);
       }
     }
   }
+  markOffset(promiseJobHead_, workCount, overflow);
   markValue(lastResult_, workCount, overflow);
 
   while (workCount > 0 && !overflow) {
@@ -2855,6 +2959,7 @@ inline void Runtime::collectGarbage() {
       markValue(promise->onFulfilled, workCount, overflow);
       markValue(promise->onRejected, workCount, overflow);
       markValue(promise->child, workCount, overflow);
+      markOffset(promise->nextJob, workCount, overflow);
       break;
     }
     default:
@@ -4147,7 +4252,9 @@ inline Parser::Expression Parser::postfix(bool execute) {
         result.reference.numeric = numeric;
         continue;
       }
-      if (accept(T::LeftParen)) {
+      if (token_.type == T::LeftParen) {
+        const size_t callOffset = token_.start;
+        advance();
         Value arguments[24];
         size_t count = 0;
         if (token_.type != T::RightParen) {
@@ -4169,6 +4276,10 @@ inline Parser::Expression Parser::postfix(bool execute) {
                   ? result.reference.receiver
                   : runtime_.undefined(),
               arguments, count);
+          if (runtime_.error_.message[0] != '\0' &&
+              runtime_.error_.line == 0) {
+            runtime_.setErrorLocation(source_, callOffset);
+          }
         } else {
           result.value = runtime_.undefined();
         }
@@ -4218,7 +4329,9 @@ inline Parser::Expression Parser::postfix(bool execute) {
       result.reference.numeric = numeric;
       continue;
     }
-    if (accept(T::LeftParen)) {
+    if (token_.type == T::LeftParen) {
+      const size_t callOffset = token_.start;
+      advance();
       Value arguments[24];
       size_t count = 0;
       if (token_.type != T::RightParen) {
@@ -4245,6 +4358,10 @@ inline Parser::Expression Parser::postfix(bool execute) {
                 ? result.reference.receiver
                 : runtime_.undefined(),
             arguments, count);
+        if (runtime_.error_.message[0] != '\0' &&
+            runtime_.error_.line == 0) {
+          runtime_.setErrorLocation(source_, callOffset);
+        }
       } else {
         result.value = runtime_.undefined();
       }
