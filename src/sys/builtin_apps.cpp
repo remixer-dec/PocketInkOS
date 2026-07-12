@@ -497,7 +497,7 @@ bool takePendingPinkExecLaunchPath(char *path, size_t pathSize) {
   return filesApp.consumePinkLaunch(path, pathSize);
 }
 
-bool takePendingPinkJsLaunchPath(char *path, size_t pathSize) {
+bool takePendingPocketInkJSLaunchPath(char *path, size_t pathSize) {
   return filesApp.consumeJsLaunch(path, pathSize);
 }
 

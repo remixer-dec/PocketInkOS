@@ -1,10 +1,10 @@
-#ifndef PINKJS_H
-#define PINKJS_H
+#ifndef POCKETINKJS_H
+#define POCKETINKJS_H
 
-// PinkJS is a deliberately small JavaScript subset for embedded applications.
+// PocketInkJS is a deliberately small JavaScript subset for embedded applications.
 // The interpreter owns no memory: all bindings, GC metadata, strings, objects,
 // arrays, Sets, and functions live in the caller-provided workspace.
-// PinkJS is distributed as a part of PocketInkOS (https://github.com/remixer-dec/PocketInkOS)
+// PocketInkJS is distributed as a part of PocketInkOS (https://github.com/remixer-dec/PocketInkOS)
 // under CC BY-NC-SA 4.0 License: https://creativecommons.org/licenses/by-nc-sa/4.0
 
 #include <cmath>
@@ -15,7 +15,7 @@
 #include <cstring>
 #include <limits>
 
-namespace pinkjs {
+namespace PocketInkJS {
 
 struct Value {
   uint64_t bits = 0;
@@ -2730,7 +2730,7 @@ inline Value Runtime::parseJsonPromise(Value text) {
   Value result = undefined();
   if (options_.jsonParse != nullptr) {
     result = options_.jsonParse(*this, stringView(text), options_.jsonUserData);
-#if !defined(PINKJS_DISABLE_BUILTIN_JSON_PARSER)
+#if !defined(POCKETINKJS_DISABLE_BUILTIN_JSON_PARSER)
   } else {
     result = jsonParse(stringView(text));
 #else
@@ -4390,7 +4390,7 @@ inline Parser::Expression Parser::unary(bool execute) {
   using T = detail::TokenType;
   const T operation = token_.type;
   if (operation == T::New) {
-    // Constructors are value factories in PinkJS; `new` is a compatibility
+    // Constructors are value factories in PocketInkJS; `new` is a compatibility
     // alias and deliberately does not add prototypes or `this` allocation.
     advance();
     return unary(execute);
@@ -5686,7 +5686,7 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
       return options_.jsonParse(*this, stringView(argument(0)),
                                 options_.jsonUserData);
     }
-#if defined(PINKJS_DISABLE_BUILTIN_JSON_PARSER)
+#if defined(POCKETINKJS_DISABLE_BUILTIN_JSON_PARSER)
     return fail(ErrorCode{36});
 #else
     return jsonParse(stringView(argument(0)));
@@ -6648,7 +6648,7 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
   return fail(ErrorCode{140});
 }
 
-#if !defined(PINKJS_DISABLE_BUILTIN_JSON_PARSER)
+#if !defined(POCKETINKJS_DISABLE_BUILTIN_JSON_PARSER)
 class JsonReader {
 public:
   JsonReader(Runtime &runtime, StringView input)
@@ -7174,6 +7174,6 @@ inline Value Runtime::isoDate(double milliseconds) {
   return makeString(text, static_cast<size_t>(length));
 }
 
-} // namespace pinkjs
+} // namespace PocketInkJS
 
 #endif

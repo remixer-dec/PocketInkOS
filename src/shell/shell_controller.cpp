@@ -10,7 +10,7 @@
 #include "sys/services/environment_monitor.h"
 #include "sys/global.h"
 #include "sys/pink_executable.h"
-#include "sys/pinkjs_app.h"
+#include "sys/pocketinkjs_app.h"
 #include "sys/services/power_control.h"
 #include "sys/services/screenshot.h"
 #include "sys/services/sd_storage.h"
@@ -525,10 +525,10 @@ bool ShellController::handlePendingFilesPinkLaunch() {
       return false;
     }
   } else {
-    if (!takePendingPinkJsLaunchPath(path, sizeof(path))) {
+    if (!takePendingPocketInkJSLaunchPath(path, sizeof(path))) {
       return false;
     }
-    if (!pinkJsAppLaunchPath(path, &app.definition, app.id, sizeof(app.id),
+    if (!PocketInkJSAppLaunchPath(path, &app.definition, app.id, sizeof(app.id),
                             app.label, sizeof(app.label), app.icon,
                             sizeof(app.icon))) {
       return false;

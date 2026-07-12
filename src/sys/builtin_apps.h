@@ -136,8 +136,8 @@ bool findAppById(const char *id, AppCatalogEntry &out);
 void refreshAppCatalog();
 /// Takes the pending .pink executable launch path from the files app.
 bool takePendingPinkExecLaunchPath(char *path, size_t pathSize);
-/// Takes the pending PinkJS source launch path from the files app.
-bool takePendingPinkJsLaunchPath(char *path, size_t pathSize);
+/// Takes the pending PocketInkJS source launch path from the files app.
+bool takePendingPocketInkJSLaunchPath(char *path, size_t pathSize);
 /// Resets all app-owned runtime state.
 void resetApps();
 

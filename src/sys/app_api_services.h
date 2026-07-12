@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/// Shared result contract used by PinkApp's C ABI and PinkJS's adapters.
+/// Shared result contract used by PinkApp's C ABI and PocketInkJS's adapters.
 enum class AppApiStatus : int8_t {
   Error = -1,
   Denied = -2,

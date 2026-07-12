@@ -10,7 +10,7 @@ const MAX_SNAKE = COLS * ROWS
 const MOVE_MS = 500
 const SWIPE_MIN = 14
 
-// Named scalar constants are the lightest enum-like representation in PinkJS.
+// Named scalar constants are the lightest enum-like representation in PocketInkJS.
 const DIR_UP = 0
 const DIR_RIGHT = 1
 const DIR_DOWN = 2

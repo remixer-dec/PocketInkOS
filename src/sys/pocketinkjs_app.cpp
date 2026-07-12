@@ -1,4 +1,4 @@
-#include "sys/pinkjs_app.h"
+#include "sys/pocketinkjs_app.h"
 
 #include "fs/file_provider.h"
 #include "fs/providers/image_file_viewer.h"
@@ -9,14 +9,14 @@
 #include "sys/global.h"
 #include "sys/services/lockscreen_guard.h"
 #include "sys/psram_allocator.h"
-#ifndef PINKJS_USE_LIGHTWEIGHT_JSON_PARSER
-#define PINKJS_USE_LIGHTWEIGHT_JSON_PARSER 0
+#ifndef POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER
+#define POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER 0
 #endif
-#if PINKJS_USE_LIGHTWEIGHT_JSON_PARSER
-#define PINKJS_DISABLE_BUILTIN_JSON_PARSER 1
+#if POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER
+#define POCKETINKJS_DISABLE_BUILTIN_JSON_PARSER 1
 #include "netapps/lightweight_json_parser.h"
 #endif
-#include "sys/runtime/pinkjs/pinkjs.h"
+#include "sys/runtime/pocketinkjs/pocketinkjs.h"
 #include "sys/services/sd_storage.h"
 #include "sys/system_config.h"
 #include "sys/system_fonts.h"
@@ -43,45 +43,45 @@
 
 #if __has_include(<esp_rom_sys.h>)
 #include <esp_rom_sys.h>
-#define PINKJS_HAS_ROM_PRINTF 1
+#define POCKETINKJS_HAS_ROM_PRINTF 1
 #else
-#define PINKJS_HAS_ROM_PRINTF 0
+#define POCKETINKJS_HAS_ROM_PRINTF 0
 #endif
 
 namespace {
 
-constexpr size_t kPinkJsMinWorkspaceBytes = 160U * 1024U;
-constexpr size_t kPinkJsPsramReserveBytes = 512U * 1024U;
-constexpr size_t kPinkJsAllocationHeadroomBytes = 32U * 1024U;
-constexpr size_t kPinkJsMaxSourceBytes = 96U * 1024U;
-constexpr size_t kPinkJsMaxHttpBytes = 64U * 1024U;
-constexpr uint32_t kPinkJsHttpTimeoutMs = 8000;
-constexpr uint8_t kPinkJsMaxTimers = 16;
-constexpr size_t kPinkJsJobsPerUpdate = 32;
-constexpr uint8_t kPinkJsFetchQueueDepth = 3;
-constexpr uint32_t kPinkJsWorkerStackBytes = 7168;
-constexpr uint32_t kPinkJsExecutorStackBytes = 40U * 1024U;
-constexpr UBaseType_t kPinkJsWorkerPriority = 1;
-constexpr BaseType_t kPinkJsWorkerCore = 0;
-constexpr UBaseType_t kPinkJsExecutorPriority = 1;
-constexpr BaseType_t kPinkJsExecutorCore = 1;
+constexpr size_t kPocketInkJSMinWorkspaceBytes = 160U * 1024U;
+constexpr size_t kPocketInkJSPsramReserveBytes = 512U * 1024U;
+constexpr size_t kPocketInkJSAllocationHeadroomBytes = 32U * 1024U;
+constexpr size_t kPocketInkJSMaxSourceBytes = 96U * 1024U;
+constexpr size_t kPocketInkJSMaxHttpBytes = 64U * 1024U;
+constexpr uint32_t kPocketInkJSHttpTimeoutMs = 8000;
+constexpr uint8_t kPocketInkJSMaxTimers = 16;
+constexpr size_t kPocketInkJSJobsPerUpdate = 32;
+constexpr uint8_t kPocketInkJSFetchQueueDepth = 3;
+constexpr uint32_t kPocketInkJSWorkerStackBytes = 7168;
+constexpr uint32_t kPocketInkJSExecutorStackBytes = 40U * 1024U;
+constexpr UBaseType_t kPocketInkJSWorkerPriority = 1;
+constexpr BaseType_t kPocketInkJSWorkerCore = 0;
+constexpr UBaseType_t kPocketInkJSExecutorPriority = 1;
+constexpr BaseType_t kPocketInkJSExecutorCore = 1;
 constexpr size_t kIdCapacity = 20;
 constexpr size_t kStatusCapacity = 96;
 
-class PinkJsApp;
+class PocketInkJSApp;
 
-using PinkJsExecutorOperation = void (*)(PinkJsApp &, void *);
+using PocketInkJSExecutorOperation = void (*)(PocketInkJSApp &, void *);
 
-struct PinkJsExecutorCommand {
-  PinkJsExecutorOperation operation = nullptr;
+struct PocketInkJSExecutorCommand {
+  PocketInkJSExecutorOperation operation = nullptr;
   void *context = nullptr;
 };
 
-enum PinkJsTouchCallback : uint8_t {
-  PinkJsTouchGeneric = 1U << 0U,
-  PinkJsTouchDown = 1U << 1U,
-  PinkJsTouchMove = 1U << 2U,
-  PinkJsTouchUp = 1U << 3U,
+enum PocketInkJSTouchCallback : uint8_t {
+  PocketInkJSTouchGeneric = 1U << 0U,
+  PocketInkJSTouchDown = 1U << 1U,
+  PocketInkJSTouchMove = 1U << 2U,
+  PocketInkJSTouchUp = 1U << 3U,
 };
 
 struct FetchHeader {
@@ -90,24 +90,24 @@ struct FetchHeader {
 };
 
 struct FetchRequest {
-  pinkjs::RootHandle promise = pinkjs::kInvalidRoot;
+  PocketInkJS::RootHandle promise = PocketInkJS::kInvalidRoot;
   char url[512] = {};
   char method[12] = "GET";
   uint8_t *body = nullptr;
   size_t bodyBytes = 0;
-  size_t maxBytes = kPinkJsMaxHttpBytes;
-  uint32_t timeoutMs = kPinkJsHttpTimeoutMs;
+  size_t maxBytes = kPocketInkJSMaxHttpBytes;
+  uint32_t timeoutMs = kPocketInkJSHttpTimeoutMs;
   FetchHeader headers[6] = {};
   uint8_t headerCount = 0;
 };
 
 struct FetchCompletion {
-  pinkjs::RootHandle promise = pinkjs::kInvalidRoot;
+  PocketInkJS::RootHandle promise = PocketInkJS::kInvalidRoot;
   char url[512] = {};
   uint8_t *body = nullptr;
   size_t bodyBytes = 0;
   int statusCode = 0;
-  pinkjs::ErrorCode error = {};
+  PocketInkJS::ErrorCode error = {};
 };
 
 struct AsyncState {
@@ -121,17 +121,17 @@ struct TimerSlot {
   uint32_t id = 0;
   uint32_t dueAt = 0;
   uint32_t intervalMs = 0;
-  pinkjs::RootHandle callback = pinkjs::kInvalidRoot;
-  pinkjs::RootHandle arguments = pinkjs::kInvalidRoot;
+  PocketInkJS::RootHandle callback = PocketInkJS::kInvalidRoot;
+  PocketInkJS::RootHandle arguments = PocketInkJS::kInvalidRoot;
   bool active = false;
 };
 
 struct TimerState {
-  TimerSlot slots[kPinkJsMaxTimers] = {};
+  TimerSlot slots[kPocketInkJSMaxTimers] = {};
   uint32_t nextId = 1;
 };
 
-enum class PinkJsSystemModal : uint8_t {
+enum class PocketInkJSSystemModal : uint8_t {
   None,
   FilePicker,
   Keyboard,
@@ -141,32 +141,32 @@ enum class PinkJsSystemModal : uint8_t {
 };
 
 bool activeSystemModalIdle();
-bool beginActiveSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+bool beginActiveSystemModal(PocketInkJSSystemModal kind, PocketInkJS::Value promise,
                             uint32_t captureDurationMs = 0,
                             DatePickerDate initialDate = {});
 
-void setFetchError(FetchCompletion *completion, pinkjs::ErrorCode error) {
+void setFetchError(FetchCompletion *completion, PocketInkJS::ErrorCode error) {
   completion->error = error;
 }
 
-PinkJsApp *activePinkJsApp = nullptr;
-Adafruit_GFX *pinkJsDrawTarget = nullptr;
-uint8_t pinkJsSleepGuardDepth = 0;
-UBaseType_t pinkJsLowestStackHwm = UINT_MAX;
-char *pinkJsLogBuffer = nullptr;
+PocketInkJSApp *activePocketInkJSApp = nullptr;
+Adafruit_GFX *PocketInkJSDrawTarget = nullptr;
+uint8_t PocketInkJSSleepGuardDepth = 0;
+UBaseType_t PocketInkJSLowestStackHwm = UINT_MAX;
+char *PocketInkJSLogBuffer = nullptr;
 
-void pinkJsLogWrite(const char *text) {
-#if PINKJS_HAS_ROM_PRINTF
+void PocketInkJSLogWrite(const char *text) {
+#if POCKETINKJS_HAS_ROM_PRINTF
   esp_rom_printf("%s", text != nullptr ? text : "");
 #else
   std::fputs(text != nullptr ? text : "", stdout);
 #endif
 }
 
-void pinkJsLogPrintf(const char *format, ...) {
+void PocketInkJSLogPrintf(const char *format, ...) {
   va_list args;
   va_start(args, format);
-#if PINKJS_HAS_ROM_PRINTF
+#if POCKETINKJS_HAS_ROM_PRINTF
   esp_rom_vprintf(format, args);
 #else
   std::vprintf(format, args);
@@ -174,13 +174,13 @@ void pinkJsLogPrintf(const char *format, ...) {
   va_end(args);
 }
 
-void logPinkJsStackLow(const char *callback) {
+void logPocketInkJSStackLow(const char *callback) {
 #if defined(INCLUDE_uxTaskGetStackHighWaterMark) && INCLUDE_uxTaskGetStackHighWaterMark
   const UBaseType_t highWaterMark = uxTaskGetStackHighWaterMark(nullptr);
-  if (highWaterMark >= pinkJsLowestStackHwm)
+  if (highWaterMark >= PocketInkJSLowestStackHwm)
     return;
-  pinkJsLowestStackHwm = highWaterMark;
-  pinkJsLogPrintf("[pinkjs] stack low callback=%s hwm=%u\n",
+  PocketInkJSLowestStackHwm = highWaterMark;
+  PocketInkJSLogPrintf("[PocketInkJS] stack low callback=%s hwm=%u\n",
                   callback != nullptr ? callback : "?",
                   static_cast<unsigned>(highWaterMark));
 #else
@@ -202,7 +202,7 @@ bool copyText(char *destination, size_t destinationSize, const char *source) {
   return length < destinationSize;
 }
 
-void drawPinkJsCentered(Adafruit_GFX &gfx, const char *text, int16_t y,
+void drawPocketInkJSCentered(Adafruit_GFX &gfx, const char *text, int16_t y,
                         uint8_t textSize) {
   int16_t x1 = 0;
   int16_t y1 = 0;
@@ -215,7 +215,7 @@ void drawPinkJsCentered(Adafruit_GFX &gfx, const char *text, int16_t y,
   gfx.print(text != nullptr ? text : "");
 }
 
-void drawPinkJsWrappedCentered(Adafruit_GFX &gfx, const char *text,
+void drawPocketInkJSWrappedCentered(Adafruit_GFX &gfx, const char *text,
                                int16_t firstY) {
   constexpr size_t kLineCharacters = 30;
   const size_t length = text != nullptr ? strlen(text) : 0;
@@ -236,13 +236,13 @@ void drawPinkJsWrappedCentered(Adafruit_GFX &gfx, const char *text,
     const size_t amount = end - at;
     memcpy(line, text + at, amount);
     line[amount] = '\0';
-    drawPinkJsCentered(gfx, line, y, 1);
+    drawPocketInkJSCentered(gfx, line, y, 1);
     y += 14;
     at = end;
   }
 }
 
-bool pinkJsErrorNumber(const char *message, uint8_t *number) {
+bool PocketInkJSErrorNumber(const char *message, uint8_t *number) {
   if (message == nullptr || number == nullptr || message[0] != 'E' ||
       message[1] < '0' || message[1] > '9' || message[2] < '0' ||
       message[2] > '9' || message[3] < '0' || message[3] > '9') {
@@ -291,7 +291,7 @@ void *allocatePsram(size_t bytes) {
   return bytes > 0 ? psram::allocate(bytes) : nullptr;
 }
 
-void *allocatePinkJsWorkspace(size_t *allocatedBytes) {
+void *allocatePocketInkJSWorkspace(size_t *allocatedBytes) {
   if (allocatedBytes == nullptr)
     return nullptr;
   *allocatedBytes = 0;
@@ -300,20 +300,20 @@ void *allocatePinkJsWorkspace(size_t *allocatedBytes) {
   const size_t largestBlock = heap_caps_get_largest_free_block(caps);
   // Leave at least 512 KiB, or 25% on larger devices, for fetch bodies,
   // component state, TLS, and other active services.
-  const size_t reserve = freeBytes / 4U > kPinkJsPsramReserveBytes
+  const size_t reserve = freeBytes / 4U > kPocketInkJSPsramReserveBytes
                              ? freeBytes / 4U
-                             : kPinkJsPsramReserveBytes;
+                             : kPocketInkJSPsramReserveBytes;
   const size_t freeBudget = freeBytes > reserve ? freeBytes - reserve : 0;
   const size_t blockBudget =
-      largestBlock > kPinkJsAllocationHeadroomBytes
-          ? largestBlock - kPinkJsAllocationHeadroomBytes
+      largestBlock > kPocketInkJSAllocationHeadroomBytes
+          ? largestBlock - kPocketInkJSAllocationHeadroomBytes
           : 0;
   size_t candidate = freeBudget < blockBudget ? freeBudget : blockBudget;
   candidate &= ~size_t(4095U);
-  if (candidate < kPinkJsMinWorkspaceBytes)
-    candidate = kPinkJsMinWorkspaceBytes;
+  if (candidate < kPocketInkJSMinWorkspaceBytes)
+    candidate = kPocketInkJSMinWorkspaceBytes;
 
-  while (candidate >= kPinkJsMinWorkspaceBytes) {
+  while (candidate >= kPocketInkJSMinWorkspaceBytes) {
     void *workspace = allocatePsram(candidate);
     if (workspace != nullptr) {
       *allocatedBytes = candidate;
@@ -351,7 +351,7 @@ FetchCompletion *performFetch(FetchRequest *request,
   copyText(completion->url, sizeof(completion->url), request->url);
 #if ENABLE_NETWORK_APPS
   if (!wifiIsConnected()) {
-    setFetchError(completion, pinkjs::ErrorCode{190});
+    setFetchError(completion, PocketInkJS::ErrorCode{190});
     return completion;
   }
   WiFiClientSecure client;
@@ -359,10 +359,10 @@ FetchCompletion *performFetch(FetchRequest *request,
   HTTPClient http;
   http.setTimeout(request->timeoutMs);
   if (!http.begin(client, request->url)) {
-    setFetchError(completion, pinkjs::ErrorCode{193});
+    setFetchError(completion, PocketInkJS::ErrorCode{193});
     return completion;
   }
-  http.addHeader("User-Agent", "PocketInk-PinkJS/0.2");
+  http.addHeader("User-Agent", "PocketInk-PocketInkJS/0.2");
   for (uint8_t i = 0; i < request->headerCount; i++)
     http.addHeader(request->headers[i].name, request->headers[i].value);
   const int code = strcmp(request->method, "GET") == 0
@@ -372,13 +372,13 @@ FetchCompletion *performFetch(FetchRequest *request,
   completion->statusCode = code;
   if (code <= 0) {
     http.end();
-    setFetchError(completion, pinkjs::ErrorCode{194});
+    setFetchError(completion, PocketInkJS::ErrorCode{194});
     return completion;
   }
   const int expected = http.getSize();
   if (expected > 0 && static_cast<size_t>(expected) > request->maxBytes) {
     http.end();
-    setFetchError(completion, pinkjs::ErrorCode{195});
+    setFetchError(completion, PocketInkJS::ErrorCode{195});
     return completion;
   }
   const size_t allocationBytes =
@@ -387,7 +387,7 @@ FetchCompletion *performFetch(FetchRequest *request,
     completion->body = static_cast<uint8_t *>(allocatePsram(allocationBytes));
     if (completion->body == nullptr) {
       http.end();
-      setFetchError(completion, pinkjs::ErrorCode{196});
+      setFetchError(completion, PocketInkJS::ErrorCode{196});
       return completion;
     }
   }
@@ -413,16 +413,16 @@ FetchCompletion *performFetch(FetchRequest *request,
   http.end();
   if (!stopping.load() && expected > 0 &&
       completion->bodyBytes != static_cast<size_t>(expected)) {
-    setFetchError(completion, pinkjs::ErrorCode{197});
+    setFetchError(completion, PocketInkJS::ErrorCode{197});
   }
 #else
   (void)stopping;
-  setFetchError(completion, pinkjs::ErrorCode{198});
+  setFetchError(completion, PocketInkJS::ErrorCode{198});
 #endif
   return completion;
 }
 
-void pinkJsWorker(void *context) {
+void PocketInkJSWorker(void *context) {
   AsyncState *state = static_cast<AsyncState *>(context);
   while (state != nullptr && !state->stopping.load()) {
     FetchRequest *request = nullptr;
@@ -454,34 +454,34 @@ void pinkJsWorker(void *context) {
 }
 
 void releaseSleepGuards() {
-  while (pinkJsSleepGuardDepth > 0) {
-    pinkJsSleepGuardDepth--;
+  while (PocketInkJSSleepGuardDepth > 0) {
+    PocketInkJSSleepGuardDepth--;
     lockscreenGuardRelease();
   }
 }
 
-bool numericArguments(pinkjs::Runtime &runtime, const pinkjs::Value *args,
+bool numericArguments(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *args,
                       size_t argc, size_t expected) {
   if (argc != expected) {
-    runtime.fail(pinkjs::ErrorCode{157});
+    runtime.fail(PocketInkJS::ErrorCode{157});
     return false;
   }
   for (size_t i = 0; i < argc; i++) {
-    if (runtime.typeOf(args[i]) != pinkjs::ValueType::Number ||
+    if (runtime.typeOf(args[i]) != PocketInkJS::ValueType::Number ||
         !std::isfinite(runtime.toNumber(args[i]))) {
-      runtime.fail(pinkjs::ErrorCode{158});
+      runtime.fail(PocketInkJS::ErrorCode{158});
       return false;
     }
   }
   return true;
 }
 
-bool copyJsString(pinkjs::Runtime &runtime, pinkjs::Value value, char *out,
+bool copyJsString(PocketInkJS::Runtime &runtime, PocketInkJS::Value value, char *out,
                   size_t outSize) {
   if (!runtime.isString(value) || out == nullptr || outSize == 0) {
     return false;
   }
-  const pinkjs::StringView text = runtime.stringView(value);
+  const PocketInkJS::StringView text = runtime.stringView(value);
   if (text.size >= outSize) {
     return false;
   }
@@ -520,183 +520,183 @@ uint8_t toU8(double value) {
   return static_cast<uint8_t>(value);
 }
 
-pinkjs::Value nativeConsoleLog(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  if (pinkJsLogBuffer == nullptr) {
-    pinkJsLogBuffer = static_cast<char *>(allocatePsram(160));
+PocketInkJS::Value nativeConsoleLog(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  if (PocketInkJSLogBuffer == nullptr) {
+    PocketInkJSLogBuffer = static_cast<char *>(allocatePsram(160));
   }
-  if (pinkJsLogBuffer == nullptr) {
-    pinkJsLogWrite("[pinkjs] [log buffer unavailable]\n");
+  if (PocketInkJSLogBuffer == nullptr) {
+    PocketInkJSLogWrite("[PocketInkJS] [log buffer unavailable]\n");
     return runtime.undefined();
   }
-  pinkJsLogWrite("[pinkjs]");
+  PocketInkJSLogWrite("[PocketInkJS]");
   for (size_t i = 0; i < argc; i++) {
-    runtime.format(args[i], pinkJsLogBuffer, 160);
-    pinkJsLogWrite(" ");
-    pinkJsLogWrite(pinkJsLogBuffer);
+    runtime.format(args[i], PocketInkJSLogBuffer, 160);
+    PocketInkJSLogWrite(" ");
+    PocketInkJSLogWrite(PocketInkJSLogBuffer);
   }
-  pinkJsLogWrite("\n");
+  PocketInkJSLogWrite("\n");
   return runtime.undefined();
 }
 
-pinkjs::Value nativeMillis(pinkjs::Runtime &runtime, const pinkjs::Value *,
+PocketInkJS::Value nativeMillis(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *,
                            size_t argc, void *) {
   if (argc != 0) {
-    return runtime.fail(pinkjs::ErrorCode{159});
+    return runtime.fail(PocketInkJS::ErrorCode{159});
   }
   return runtime.number(static_cast<double>(millis()));
 }
 
-pinkjs::Value nativePinkJsHeapUsed(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *, size_t argc,
+PocketInkJS::Value nativePocketInkJSHeapUsed(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *, size_t argc,
                                    void *) {
   return argc == 0
              ? runtime.number(
                    static_cast<double>(runtime.memoryStats().heapUsedBytes))
-             : runtime.fail(pinkjs::ErrorCode{157});
+             : runtime.fail(PocketInkJS::ErrorCode{157});
 }
 
-pinkjs::Value nativePinkJsHeapFree(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *, size_t argc,
+PocketInkJS::Value nativePocketInkJSHeapFree(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *, size_t argc,
                                    void *) {
   return argc == 0
              ? runtime.number(
                    static_cast<double>(runtime.memoryStats().heapFreeBytes))
-             : runtime.fail(pinkjs::ErrorCode{157});
+             : runtime.fail(PocketInkJS::ErrorCode{157});
 }
 
-pinkjs::Value nativePinkJsHeapPeak(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *, size_t argc,
+PocketInkJS::Value nativePocketInkJSHeapPeak(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *, size_t argc,
                                    void *) {
   return argc == 0
              ? runtime.number(static_cast<double>(
                    runtime.memoryStats().peakHeapUsedBytes))
-             : runtime.fail(pinkjs::ErrorCode{157});
+             : runtime.fail(PocketInkJS::ErrorCode{157});
 }
 
-pinkjs::Value nativeNetworkConnected(pinkjs::Runtime &runtime,
-                                     const pinkjs::Value *, size_t argc,
+PocketInkJS::Value nativeNetworkConnected(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *, size_t argc,
                                      void *) {
   if (argc != 0) {
-    return runtime.fail(pinkjs::ErrorCode{160});
+    return runtime.fail(PocketInkJS::ErrorCode{160});
   }
   return runtime.boolean(wifiIsConnected());
 }
 
-pinkjs::Value nativeSetWakeLock(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeSetWakeLock(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   if (argc != 1) {
-    return runtime.fail(pinkjs::ErrorCode{162});
+    return runtime.fail(PocketInkJS::ErrorCode{162});
   }
   if (runtime.toBoolean(args[0])) {
-    if (pinkJsSleepGuardDepth < 255U) {
-      pinkJsSleepGuardDepth++;
+    if (PocketInkJSSleepGuardDepth < 255U) {
+      PocketInkJSSleepGuardDepth++;
       lockscreenGuardAcquire();
     }
-  } else if (pinkJsSleepGuardDepth > 0U) {
-    pinkJsSleepGuardDepth--;
+  } else if (PocketInkJSSleepGuardDepth > 0U) {
+    PocketInkJSSleepGuardDepth--;
     lockscreenGuardRelease();
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiSetFont(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeUiSetFont(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc != 1)
-    return runtime.fail(pinkjs::ErrorCode{157});
-  if (pinkJsDrawTarget == nullptr) {
+    return runtime.fail(PocketInkJS::ErrorCode{157});
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.undefined();
   }
   if (runtime.isString(args[0])) {
     char name[32];
     return copyJsString(runtime, args[0], name, sizeof(name)) &&
-                   systemFontApply(*pinkJsDrawTarget, name)
+                   systemFontApply(*PocketInkJSDrawTarget, name)
                ? runtime.boolean(true)
                : runtime.boolean(false);
   }
   if (!runtime.isNumber(args[0]) ||
       !std::isfinite(runtime.toNumber(args[0])))
-    return runtime.fail(pinkjs::ErrorCode{158});
+    return runtime.fail(PocketInkJS::ErrorCode{158});
   switch (toI16(runtime.toNumber(args[0]))) {
   case 1:
-    systemFontApply(*pinkJsDrawTarget, size_t{1});
+    systemFontApply(*PocketInkJSDrawTarget, size_t{1});
     break;
   case 2:
-    systemFontApply(*pinkJsDrawTarget, size_t{2});
+    systemFontApply(*PocketInkJSDrawTarget, size_t{2});
     break;
   default:
-    systemFontApply(*pinkJsDrawTarget, size_t{0});
+    systemFontApply(*PocketInkJSDrawTarget, size_t{0});
     break;
   }
   return runtime.boolean(true);
 }
 
-pinkjs::Value nativeUiSetTextSize(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiSetTextSize(PocketInkJS::Runtime &runtime,
+                                  const PocketInkJS::Value *args, size_t argc,
                                   void *) {
-  if (numericArguments(runtime, args, argc, 1) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->setTextSize(toU8(runtime.toNumber(args[0])));
+  if (numericArguments(runtime, args, argc, 1) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->setTextSize(toU8(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiSetTextColor(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiSetTextColor(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *args, size_t argc,
                                    void *) {
-  if (numericArguments(runtime, args, argc, 1) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->setTextColor(toU16(runtime.toNumber(args[0])));
+  if (numericArguments(runtime, args, argc, 1) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->setTextColor(toU16(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiSetCursor(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiSetCursor(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
-  if (numericArguments(runtime, args, argc, 2) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->setCursor(toI16(runtime.toNumber(args[0])),
+  if (numericArguments(runtime, args, argc, 2) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->setCursor(toI16(runtime.toNumber(args[0])),
                                 toI16(runtime.toNumber(args[1])));
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiPrint(pinkjs::Runtime &runtime,
-                            const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeUiPrint(PocketInkJS::Runtime &runtime,
+                            const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc != 1) {
-    return runtime.fail(pinkjs::ErrorCode{163});
+    return runtime.fail(PocketInkJS::ErrorCode{163});
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.undefined();
   }
   if (runtime.isString(args[0])) {
-    const pinkjs::StringView text = runtime.stringView(args[0]);
+    const PocketInkJS::StringView text = runtime.stringView(args[0]);
     for (size_t i = 0; i < text.size; i++) {
       char character[2] = {text.data[i], '\0'};
-      pinkJsDrawTarget->print(character);
+      PocketInkJSDrawTarget->print(character);
     }
   } else {
     char text[96];
     runtime.format(args[0], text, sizeof(text));
-    pinkJsDrawTarget->print(text);
+    PocketInkJSDrawTarget->print(text);
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiDrawPixel(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiDrawPixel(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
-  if (numericArguments(runtime, args, argc, 3) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->drawPixel(
+  if (numericArguments(runtime, args, argc, 3) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->drawPixel(
         toI16(runtime.toNumber(args[0])), toI16(runtime.toNumber(args[1])),
         toU16(runtime.toNumber(args[2])));
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiDrawLine(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  if (numericArguments(runtime, args, argc, 5) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->drawLine(
+PocketInkJS::Value nativeUiDrawLine(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  if (numericArguments(runtime, args, argc, 5) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->drawLine(
         toI16(runtime.toNumber(args[0])), toI16(runtime.toNumber(args[1])),
         toI16(runtime.toNumber(args[2])), toI16(runtime.toNumber(args[3])),
         toU16(runtime.toNumber(args[4])));
@@ -704,10 +704,10 @@ pinkjs::Value nativeUiDrawLine(pinkjs::Runtime &runtime,
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiDrawRect(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  if (numericArguments(runtime, args, argc, 5) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->drawRect(
+PocketInkJS::Value nativeUiDrawRect(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  if (numericArguments(runtime, args, argc, 5) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->drawRect(
         toI16(runtime.toNumber(args[0])), toI16(runtime.toNumber(args[1])),
         toI16(runtime.toNumber(args[2])), toI16(runtime.toNumber(args[3])),
         toU16(runtime.toNumber(args[4])));
@@ -715,10 +715,10 @@ pinkjs::Value nativeUiDrawRect(pinkjs::Runtime &runtime,
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiFillRect(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  if (numericArguments(runtime, args, argc, 5) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->fillRect(
+PocketInkJS::Value nativeUiFillRect(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  if (numericArguments(runtime, args, argc, 5) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->fillRect(
         toI16(runtime.toNumber(args[0])), toI16(runtime.toNumber(args[1])),
         toI16(runtime.toNumber(args[2])), toI16(runtime.toNumber(args[3])),
         toU16(runtime.toNumber(args[4])));
@@ -726,35 +726,35 @@ pinkjs::Value nativeUiFillRect(pinkjs::Runtime &runtime,
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiFillScreen(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiFillScreen(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
-  if (numericArguments(runtime, args, argc, 1) && pinkJsDrawTarget != nullptr) {
-    pinkJsDrawTarget->fillScreen(toU16(runtime.toNumber(args[0])));
+  if (numericArguments(runtime, args, argc, 1) && PocketInkJSDrawTarget != nullptr) {
+    PocketInkJSDrawTarget->fillScreen(toU16(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
 }
 
-pinkjs::Value apiStatusValue(pinkjs::Runtime &runtime, AppApiStatus status) {
+PocketInkJS::Value apiStatusValue(PocketInkJS::Runtime &runtime, AppApiStatus status) {
   return runtime.number(static_cast<int8_t>(status));
 }
 
-double imageOptionNumber(pinkjs::Runtime &runtime, pinkjs::Value options,
+double imageOptionNumber(PocketInkJS::Runtime &runtime, PocketInkJS::Value options,
                          const char *key, double fallback) {
-  if (runtime.typeOf(options) != pinkjs::ValueType::Object) {
+  if (runtime.typeOf(options) != PocketInkJS::ValueType::Object) {
     return fallback;
   }
-  const pinkjs::Value value = runtime.objectGet(options, key);
+  const PocketInkJS::Value value = runtime.objectGet(options, key);
   return runtime.isNumber(value) && std::isfinite(runtime.toNumber(value))
              ? runtime.toNumber(value)
              : fallback;
 }
 
-bool imageOptions(pinkjs::Runtime &runtime, pinkjs::Value options, int16_t &x,
+bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int16_t &x,
                   int16_t &y, int16_t &w, int16_t &h, uint8_t &dither,
                   bool &fit, ImageTransform &transform) {
-  if (runtime.typeOf(options) != pinkjs::ValueType::Undefined &&
-      runtime.typeOf(options) != pinkjs::ValueType::Object) {
+  if (runtime.typeOf(options) != PocketInkJS::ValueType::Undefined &&
+      runtime.typeOf(options) != PocketInkJS::ValueType::Object) {
     return false;
   }
   x = toI16(imageOptionNumber(runtime, options, "x", 0));
@@ -762,20 +762,20 @@ bool imageOptions(pinkjs::Runtime &runtime, pinkjs::Value options, int16_t &x,
   w = toI16(imageOptionNumber(runtime, options, "width", EPD_WIDTH));
   h = toI16(imageOptionNumber(runtime, options, "height", EPD_HEIGHT));
   dither = toU8(imageOptionNumber(runtime, options, "dither", 1));
-  if (runtime.typeOf(options) == pinkjs::ValueType::Object) {
-    const pinkjs::Value fitValue = runtime.objectGet(options, "scaleToFit");
-    fit = runtime.typeOf(fitValue) == pinkjs::ValueType::Undefined
+  if (runtime.typeOf(options) == PocketInkJS::ValueType::Object) {
+    const PocketInkJS::Value fitValue = runtime.objectGet(options, "scaleToFit");
+    fit = runtime.typeOf(fitValue) == PocketInkJS::ValueType::Undefined
               ? true
               : runtime.toBoolean(fitValue);
-    const pinkjs::Value matrix = runtime.objectGet(options, "matrix");
-    if (runtime.typeOf(matrix) == pinkjs::ValueType::Array) {
+    const PocketInkJS::Value matrix = runtime.objectGet(options, "matrix");
+    if (runtime.typeOf(matrix) == PocketInkJS::ValueType::Array) {
       if (runtime.arrayLength(matrix) != 6) {
         return false;
       }
       float *values[] = {&transform.a, &transform.b, &transform.c,
                          &transform.d, &transform.tx, &transform.ty};
       for (size_t i = 0; i < 6; i++) {
-        const pinkjs::Value value = runtime.arrayAt(matrix, i);
+        const PocketInkJS::Value value = runtime.arrayAt(matrix, i);
         if (!runtime.isNumber(value) ||
             !std::isfinite(runtime.toNumber(value))) {
           return false;
@@ -802,13 +802,13 @@ bool imageOptions(pinkjs::Runtime &runtime, pinkjs::Value options, int16_t &x,
   return w > 0 && h > 0;
 }
 
-pinkjs::Value nativeUiImagePath(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiImagePath(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
     return runtime.fail("ui.imagePath expects path and optional options");
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.boolean(false);
   }
   char path[288];
@@ -831,18 +831,18 @@ pinkjs::Value nativeUiImagePath(pinkjs::Runtime &runtime,
     return runtime.fail("invalid image options");
   }
   return runtime.boolean(drawImagePathTransformed(
-      *pinkJsDrawTarget, "sd", path, x, y, w, h, dither, fit, transform));
+      *PocketInkJSDrawTarget, "sd", path, x, y, w, h, dither, fit, transform));
 }
 
-pinkjs::Value nativeUiImageBuffer(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
+                                  const PocketInkJS::Value *args, size_t argc,
                                   void *) {
   if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
       !runtime.isString(args[1])) {
     return runtime.fail(
         "ui.imageBuffer expects binary string, format, and options");
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.boolean(false);
   }
   char format[12];
@@ -860,19 +860,19 @@ pinkjs::Value nativeUiImageBuffer(pinkjs::Runtime &runtime,
                     w, h, dither, fit, transform)) {
     return runtime.fail("invalid image options");
   }
-  const pinkjs::StringView data = runtime.stringView(args[0]);
+  const PocketInkJS::StringView data = runtime.stringView(args[0]);
   return runtime.boolean(drawImageBufferTransformed(
-      *pinkJsDrawTarget, reinterpret_cast<const uint8_t *>(data.data),
+      *PocketInkJSDrawTarget, reinterpret_cast<const uint8_t *>(data.data),
       data.size, format, x, y, w, h, dither, fit, transform));
 }
 
-pinkjs::Value nativeUiVectorPath(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiVectorPath(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
     return runtime.fail("ui.vectorPath expects path and optional options");
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.boolean(false);
   }
   char path[288];
@@ -897,16 +897,16 @@ pinkjs::Value nativeUiVectorPath(pinkjs::Runtime &runtime,
   (void)dither;
   (void)fit;
   return runtime.boolean(drawVectorPathTransformed(
-      *pinkJsDrawTarget, "sd", path, x, y, w, h, transform));
+      *PocketInkJSDrawTarget, "sd", path, x, y, w, h, transform));
 }
 
-pinkjs::Value nativeUiVectorString(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiVectorString(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *args, size_t argc,
                                    void *) {
   if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
     return runtime.fail("ui.vectorString expects SVG text and optional options");
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.boolean(false);
   }
   int16_t x = 0;
@@ -922,13 +922,13 @@ pinkjs::Value nativeUiVectorString(pinkjs::Runtime &runtime,
   }
   (void)dither;
   (void)fit;
-  const pinkjs::StringView svg = runtime.stringView(args[0]);
+  const PocketInkJS::StringView svg = runtime.stringView(args[0]);
   return runtime.boolean(drawVectorStringTransformed(
-      *pinkJsDrawTarget, svg.data, svg.size, x, y, w, h, transform));
+      *PocketInkJSDrawTarget, svg.data, svg.size, x, y, w, h, transform));
 }
 
-pinkjs::Value readPinkJsFile(pinkjs::Runtime &runtime,
-                             const pinkjs::Value *args, size_t argc) {
+PocketInkJS::Value readPocketInkJSFile(PocketInkJS::Runtime &runtime,
+                             const PocketInkJS::Value *args, size_t argc) {
   if (argc < 1 || argc > 3 || !runtime.isString(args[0])) {
     return runtime.fail("file read expects path, offset?, maxBytes?");
   }
@@ -966,8 +966,8 @@ pinkjs::Value readPinkJsFile(pinkjs::Runtime &runtime,
     psram::release(buffer);
     return runtime.fail("file read failed");
   }
-  pinkjs::Value result = runtime.makeObject();
-  pinkjs::Value data = runtime.makeString(
+  PocketInkJS::Value result = runtime.makeObject();
+  PocketInkJS::Value data = runtime.makeString(
       reinterpret_cast<const char *>(buffer), bytes);
   psram::release(buffer);
   runtime.objectSet(result, "data", data);
@@ -979,58 +979,58 @@ pinkjs::Value readPinkJsFile(pinkjs::Runtime &runtime,
   return result;
 }
 
-pinkjs::Value nativeFilesReadText(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFilesReadText(PocketInkJS::Runtime &runtime,
+                                  const PocketInkJS::Value *args, size_t argc,
                                   void *) {
-  return readPinkJsFile(runtime, args, argc);
+  return readPocketInkJSFile(runtime, args, argc);
 }
 
-pinkjs::Value nativeFilesReadBinary(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFilesReadBinary(PocketInkJS::Runtime &runtime,
+                                    const PocketInkJS::Value *args, size_t argc,
                                     void *) {
-  return readPinkJsFile(runtime, args, argc);
+  return readPocketInkJSFile(runtime, args, argc);
 }
 
-bool jsStringEquals(pinkjs::Runtime &runtime, pinkjs::Value value,
+bool jsStringEquals(PocketInkJS::Runtime &runtime, PocketInkJS::Value value,
                     const char *expected) {
   if (!runtime.isString(value) || expected == nullptr) {
     return false;
   }
-  const pinkjs::StringView text = runtime.stringView(value);
+  const PocketInkJS::StringView text = runtime.stringView(value);
   const size_t length = strlen(expected);
   return text.size == length &&
          (length == 0 || memcmp(text.data, expected, length) == 0);
 }
 
-bool fsEncodingSupported(pinkjs::Runtime &runtime, pinkjs::Value value) {
+bool fsEncodingSupported(PocketInkJS::Runtime &runtime, PocketInkJS::Value value) {
   return runtime.isUndefined(value) || jsStringEquals(runtime, value, "utf8") ||
          jsStringEquals(runtime, value, "utf-8") ||
          jsStringEquals(runtime, value, "binary") ||
          jsStringEquals(runtime, value, "buffer");
 }
 
-pinkjs::Value resolvedPromise(pinkjs::Runtime &runtime,
-                              pinkjs::Value result) {
+PocketInkJS::Value resolvedPromise(PocketInkJS::Runtime &runtime,
+                              PocketInkJS::Value result) {
   if (runtime.error().message[0] != '\0') {
     return runtime.rejectCurrentError();
   }
-  pinkjs::Value promise = runtime.makePromise();
+  PocketInkJS::Value promise = runtime.makePromise();
   if (!runtime.isUndefined(promise)) {
     runtime.settlePromise(promise, result, false);
   }
   return promise;
 }
 
-struct PinkJsDirectoryContext {
-  pinkjs::Runtime *runtime = nullptr;
-  pinkjs::Value entries = {};
+struct PocketInkJSDirectoryContext {
+  PocketInkJS::Runtime *runtime = nullptr;
+  PocketInkJS::Value entries = {};
   size_t count = 0;
   bool truncated = false;
 };
 
-bool appendPinkJsDirectoryEntry(const char *name, bool, uint32_t, void *raw) {
-  PinkJsDirectoryContext *context =
-      static_cast<PinkJsDirectoryContext *>(raw);
+bool appendPocketInkJSDirectoryEntry(const char *name, bool, uint32_t, void *raw) {
+  PocketInkJSDirectoryContext *context =
+      static_cast<PocketInkJSDirectoryContext *>(raw);
   if (context == nullptr || context->runtime == nullptr) {
     return false;
   }
@@ -1045,8 +1045,8 @@ bool appendPinkJsDirectoryEntry(const char *name, bool, uint32_t, void *raw) {
                                                                      : ""));
 }
 
-pinkjs::Value nativeFsReadFileSync(pinkjs::Runtime &runtime,
-                                   const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsReadFileSync(PocketInkJS::Runtime &runtime,
+                                   const PocketInkJS::Value *args, size_t argc,
                                    void *) {
   if (argc < 1 || argc > 2 || !runtime.isString(args[0]) ||
       (argc == 2 && !fsEncodingSupported(runtime, args[1]))) {
@@ -1081,14 +1081,14 @@ pinkjs::Value nativeFsReadFileSync(pinkjs::Runtime &runtime,
     psram::release(buffer);
     return runtime.fail("file read failed");
   }
-  const pinkjs::Value result = runtime.makeString(
+  const PocketInkJS::Value result = runtime.makeString(
       reinterpret_cast<const char *>(buffer), fileSize);
   psram::release(buffer);
   return result;
 }
 
-pinkjs::Value nativeFsExistsSync(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsExistsSync(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   char path[288];
   if (argc != 1 || !copyJsString(runtime, args[0], path, sizeof(path))) {
@@ -1098,8 +1098,8 @@ pinkjs::Value nativeFsExistsSync(pinkjs::Runtime &runtime,
                                         nullptr) != AppApiStatus::Error);
 }
 
-pinkjs::Value nativeFsStatSync(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsStatSync(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc,
                                void *) {
   char path[288];
   if (argc != 1 || !copyJsString(runtime, args[0], path, sizeof(path))) {
@@ -1110,15 +1110,15 @@ pinkjs::Value nativeFsStatSync(pinkjs::Runtime &runtime,
       AppApiStatus::Error) {
     return runtime.fail("file stat failed");
   }
-  pinkjs::Value result = runtime.makeObject();
+  PocketInkJS::Value result = runtime.makeObject();
   runtime.objectSet(result, "size", runtime.number(fileSize));
   runtime.objectSet(result, "isFile", runtime.boolean(true));
   runtime.objectSet(result, "isDirectory", runtime.boolean(false));
   return result;
 }
 
-pinkjs::Value nativeFsReaddirSync(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsReaddirSync(PocketInkJS::Runtime &runtime,
+                                  const PocketInkJS::Value *args, size_t argc,
                                   void *) {
   if (argc < 1 || argc > 2 || !runtime.isString(args[0]) ||
       (argc == 2 && !fsEncodingSupported(runtime, args[1]))) {
@@ -1129,11 +1129,11 @@ pinkjs::Value nativeFsReaddirSync(pinkjs::Runtime &runtime,
   if (!copyJsString(runtime, args[0], path, sizeof(path))) {
     return runtime.fail("directory path is too long");
   }
-  PinkJsDirectoryContext context;
+  PocketInkJSDirectoryContext context;
   context.runtime = &runtime;
   context.entries = runtime.makeArray();
   const AppApiStatus status = appApiListDirectory(
-      path, appendPinkJsDirectoryEntry, &context);
+      path, appendPocketInkJSDirectoryEntry, &context);
   if (runtime.error().message[0] != '\0') {
     return runtime.undefined();
   }
@@ -1146,8 +1146,8 @@ pinkjs::Value nativeFsReaddirSync(pinkjs::Runtime &runtime,
   return context.entries;
 }
 
-pinkjs::Value fsWriteFile(pinkjs::Runtime &runtime,
-                          const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value fsWriteFile(PocketInkJS::Runtime &runtime,
+                          const PocketInkJS::Value *args, size_t argc,
                           bool append) {
   if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
       !runtime.isString(args[1]) ||
@@ -1159,27 +1159,27 @@ pinkjs::Value fsWriteFile(pinkjs::Runtime &runtime,
   if (!copyJsString(runtime, args[0], path, sizeof(path))) {
     return runtime.fail("file path is too long");
   }
-  const pinkjs::StringView data = runtime.stringView(args[1]);
+  const PocketInkJS::StringView data = runtime.stringView(args[1]);
   return apiStatusValue(
       runtime,
       appApiWriteFile(path, reinterpret_cast<const uint8_t *>(data.data),
                       data.size, append));
 }
 
-pinkjs::Value nativeFsWriteFileSync(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsWriteFileSync(PocketInkJS::Runtime &runtime,
+                                    const PocketInkJS::Value *args, size_t argc,
                                     void *) {
   return fsWriteFile(runtime, args, argc, false);
 }
 
-pinkjs::Value nativeFsAppendFileSync(pinkjs::Runtime &runtime,
-                                     const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsAppendFileSync(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *args, size_t argc,
                                      void *) {
   return fsWriteFile(runtime, args, argc, true);
 }
 
-pinkjs::Value nativeFsUnlinkSync(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsUnlinkSync(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   char path[288];
   return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
@@ -1187,50 +1187,50 @@ pinkjs::Value nativeFsUnlinkSync(pinkjs::Runtime &runtime,
              : runtime.fail("fs.unlinkSync expects a file path");
 }
 
-pinkjs::Value nativeFsReadFile(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsReadFile(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc,
                                void *userData) {
   return resolvedPromise(
       runtime, nativeFsReadFileSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFsWriteFile(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsWriteFile(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *userData) {
   return resolvedPromise(
       runtime, nativeFsWriteFileSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFsAppendFile(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsAppendFile(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *userData) {
   return resolvedPromise(
       runtime, nativeFsAppendFileSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFsReaddir(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsReaddir(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc,
                               void *userData) {
   return resolvedPromise(
       runtime, nativeFsReaddirSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFsStat(pinkjs::Runtime &runtime,
-                           const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsStat(PocketInkJS::Runtime &runtime,
+                           const PocketInkJS::Value *args, size_t argc,
                            void *userData) {
   return resolvedPromise(runtime,
                          nativeFsStatSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFsUnlink(pinkjs::Runtime &runtime,
-                             const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFsUnlink(PocketInkJS::Runtime &runtime,
+                             const PocketInkJS::Value *args, size_t argc,
                              void *userData) {
   return resolvedPromise(runtime,
                          nativeFsUnlinkSync(runtime, args, argc, userData));
 }
 
-pinkjs::Value nativeFilesWrite(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFilesWrite(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc,
                                void *) {
   if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
       !runtime.isString(args[1])) {
@@ -1240,15 +1240,15 @@ pinkjs::Value nativeFilesWrite(pinkjs::Runtime &runtime,
   if (!copyJsString(runtime, args[0], path, sizeof(path))) {
     return runtime.fail("file path is too long");
   }
-  const pinkjs::StringView data = runtime.stringView(args[1]);
+  const PocketInkJS::StringView data = runtime.stringView(args[1]);
   return apiStatusValue(
       runtime,
       appApiWriteFile(path, reinterpret_cast<const uint8_t *>(data.data),
                       data.size, argc == 3 && runtime.toBoolean(args[2])));
 }
 
-pinkjs::Value nativeFilesPick(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeFilesPick(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc > 2 || (argc > 0 && !runtime.isString(args[0])) ||
       (argc > 1 && !runtime.isString(args[1]))) {
     return runtime.fail("files.pick expects initialPath? and filter?");
@@ -1259,7 +1259,7 @@ pinkjs::Value nativeFilesPick(pinkjs::Runtime &runtime,
       (argc > 1 && !copyJsString(runtime, args[1], filter, sizeof(filter)))) {
     return runtime.fail("file picker argument is too long");
   }
-  pinkjs::Value promise = runtime.makePromise();
+  PocketInkJS::Value promise = runtime.makePromise();
   if (runtime.isUndefined(promise)) {
     return promise;
   }
@@ -1270,15 +1270,15 @@ pinkjs::Value nativeFilesPick(pinkjs::Runtime &runtime,
   }
   const AppApiStatus status = appApiRequestFilePicker(initial, filter);
   if (status != AppApiStatus::Pending ||
-      !beginActiveSystemModal(PinkJsSystemModal::FilePicker, promise)) {
+      !beginActiveSystemModal(PocketInkJSSystemModal::FilePicker, promise)) {
     runtime.settlePromise(promise, runtime.makeString("file picker is busy"),
                           true);
   }
   return promise;
 }
 
-pinkjs::Value nativeFilesDelete(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeFilesDelete(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   char path[288];
   return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
@@ -1286,16 +1286,16 @@ pinkjs::Value nativeFilesDelete(pinkjs::Runtime &runtime,
              : runtime.fail("files.delete expects a path");
 }
 
-pinkjs::Value nativeAppOpen(pinkjs::Runtime &runtime,
-                            const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeAppOpen(PocketInkJS::Runtime &runtime,
+                            const PocketInkJS::Value *args, size_t argc, void *) {
   char appId[24];
   return argc == 1 && copyJsString(runtime, args[0], appId, sizeof(appId))
              ? runtime.boolean(appApiRequestOpenApp(appId))
              : runtime.fail("app.open expects an app id");
 }
 
-pinkjs::Value nativeGpioMode(pinkjs::Runtime &runtime,
-                             const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeGpioMode(PocketInkJS::Runtime &runtime,
+                             const PocketInkJS::Value *args, size_t argc, void *) {
   if (!numericArguments(runtime, args, argc, 2)) {
     return runtime.undefined();
   }
@@ -1310,8 +1310,8 @@ pinkjs::Value nativeGpioMode(pinkjs::Runtime &runtime,
                                          toU8(mode))));
 }
 
-pinkjs::Value nativeGpioRead(pinkjs::Runtime &runtime,
-                             const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeGpioRead(PocketInkJS::Runtime &runtime,
+                             const PocketInkJS::Value *args, size_t argc, void *) {
   if (!numericArguments(runtime, args, argc, 1)) {
     return runtime.undefined();
   }
@@ -1321,14 +1321,14 @@ pinkjs::Value nativeGpioRead(pinkjs::Runtime &runtime,
   int value = 0;
   const AppApiStatus status =
       appApiGpioRead(toU8(pin), &value);
-  pinkjs::Value result = runtime.makeObject();
+  PocketInkJS::Value result = runtime.makeObject();
   runtime.objectSet(result, "status", apiStatusValue(runtime, status));
   runtime.objectSet(result, "value", runtime.number(value));
   return result;
 }
 
-pinkjs::Value nativeGpioWrite(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeGpioWrite(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc != 2 || !runtime.isNumber(args[0])) {
     return runtime.fail("gpio.write expects pin and value");
   }
@@ -1341,15 +1341,15 @@ pinkjs::Value nativeGpioWrite(pinkjs::Runtime &runtime,
                                runtime.toBoolean(args[1])));
 }
 
-pinkjs::Value nativeSensorsRead(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeSensorsRead(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   if (argc > 1) {
     return runtime.fail("sensors.read expects refresh?");
   }
   const EnvironmentSnapshot snapshot =
       appApiSensorSnapshot(argc == 1 && runtime.toBoolean(args[0]));
-  pinkjs::Value result = runtime.makeObject();
+  PocketInkJS::Value result = runtime.makeObject();
   runtime.objectSet(result, "temperatureValid",
                     runtime.boolean(snapshot.ambientTemperatureValid));
   runtime.objectSet(result, "humidityValid",
@@ -1365,25 +1365,25 @@ pinkjs::Value nativeSensorsRead(pinkjs::Runtime &runtime,
   return result;
 }
 
-pinkjs::Value nativeNetworkScan(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *, size_t argc, void *) {
+PocketInkJS::Value nativeNetworkScan(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *, size_t argc, void *) {
   return argc == 0 ? apiStatusValue(runtime, appApiWifiScan())
                    : runtime.fail("network.scan expects no arguments");
 }
 
-pinkjs::Value nativeNetworkNetworks(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *, size_t argc,
+PocketInkJS::Value nativeNetworkNetworks(PocketInkJS::Runtime &runtime,
+                                    const PocketInkJS::Value *, size_t argc,
                                     void *) {
   if (argc != 0) {
     return runtime.fail("network.networks expects no arguments");
   }
-  pinkjs::Value result = runtime.makeArray(appApiWifiNetworkCount());
+  PocketInkJS::Value result = runtime.makeArray(appApiWifiNetworkCount());
   for (size_t i = 0; i < appApiWifiNetworkCount(); i++) {
     AppApiWifiNetwork network;
     if (!appApiWifiNetworkAt(i, network)) {
       continue;
     }
-    pinkjs::Value item = runtime.makeObject();
+    PocketInkJS::Value item = runtime.makeObject();
     runtime.objectSet(item, "ssid", runtime.makeString(network.ssid));
     runtime.objectSet(item, "rssi", runtime.number(network.rssi));
     runtime.arrayPush(result, item);
@@ -1391,18 +1391,18 @@ pinkjs::Value nativeNetworkNetworks(pinkjs::Runtime &runtime,
   return result;
 }
 
-pinkjs::Value nativeUiFonts(pinkjs::Runtime &runtime, const pinkjs::Value *,
+PocketInkJS::Value nativeUiFonts(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *,
                             size_t argc, void *) {
   if (argc != 0) {
     return runtime.fail("ui.fonts expects no arguments");
   }
-  pinkjs::Value result = runtime.makeArray(systemFontCount());
+  PocketInkJS::Value result = runtime.makeArray(systemFontCount());
   for (size_t i = 0; i < systemFontCount(); i++) {
     SystemFontInfo info;
     if (!systemFontInfo(i, info)) {
       continue;
     }
-    pinkjs::Value item = runtime.makeObject();
+    PocketInkJS::Value item = runtime.makeObject();
     runtime.objectSet(item, "name", runtime.makeString(info.name));
     runtime.objectSet(item, "size", runtime.number(info.nominalSize));
     runtime.arrayPush(result, item);
@@ -1410,8 +1410,8 @@ pinkjs::Value nativeUiFonts(pinkjs::Runtime &runtime, const pinkjs::Value *,
   return result;
 }
 
-pinkjs::Value nativeAudioCapture(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioCapture(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  bool wav) {
   if (!numericArguments(runtime, args, argc, 1)) {
     return runtime.undefined();
@@ -1420,7 +1420,7 @@ pinkjs::Value nativeAudioCapture(pinkjs::Runtime &runtime,
   if (duration < 1 || duration > 60000 || std::floor(duration) != duration) {
     return runtime.fail("invalid capture duration");
   }
-  pinkjs::Value promise = runtime.makePromise();
+  PocketInkJS::Value promise = runtime.makePromise();
   if (runtime.isUndefined(promise)) {
     return promise;
   }
@@ -1435,8 +1435,8 @@ pinkjs::Value nativeAudioCapture(pinkjs::Runtime &runtime,
   const AppApiStatus status = wav ? appApiCaptureWav(durationMs, &data, &size)
                                   : appApiCapturePcm16(durationMs, &data, &size);
   if (status != AppApiStatus::Pending ||
-      !beginActiveSystemModal(wav ? PinkJsSystemModal::AudioCapture
-                                  : PinkJsSystemModal::AudioCapturePcm16,
+      !beginActiveSystemModal(wav ? PocketInkJSSystemModal::AudioCapture
+                                  : PocketInkJSSystemModal::AudioCapturePcm16,
                               promise, durationMs)) {
     runtime.settlePromise(promise, runtime.makeString("audio capture is busy"),
                           true);
@@ -1444,28 +1444,28 @@ pinkjs::Value nativeAudioCapture(pinkjs::Runtime &runtime,
   return promise;
 }
 
-pinkjs::Value nativeAudioCaptureWav(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioCaptureWav(PocketInkJS::Runtime &runtime,
+                                    const PocketInkJS::Value *args, size_t argc,
                                     void *) {
   return nativeAudioCapture(runtime, args, argc, true);
 }
 
-pinkjs::Value nativeAudioCapturePcm16(pinkjs::Runtime &runtime,
-                                      const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioCapturePcm16(PocketInkJS::Runtime &runtime,
+                                      const PocketInkJS::Value *args, size_t argc,
                                       void *) {
   return nativeAudioCapture(runtime, args, argc, false);
 }
 
-pinkjs::Value nativeAudioLoad(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeAudioLoad(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   char path[288];
   return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
              ? runtime.number(appApiAudioLoadPath(path))
              : runtime.fail("audio.load expects a path");
 }
 
-pinkjs::Value nativeAudioSupports(pinkjs::Runtime &runtime,
-                                  const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioSupports(PocketInkJS::Runtime &runtime,
+                                  const PocketInkJS::Value *args, size_t argc,
                                   void *) {
   char format[24];
   return argc == 1 && copyJsString(runtime, args[0], format, sizeof(format))
@@ -1473,8 +1473,8 @@ pinkjs::Value nativeAudioSupports(pinkjs::Runtime &runtime,
              : runtime.fail("audio.supports expects a format");
 }
 
-pinkjs::Value nativeAudioLoadBuffer(pinkjs::Runtime &runtime,
-                                    const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioLoadBuffer(PocketInkJS::Runtime &runtime,
+                                    const PocketInkJS::Value *args, size_t argc,
                                     void *) {
   if (argc != 2 || !runtime.isString(args[0]) || !runtime.isString(args[1])) {
     return runtime.fail("audio.loadBuffer expects data and format");
@@ -1483,13 +1483,13 @@ pinkjs::Value nativeAudioLoadBuffer(pinkjs::Runtime &runtime,
   if (!copyJsString(runtime, args[1], format, sizeof(format))) {
     return runtime.fail("audio format is too long");
   }
-  const pinkjs::StringView data = runtime.stringView(args[0]);
+  const PocketInkJS::StringView data = runtime.stringView(args[0]);
   return runtime.number(appApiAudioLoadBuffer(
       reinterpret_cast<const uint8_t *>(data.data), data.size, format));
 }
 
-pinkjs::Value nativeAudioPlay(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeAudioPlay(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   if (!numericArguments(runtime, args, argc, 1))
     return runtime.undefined();
   const double handle = runtime.toNumber(args[0]);
@@ -1499,8 +1499,8 @@ pinkjs::Value nativeAudioPlay(pinkjs::Runtime &runtime,
              : runtime.fail("invalid audio handle");
 }
 
-pinkjs::Value nativeAudioStop(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeAudioStop(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
   if (!numericArguments(runtime, args, argc, 1))
     return runtime.undefined();
   const double handle = runtime.toNumber(args[0]);
@@ -1510,8 +1510,8 @@ pinkjs::Value nativeAudioStop(pinkjs::Runtime &runtime,
              : runtime.fail("invalid audio handle");
 }
 
-pinkjs::Value nativeAudioUpdate(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioUpdate(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   if (!numericArguments(runtime, args, argc, 1))
     return runtime.undefined();
@@ -1522,8 +1522,8 @@ pinkjs::Value nativeAudioUpdate(pinkjs::Runtime &runtime,
              : runtime.fail("invalid audio handle");
 }
 
-pinkjs::Value nativeAudioRelease(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeAudioRelease(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   if (!numericArguments(runtime, args, argc, 1)) {
     return runtime.undefined();
@@ -1535,7 +1535,7 @@ pinkjs::Value nativeAudioRelease(pinkjs::Runtime &runtime,
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiQr(pinkjs::Runtime &runtime, const pinkjs::Value *args,
+PocketInkJS::Value nativeUiQr(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *args,
                          size_t argc, void *) {
   if (argc < 4 || argc > 5 || !runtime.isString(args[0])) {
     return runtime.fail("ui.qr expects text, x, y, size, color?");
@@ -1546,7 +1546,7 @@ pinkjs::Value nativeUiQr(pinkjs::Runtime &runtime, const pinkjs::Value *args,
       return runtime.fail("invalid QR position or size");
     }
   }
-  if (pinkJsDrawTarget == nullptr) {
+  if (PocketInkJSDrawTarget == nullptr) {
     return runtime.boolean(false);
   }
   char text[SystemQrCode::maxPayload + 1];
@@ -1557,14 +1557,14 @@ pinkjs::Value nativeUiQr(pinkjs::Runtime &runtime, const pinkjs::Value *args,
   if (!qr.encode(text)) {
     return runtime.boolean(false);
   }
-  qr.draw(*pinkJsDrawTarget, toI16(runtime.toNumber(args[1])),
+  qr.draw(*PocketInkJSDrawTarget, toI16(runtime.toNumber(args[1])),
           toI16(runtime.toNumber(args[2])),
           toI16(runtime.toNumber(args[3])),
           argc == 5 ? toU16(runtime.toNumber(args[4])) : 1);
   return runtime.boolean(true);
 }
 
-int64_t pinkJsNowMilliseconds(void *) {
+int64_t PocketInkJSNowMilliseconds(void *) {
   int64_t seconds = 0;
   uint16_t milliseconds = 0;
   if (deviceClock.snapshotUnixMillis(seconds, milliseconds)) {
@@ -1573,10 +1573,10 @@ int64_t pinkJsNowMilliseconds(void *) {
   return static_cast<int64_t>(millis());
 }
 
-#if PINKJS_USE_LIGHTWEIGHT_JSON_PARSER
-class PinkJsJsonStream : public Stream {
+#if POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER
+class PocketInkJSJsonStream : public Stream {
 public:
-  explicit PinkJsJsonStream(pinkjs::StringView input) : input(input) {}
+  explicit PocketInkJSJsonStream(PocketInkJS::StringView input) : input(input) {}
 
   int available() override {
     return position < input.size
@@ -1598,23 +1598,23 @@ public:
   size_t write(uint8_t) override { return 0; }
 
 private:
-  pinkjs::StringView input;
+  PocketInkJS::StringView input;
   size_t position = 0;
 };
 
-class PinkJsJsonListener : public JsonStreamListener {
+class PocketInkJSJsonListener : public JsonStreamListener {
 public:
-  explicit PinkJsJsonListener(pinkjs::Runtime &runtime) : runtime(runtime) {}
+  explicit PocketInkJSJsonListener(PocketInkJS::Runtime &runtime) : runtime(runtime) {}
 
-  pinkjs::Value result() const { return root; }
+  PocketInkJS::Value result() const { return root; }
   bool valid() const { return hasRoot; }
 
   void onObjectStart(int depth, const char *key) override {
-    pinkjs::Value object = runtime.makeObject();
+    PocketInkJS::Value object = runtime.makeObject();
     attachContainer(depth, key, object);
   }
   void onArrayStart(int depth, const char *key) override {
-    pinkjs::Value array = runtime.makeArray();
+    PocketInkJS::Value array = runtime.makeArray();
     attachContainer(depth, key, array);
   }
   void onStringValue(int depth, const char *key, const char *value) override {
@@ -1631,21 +1631,21 @@ public:
   }
 
 private:
-  pinkjs::Runtime &runtime;
-  pinkjs::Value root = {};
-  pinkjs::Value containers[20] = {};
+  PocketInkJS::Runtime &runtime;
+  PocketInkJS::Value root = {};
+  PocketInkJS::Value containers[20] = {};
   bool hasRoot = false;
 
-  void append(pinkjs::Value parent, const char *key, pinkjs::Value value) {
-    if (runtime.typeOf(parent) == pinkjs::ValueType::Array)
+  void append(PocketInkJS::Value parent, const char *key, PocketInkJS::Value value) {
+    if (runtime.typeOf(parent) == PocketInkJS::ValueType::Array)
       runtime.arrayPush(parent, value);
     else
       runtime.objectSet(parent, key != nullptr ? key : "", value);
   }
-  void attachContainer(int depth, const char *key, pinkjs::Value value) {
+  void attachContainer(int depth, const char *key, PocketInkJS::Value value) {
     if (depth <= 0 || depth > static_cast<int>(sizeof(containers) /
                                                sizeof(containers[0]))) {
-      runtime.fail(pinkjs::ErrorCode{164});
+      runtime.fail(PocketInkJS::ErrorCode{164});
       return;
     }
     if (depth == 1) {
@@ -1655,7 +1655,7 @@ private:
       append(containers[depth - 2], key, value);
     containers[depth - 1] = value;
   }
-  void attachScalar(int depth, const char *key, pinkjs::Value value) {
+  void attachScalar(int depth, const char *key, PocketInkJS::Value value) {
     if (depth == 0) {
       root = value;
       hasRoot = true;
@@ -1663,19 +1663,19 @@ private:
     }
     if (depth < 0 || depth > static_cast<int>(sizeof(containers) /
                                               sizeof(containers[0]))) {
-      runtime.fail(pinkjs::ErrorCode{164});
+      runtime.fail(PocketInkJS::ErrorCode{164});
       return;
     }
     append(containers[depth - 1], key, value);
   }
 };
 
-pinkjs::Value parsePinkJsJson(pinkjs::Runtime &runtime, pinkjs::StringView json,
+PocketInkJS::Value parsePocketInkJSJson(PocketInkJS::Runtime &runtime, PocketInkJS::StringView json,
                               void *) {
   if (json.size > INT_MAX - 1)
-    return runtime.fail(pinkjs::ErrorCode{165});
-  PinkJsJsonStream stream(json);
-  PinkJsJsonListener listener(runtime);
+    return runtime.fail(PocketInkJS::ErrorCode{165});
+  PocketInkJSJsonStream stream(json);
+  PocketInkJSJsonListener listener(runtime);
   LightweightJsonParser parser;
   char error[64] = {};
   if (!parser.parse(&stream, static_cast<int>(json.size), 1000,
@@ -1683,21 +1683,21 @@ pinkjs::Value parsePinkJsJson(pinkjs::Runtime &runtime, pinkjs::StringView json,
                     sizeof(error))) {
     if (error[0] != '\0')
       return runtime.fail(error);
-    return runtime.fail(pinkjs::ErrorCode{221});
+    return runtime.fail(PocketInkJS::ErrorCode{221});
   }
   if (!listener.valid())
-    return runtime.fail(pinkjs::ErrorCode{166});
+    return runtime.fail(PocketInkJS::ErrorCode{166});
   return listener.result();
 }
 #endif
 
-class PinkJsApp : public ActiveApp {
+class PocketInkJSApp : public ActiveApp {
 public:
   void launch(const char *nextPath, const char *nextId) {
     unload();
-    pinkJsLowestStackHwm = UINT_MAX;
+    PocketInkJSLowestStackHwm = UINT_MAX;
     copyText(appId, sizeof(appId), nextId);
-    activePinkJsApp = this;
+    activePocketInkJSApp = this;
     if (!appApiBeginSession(appId)) {
       copyText(status, sizeof(status), "NO API PSRAM");
       return;
@@ -1728,32 +1728,32 @@ public:
 
   const char *id() const { return appId; }
 
-  pinkjs::Value queueFetch(pinkjs::Runtime &vm, const pinkjs::Value *args,
+  PocketInkJS::Value queueFetch(PocketInkJS::Runtime &vm, const PocketInkJS::Value *args,
                            size_t argc);
-  pinkjs::Value scheduleTimer(pinkjs::Runtime &vm,
-                              const pinkjs::Value *args, size_t argc,
+  PocketInkJS::Value scheduleTimer(PocketInkJS::Runtime &vm,
+                              const PocketInkJS::Value *args, size_t argc,
                               bool repeating);
-  pinkjs::Value cancelTimer(pinkjs::Runtime &vm, const pinkjs::Value *args,
+  PocketInkJS::Value cancelTimer(PocketInkJS::Runtime &vm, const PocketInkJS::Value *args,
                             size_t argc);
-  bool beginSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+  bool beginSystemModal(PocketInkJSSystemModal kind, PocketInkJS::Value promise,
                         uint32_t captureDurationMs = 0,
                         DatePickerDate initialDate = {});
   bool systemModalIdle() const {
-    return systemModal == PinkJsSystemModal::None;
+    return systemModal == PocketInkJSSystemModal::None;
   }
-  bool waitForPromise(pinkjs::Runtime &vm, pinkjs::Value promise);
+  bool waitForPromise(PocketInkJS::Runtime &vm, PocketInkJS::Value promise);
 
   void draw(Adafruit_GFX &gfx) override {
     if (pendingStart) {
       gfx.setTextColor(1);
-      drawPinkJsCentered(gfx, "PINKJS", 70, 2);
-      drawPinkJsCentered(gfx, "STARTING", 102, 1);
+      drawPocketInkJSCentered(gfx, "PocketInkJS", 70, 2);
+      drawPocketInkJSCentered(gfx, "STARTING", 102, 1);
       return;
     }
     if (status[0] != '\0') {
       gfx.setTextColor(1);
-      drawPinkJsCentered(gfx, "PINKJS", 54, 2);
-      drawPinkJsWrappedCentered(gfx, status, 86);
+      drawPocketInkJSCentered(gfx, "PocketInkJS", 54, 2);
+      drawPocketInkJSWrappedCentered(gfx, status, 86);
       return;
     }
     DrawContext context{&gfx};
@@ -1782,7 +1782,7 @@ public:
 
   void rawTouch(const TouchEvent &event) {
     const uint8_t callback = touchCallbackFor(event.type);
-    if ((touchCallbacks & (callback | PinkJsTouchGeneric)) == 0)
+    if ((touchCallbacks & (callback | PocketInkJSTouchGeneric)) == 0)
       return;
     RawTouchContext context{event};
     execute(rawTouchOperation, &context);
@@ -1832,13 +1832,13 @@ private:
   void *runtimeStorage = nullptr;
   void *workspaceAllocation = nullptr;
   size_t workspaceBytes = 0;
-  pinkjs::Runtime *runtime = nullptr;
+  PocketInkJS::Runtime *runtime = nullptr;
   AsyncState *asyncState = nullptr;
   TimerState *timerState = nullptr;
-  pinkjs::RootHandle systemModalPromise = pinkjs::kInvalidRoot;
+  PocketInkJS::RootHandle systemModalPromise = PocketInkJS::kInvalidRoot;
   DatePickerDate systemModalDate = {};
   uint32_t systemModalCaptureDurationMs = 0;
-  PinkJsSystemModal systemModal = PinkJsSystemModal::None;
+  PocketInkJSSystemModal systemModal = PocketInkJSSystemModal::None;
   QueueHandle_t executorCommands = nullptr;
   QueueHandle_t executorCompletions = nullptr;
   TaskHandle_t executorTask = nullptr;
@@ -1852,17 +1852,17 @@ private:
   static uint8_t touchCallbackFor(TouchEventType type) {
     switch (type) {
     case TOUCH_EVENT_DOWN:
-      return PinkJsTouchDown;
+      return PocketInkJSTouchDown;
     case TOUCH_EVENT_MOVE:
-      return PinkJsTouchMove;
+      return PocketInkJSTouchMove;
     case TOUCH_EVENT_UP:
-      return PinkJsTouchUp;
+      return PocketInkJSTouchUp;
     }
     return 0;
   }
 
   static void executorTaskMain(void *context) {
-    PinkJsApp *app = static_cast<PinkJsApp *>(context);
+    PocketInkJSApp *app = static_cast<PocketInkJSApp *>(context);
     if (app != nullptr)
       app->executorLoop();
     vTaskDelete(nullptr);
@@ -1870,7 +1870,7 @@ private:
 
   void executorLoop() {
     while (true) {
-      PinkJsExecutorCommand *command = nullptr;
+      PocketInkJSExecutorCommand *command = nullptr;
       if (xQueueReceive(executorCommands, &command, portMAX_DELAY) != pdPASS ||
           command == nullptr) {
         continue;
@@ -1886,16 +1886,16 @@ private:
   bool startExecutor() {
     if (executorTask != nullptr)
       return true;
-    executorCommands = xQueueCreate(1, sizeof(PinkJsExecutorCommand *));
-    executorCompletions = xQueueCreate(1, sizeof(PinkJsExecutorCommand *));
+    executorCommands = xQueueCreate(1, sizeof(PocketInkJSExecutorCommand *));
+    executorCompletions = xQueueCreate(1, sizeof(PocketInkJSExecutorCommand *));
     if (executorCommands == nullptr || executorCompletions == nullptr) {
       stopExecutor();
       return false;
     }
-    if (xTaskCreatePinnedToCore(executorTaskMain, "pinkjs",
-                                kPinkJsExecutorStackBytes, this,
-                                kPinkJsExecutorPriority, &executorTask,
-                                kPinkJsExecutorCore) != pdPASS) {
+    if (xTaskCreatePinnedToCore(executorTaskMain, "PocketInkJS",
+                                kPocketInkJSExecutorStackBytes, this,
+                                kPocketInkJSExecutorPriority, &executorTask,
+                                kPocketInkJSExecutorCore) != pdPASS) {
       executorTask = nullptr;
       stopExecutor();
       return false;
@@ -1903,16 +1903,16 @@ private:
     return true;
   }
 
-  bool execute(PinkJsExecutorOperation operation, void *context) {
+  bool execute(PocketInkJSExecutorOperation operation, void *context) {
     if (executorTask == nullptr || executorCommands == nullptr ||
         executorCompletions == nullptr) {
       return false;
     }
-    PinkJsExecutorCommand command{operation, context};
-    PinkJsExecutorCommand *sent = &command;
+    PocketInkJSExecutorCommand command{operation, context};
+    PocketInkJSExecutorCommand *sent = &command;
     if (xQueueSend(executorCommands, &sent, portMAX_DELAY) != pdPASS)
       return false;
-    PinkJsExecutorCommand *completed = nullptr;
+    PocketInkJSExecutorCommand *completed = nullptr;
     return xQueueReceive(executorCompletions, &completed, portMAX_DELAY) ==
                pdPASS &&
            completed == &command;
@@ -1921,10 +1921,10 @@ private:
   void stopExecutor() {
     if (executorTask != nullptr && executorCommands != nullptr &&
         executorCompletions != nullptr) {
-      PinkJsExecutorCommand command;
-      PinkJsExecutorCommand *sent = &command;
+      PocketInkJSExecutorCommand command;
+      PocketInkJSExecutorCommand *sent = &command;
       if (xQueueSend(executorCommands, &sent, portMAX_DELAY) == pdPASS) {
-        PinkJsExecutorCommand *completed = nullptr;
+        PocketInkJSExecutorCommand *completed = nullptr;
         xQueueReceive(executorCompletions, &completed, portMAX_DELAY);
       }
       executorTask = nullptr;
@@ -1939,44 +1939,44 @@ private:
     }
   }
 
-  static void loadOperation(PinkJsApp &app, void *) { app.load(); }
-  static void unloadOperation(PinkJsApp &app, void *) { app.unloadRuntime(); }
-  static void drawOperation(PinkJsApp &app, void *raw) {
+  static void loadOperation(PocketInkJSApp &app, void *) { app.load(); }
+  static void unloadOperation(PocketInkJSApp &app, void *) { app.unloadRuntime(); }
+  static void drawOperation(PocketInkJSApp &app, void *raw) {
     DrawContext *context = static_cast<DrawContext *>(raw);
     if (context == nullptr || context->gfx == nullptr)
       return;
-    pinkJsDrawTarget = context->gfx;
+    PocketInkJSDrawTarget = context->gfx;
     app.run("onDraw", nullptr, 0, nullptr);
-    pinkJsDrawTarget = nullptr;
+    PocketInkJSDrawTarget = nullptr;
   }
-  static void touchOperation(PinkJsApp &app, void *raw) {
+  static void touchOperation(PocketInkJSApp &app, void *raw) {
     TouchContext *context = static_cast<TouchContext *>(raw);
     if (context != nullptr) {
       context->dirty =
           app.dispatchTouch("onTouch", "touch", context->point);
     }
   }
-  static void updateOperation(PinkJsApp &app, void *raw) {
+  static void updateOperation(PocketInkJSApp &app, void *raw) {
     UpdateContext *context = static_cast<UpdateContext *>(raw);
     if (context != nullptr)
       context->dirty = app.updateRuntime();
   }
-  static void buttonOperation(PinkJsApp &app, void *raw) {
+  static void buttonOperation(PocketInkJSApp &app, void *raw) {
     ButtonContext *context = static_cast<ButtonContext *>(raw);
     if (context != nullptr)
       context->result = app.buttonRuntime(context->callback);
   }
-  static void rawTouchOperation(PinkJsApp &app, void *raw) {
+  static void rawTouchOperation(PocketInkJSApp &app, void *raw) {
     RawTouchContext *context = static_cast<RawTouchContext *>(raw);
     if (context != nullptr)
       app.rawTouchRuntime(context->event);
   }
-  static void saveOperation(PinkJsApp &app, void *raw) {
+  static void saveOperation(PocketInkJSApp &app, void *raw) {
     SaveContext *context = static_cast<SaveContext *>(raw);
     if (context != nullptr)
       context->length = app.saveRuntime(context->buffer, context->capacity);
   }
-  static void restoreOperation(PinkJsApp &app, void *raw) {
+  static void restoreOperation(PocketInkJSApp &app, void *raw) {
     RestoreContext *context = static_cast<RestoreContext *>(raw);
     if (context != nullptr)
       app.restoreRuntime(context->buffer, context->length);
@@ -2000,11 +2000,11 @@ private:
     // picker results must reach their .then(...) handler before onUpdate can
     // trigger another collection/callback boundary.
     if (runtime != nullptr && status[0] == '\0') {
-      const pinkjs::RunResult jobs = runtime->drainJobs(kPinkJsJobsPerUpdate);
+      const PocketInkJS::RunResult jobs = runtime->drainJobs(kPocketInkJSJobsPerUpdate);
       if (!jobs.ok)
         setRuntimeError();
     }
-    pinkjs::RunResult result;
+    PocketInkJS::RunResult result;
     bool called = false;
     if (run("onUpdate", nullptr, 0, &result, &called) && called) {
       dirty = dirty || runtime->isTruthy(result.value);
@@ -2013,13 +2013,13 @@ private:
   }
 
   AppEventResult buttonRuntime(const char *callback) {
-    pinkjs::RunResult result;
+    PocketInkJS::RunResult result;
     bool called = false;
     if (!run(callback, nullptr, 0, &result, &called)) {
       return AppEventResult::Unhandled;
     }
     if (!called) {
-      pinkjs::Value event = runtime->makeObject();
+      PocketInkJS::Value event = runtime->makeObject();
       runtime->objectSet(event, "type", runtime->makeString(
                                             callback != nullptr ? callback
                                                                 : "button"));
@@ -2034,22 +2034,22 @@ private:
   void rawTouchRuntime(const TouchEvent &event) {
     const char *specific = "onTouch";
     const char *type = "touch";
-    uint8_t callback = PinkJsTouchGeneric;
+    uint8_t callback = PocketInkJSTouchGeneric;
     switch (event.type) {
     case TOUCH_EVENT_DOWN:
       specific = "onTouchDown";
       type = "down";
-      callback = PinkJsTouchDown;
+      callback = PocketInkJSTouchDown;
       break;
     case TOUCH_EVENT_MOVE:
       specific = "onTouchMove";
       type = "move";
-      callback = PinkJsTouchMove;
+      callback = PocketInkJSTouchMove;
       break;
     case TOUCH_EVENT_UP:
       specific = "onTouchUp";
       type = "up";
-      callback = PinkJsTouchUp;
+      callback = PocketInkJSTouchUp;
       break;
     }
     const char *handler = (touchCallbacks & callback) != 0 ? specific
@@ -2058,14 +2058,14 @@ private:
   }
 
   size_t saveRuntime(uint8_t *buffer, size_t capacity) {
-    pinkjs::RunResult result;
+    PocketInkJS::RunResult result;
     bool called = false;
     if (buffer == nullptr || capacity == 0 ||
         !run("onSave", nullptr, 0, &result, &called) || !called ||
         !runtime->isString(result.value)) {
       return 0;
     }
-    const pinkjs::StringView data = runtime->stringView(result.value);
+    const PocketInkJS::StringView data = runtime->stringView(result.value);
     const size_t amount = data.size < capacity ? data.size : capacity;
     memcpy(buffer, data.data, amount);
     return amount;
@@ -2075,9 +2075,9 @@ private:
     if (runtime == nullptr || buffer == nullptr) {
       return;
     }
-    pinkjs::Value state =
+    PocketInkJS::Value state =
         runtime->makeString(reinterpret_cast<const char *>(buffer), length);
-    pinkjs::RunResult result;
+    PocketInkJS::RunResult result;
     bool called = false;
     if (run("onRestore", &state, 1, &result, &called) && called) {
       pendingDirty = pendingDirty || runtime->isTruthy(result.value);
@@ -2120,12 +2120,12 @@ private:
     if (runtime == nullptr) {
       return;
     }
-    const pinkjs::Error &error = runtime->error();
+    const PocketInkJS::Error &error = runtime->error();
     char described[72];
     const char *message = error.message;
     uint8_t errorNumber = 0;
     char description[60];
-    if (pinkJsErrorNumber(error.message, &errorNumber) &&
+    if (PocketInkJSErrorNumber(error.message, &errorNumber) &&
         readErrorDescription(errorNumber, description, sizeof(description))) {
       snprintf(described, sizeof(described), "%.4s %.62s", error.message,
                description);
@@ -2149,20 +2149,20 @@ private:
       }
       caret[caretAt] = '^';
     }
-    const pinkjs::MemoryStats stats = runtime->memoryStats();
+    const PocketInkJS::MemoryStats stats = runtime->memoryStats();
     if (error.sourceLine[0] != '\0') {
-      pinkJsLogPrintf(
-          "[pinkjs] %s\n[pinkjs] > %s\n[pinkjs]   %s\n"
-          "[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+      PocketInkJSLogPrintf(
+          "[PocketInkJS] %s\n[PocketInkJS] > %s\n[PocketInkJS]   %s\n"
+          "[PocketInkJS] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
           status, error.sourceLine, caret,
           static_cast<unsigned long>(stats.heapUsedBytes),
           static_cast<unsigned long>(stats.heapFreeBytes),
           static_cast<unsigned long>(stats.peakHeapUsedBytes),
           static_cast<unsigned long>(stats.workspaceBytes));
     } else {
-      pinkJsLogPrintf(
-          "[pinkjs] %s\n"
-          "[pinkjs] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
+      PocketInkJSLogPrintf(
+          "[PocketInkJS] %s\n"
+          "[PocketInkJS] error heap=%lu free=%lu peak=%lu workspace=%lu\n",
           status, static_cast<unsigned long>(stats.heapUsedBytes),
           static_cast<unsigned long>(stats.heapFreeBytes),
           static_cast<unsigned long>(stats.peakHeapUsedBytes),
@@ -2171,19 +2171,19 @@ private:
     pendingDirty = true;
   }
 
-  bool run(const char *callback, const pinkjs::Value *args, size_t argc,
-           pinkjs::RunResult *out, bool *calledOut = nullptr) {
+  bool run(const char *callback, const PocketInkJS::Value *args, size_t argc,
+           PocketInkJS::RunResult *out, bool *calledOut = nullptr) {
     if (calledOut != nullptr) {
       *calledOut = false;
     }
     if (runtime == nullptr || status[0] != '\0') {
       return false;
     }
-    logPinkJsStackLow(callback);
+    logPocketInkJSStackLow(callback);
     bool called = false;
-    const pinkjs::RunResult result =
+    const PocketInkJS::RunResult result =
         runtime->callIfFunction(callback, args, argc, &called);
-    logPinkJsStackLow(callback);
+    logPocketInkJSStackLow(callback);
     if (calledOut != nullptr) {
       *calledOut = called;
     }
@@ -2202,11 +2202,11 @@ private:
     if (runtime == nullptr || status[0] != '\0') {
       return false;
     }
-    pinkjs::Value event = runtime->makeObject();
+    PocketInkJS::Value event = runtime->makeObject();
     runtime->objectSet(event, "type", runtime->makeString(type));
     runtime->objectSet(event, "x", runtime->number(point.x));
     runtime->objectSet(event, "y", runtime->number(point.y));
-    pinkjs::RunResult result;
+    PocketInkJS::RunResult result;
     bool called = false;
     if (!run(callback, &event, 1, &result, &called)) {
       return false;
@@ -2223,13 +2223,13 @@ private:
     if (runtime == nullptr)
       return;
     if (runtime->isCallable(runtime->get("onTouch")))
-      touchCallbacks |= PinkJsTouchGeneric;
+      touchCallbacks |= PocketInkJSTouchGeneric;
     if (runtime->isCallable(runtime->get("onTouchDown")))
-      touchCallbacks |= PinkJsTouchDown;
+      touchCallbacks |= PocketInkJSTouchDown;
     if (runtime->isCallable(runtime->get("onTouchMove")))
-      touchCallbacks |= PinkJsTouchMove;
+      touchCallbacks |= PocketInkJSTouchMove;
     if (runtime->isCallable(runtime->get("onTouchUp")))
-      touchCallbacks |= PinkJsTouchUp;
+      touchCallbacks |= PocketInkJSTouchUp;
   }
   void load();
   bool ensureAsyncWorker();
@@ -2265,20 +2265,20 @@ private:
     hasErrorCatalog = false;
     touchCallbacks = 0;
     releaseTimers();
-    if (runtime != nullptr && systemModalPromise != pinkjs::kInvalidRoot) {
+    if (runtime != nullptr && systemModalPromise != PocketInkJS::kInvalidRoot) {
       runtime->release(systemModalPromise);
     }
-    systemModal = PinkJsSystemModal::None;
-    systemModalPromise = pinkjs::kInvalidRoot;
+    systemModal = PocketInkJSSystemModal::None;
+    systemModalPromise = PocketInkJS::kInvalidRoot;
     stopAsyncWorker();
     releaseSleepGuards();
     if (appApiSessionMatches(appId)) {
       appApiEndSession();
     }
     releaseRuntime();
-    if (pinkJsLogBuffer != nullptr) {
-      heap_caps_free(pinkJsLogBuffer);
-      pinkJsLogBuffer = nullptr;
+    if (PocketInkJSLogBuffer != nullptr) {
+      heap_caps_free(PocketInkJSLogBuffer);
+      PocketInkJSLogBuffer = nullptr;
     }
     status[0] = '\0';
     pendingDirty = false;
@@ -2287,8 +2287,8 @@ private:
       path = nullptr;
     }
     appId[0] = '\0';
-    if (activePinkJsApp == this) {
-      activePinkJsApp = nullptr;
+    if (activePocketInkJSApp == this) {
+      activePocketInkJSApp = nullptr;
     }
   }
 
@@ -2303,18 +2303,18 @@ private:
 };
 
 bool activeSystemModalIdle() {
-  return activePinkJsApp != nullptr && activePinkJsApp->systemModalIdle();
+  return activePocketInkJSApp != nullptr && activePocketInkJSApp->systemModalIdle();
 }
 
-bool beginActiveSystemModal(PinkJsSystemModal kind, pinkjs::Value promise,
+bool beginActiveSystemModal(PocketInkJSSystemModal kind, PocketInkJS::Value promise,
                             uint32_t captureDurationMs,
                             DatePickerDate initialDate) {
-  return activePinkJsApp != nullptr &&
-         activePinkJsApp->beginSystemModal(kind, promise, captureDurationMs,
+  return activePocketInkJSApp != nullptr &&
+         activePocketInkJSApp->beginSystemModal(kind, promise, captureDurationMs,
                                            initialDate);
 }
 
-bool PinkJsApp::ensureAsyncWorker() {
+bool PocketInkJSApp::ensureAsyncWorker() {
   if (asyncState != nullptr)
     return true;
   void *memory = allocatePsram(sizeof(AsyncState));
@@ -2322,9 +2322,9 @@ bool PinkJsApp::ensureAsyncWorker() {
     return false;
   AsyncState *created = new (memory) AsyncState();
   created->requests =
-      xQueueCreate(kPinkJsFetchQueueDepth, sizeof(FetchRequest *));
+      xQueueCreate(kPocketInkJSFetchQueueDepth, sizeof(FetchRequest *));
   created->completions =
-      xQueueCreate(kPinkJsFetchQueueDepth, sizeof(FetchCompletion *));
+      xQueueCreate(kPocketInkJSFetchQueueDepth, sizeof(FetchCompletion *));
   if (created->requests == nullptr || created->completions == nullptr) {
     if (created->requests != nullptr)
       vQueueDelete(created->requests);
@@ -2335,10 +2335,10 @@ bool PinkJsApp::ensureAsyncWorker() {
     return false;
   }
   TaskHandle_t task = nullptr;
-  if (xTaskCreatePinnedToCore(pinkJsWorker, "pinkjs-fetch",
-                              kPinkJsWorkerStackBytes, created,
-                              kPinkJsWorkerPriority, &task,
-                              kPinkJsWorkerCore) != pdPASS) {
+  if (xTaskCreatePinnedToCore(PocketInkJSWorker, "PocketInkJS-fetch",
+                              kPocketInkJSWorkerStackBytes, created,
+                              kPocketInkJSWorkerPriority, &task,
+                              kPocketInkJSWorkerCore) != pdPASS) {
     vQueueDelete(created->requests);
     vQueueDelete(created->completions);
     created->~AsyncState();
@@ -2350,21 +2350,21 @@ bool PinkJsApp::ensureAsyncWorker() {
   return true;
 }
 
-pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
-                                    const pinkjs::Value *args, size_t argc) {
+PocketInkJS::Value PocketInkJSApp::queueFetch(PocketInkJS::Runtime &vm,
+                                    const PocketInkJS::Value *args, size_t argc) {
   if (argc < 1 || argc > 2 || !vm.isString(args[0]))
-    return vm.fail(pinkjs::ErrorCode{167});
-  const pinkjs::StringView url = vm.stringView(args[0]);
+    return vm.fail(PocketInkJS::ErrorCode{167});
+  const PocketInkJS::StringView url = vm.stringView(args[0]);
   if (url.size == 0 ||
       url.size >= sizeof(static_cast<FetchRequest *>(nullptr)->url))
-    return vm.fail(pinkjs::ErrorCode{168});
-  if (argc == 2 && vm.typeOf(args[1]) != pinkjs::ValueType::Object)
-    return vm.fail(pinkjs::ErrorCode{169});
+    return vm.fail(PocketInkJS::ErrorCode{168});
+  if (argc == 2 && vm.typeOf(args[1]) != PocketInkJS::ValueType::Object)
+    return vm.fail(PocketInkJS::ErrorCode{169});
 
   FetchRequest *request =
       static_cast<FetchRequest *>(allocatePsram(sizeof(FetchRequest)));
   if (request == nullptr) {
-    pinkjs::Value promise = vm.makePromise();
+    PocketInkJS::Value promise = vm.makePromise();
     if (vm.isUndefined(promise))
       return promise;
     vm.settlePromise(promise, vm.makeString("no PSRAM for fetch request"), true);
@@ -2374,18 +2374,18 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
   memcpy(request->url, url.data, url.size);
   request->url[url.size] = '\0';
 
-  const pinkjs::Value options = argc == 2 ? args[1] : vm.undefined();
+  const PocketInkJS::Value options = argc == 2 ? args[1] : vm.undefined();
   if (!vm.isUndefined(options)) {
-    const pinkjs::Value method = vm.objectGet(options, "method");
+    const PocketInkJS::Value method = vm.objectGet(options, "method");
     if (!vm.isUndefined(method)) {
       if (!vm.isString(method)) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{170});
+        return vm.fail(PocketInkJS::ErrorCode{170});
       }
-      const pinkjs::StringView text = vm.stringView(method);
+      const PocketInkJS::StringView text = vm.stringView(method);
       if (text.size == 0 || text.size >= sizeof(request->method)) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{171});
+        return vm.fail(PocketInkJS::ErrorCode{171});
       }
       for (size_t i = 0; i < text.size; i++) {
         const char c = text.data[i];
@@ -2395,70 +2395,70 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
       }
       request->method[text.size] = '\0';
     }
-    const pinkjs::Value maxBytes = vm.objectGet(options, "maxBytes");
+    const PocketInkJS::Value maxBytes = vm.objectGet(options, "maxBytes");
     if (!vm.isUndefined(maxBytes)) {
       const double raw = vm.toNumber(maxBytes);
-      if (!std::isfinite(raw) || raw < 1 || raw > kPinkJsMaxHttpBytes) {
+      if (!std::isfinite(raw) || raw < 1 || raw > kPocketInkJSMaxHttpBytes) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{172});
+        return vm.fail(PocketInkJS::ErrorCode{172});
       }
       request->maxBytes = static_cast<size_t>(raw);
     }
-    const pinkjs::Value timeout = vm.objectGet(options, "timeout");
+    const PocketInkJS::Value timeout = vm.objectGet(options, "timeout");
     if (!vm.isUndefined(timeout)) {
       const double raw = vm.toNumber(timeout);
       if (!std::isfinite(raw) || raw < 100 || raw > 30000) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{173});
+        return vm.fail(PocketInkJS::ErrorCode{173});
       }
       request->timeoutMs = static_cast<uint32_t>(raw);
     }
-    const pinkjs::Value body = vm.objectGet(options, "body");
+    const PocketInkJS::Value body = vm.objectGet(options, "body");
     if (!vm.isUndefined(body)) {
       if (!vm.isString(body)) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{174});
+        return vm.fail(PocketInkJS::ErrorCode{174});
       }
-      const pinkjs::StringView text = vm.stringView(body);
-      if (text.size > kPinkJsMaxHttpBytes) {
+      const PocketInkJS::StringView text = vm.stringView(body);
+      if (text.size > kPocketInkJSMaxHttpBytes) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{175});
+        return vm.fail(PocketInkJS::ErrorCode{175});
       }
       if (text.size > 0) {
         request->body = static_cast<uint8_t *>(allocatePsram(text.size));
         if (request->body == nullptr) {
           releaseFetchRequest(request);
-          return vm.fail(pinkjs::ErrorCode{176});
+          return vm.fail(PocketInkJS::ErrorCode{176});
         }
         memcpy(request->body, text.data, text.size);
         request->bodyBytes = text.size;
       }
     }
-    const pinkjs::Value headers = vm.objectGet(options, "headers");
+    const PocketInkJS::Value headers = vm.objectGet(options, "headers");
     if (!vm.isUndefined(headers)) {
-      if (vm.typeOf(headers) != pinkjs::ValueType::Object) {
+      if (vm.typeOf(headers) != PocketInkJS::ValueType::Object) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{177});
+        return vm.fail(PocketInkJS::ErrorCode{177});
       }
       const size_t count = vm.objectPropertyCount(headers);
       if (count > sizeof(request->headers) / sizeof(request->headers[0])) {
         releaseFetchRequest(request);
-        return vm.fail(pinkjs::ErrorCode{178});
+        return vm.fail(PocketInkJS::ErrorCode{178});
       }
       for (size_t i = 0; i < count; i++) {
-        pinkjs::Value key;
-        pinkjs::Value value;
+        PocketInkJS::Value key;
+        PocketInkJS::Value value;
         vm.objectPropertyAt(headers, i, &key, &value);
         if (!vm.isString(value)) {
           releaseFetchRequest(request);
-          return vm.fail(pinkjs::ErrorCode{179});
+          return vm.fail(PocketInkJS::ErrorCode{179});
         }
-        const pinkjs::StringView keyText = vm.stringView(key);
-        const pinkjs::StringView valueText = vm.stringView(value);
+        const PocketInkJS::StringView keyText = vm.stringView(key);
+        const PocketInkJS::StringView valueText = vm.stringView(value);
         if (keyText.size >= sizeof(request->headers[i].name) ||
             valueText.size >= sizeof(request->headers[i].value)) {
           releaseFetchRequest(request);
-          return vm.fail(pinkjs::ErrorCode{180});
+          return vm.fail(PocketInkJS::ErrorCode{180});
         }
         memcpy(request->headers[i].name, keyText.data, keyText.size);
         memcpy(request->headers[i].value, valueText.data, valueText.size);
@@ -2468,13 +2468,13 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
       }
     }
   }
-  pinkjs::Value promise = vm.makePromise();
+  PocketInkJS::Value promise = vm.makePromise();
   if (vm.isUndefined(promise)) {
     releaseFetchRequest(request);
     return promise;
   }
-  const pinkjs::RootHandle retained = vm.retain(promise);
-  if (retained == pinkjs::kInvalidRoot) {
+  const PocketInkJS::RootHandle retained = vm.retain(promise);
+  if (retained == PocketInkJS::kInvalidRoot) {
     releaseFetchRequest(request);
     return vm.undefined();
   }
@@ -2488,7 +2488,7 @@ pinkjs::Value PinkJsApp::queueFetch(pinkjs::Runtime &vm,
   return promise;
 }
 
-bool PinkJsApp::pumpAsyncCompletions() {
+bool PocketInkJSApp::pumpAsyncCompletions() {
   if (asyncState == nullptr || runtime == nullptr)
     return false;
   bool completedAny = false;
@@ -2497,19 +2497,19 @@ bool PinkJsApp::pumpAsyncCompletions() {
     completedAny = true;
     if (completion == nullptr)
       continue;
-    const pinkjs::Value promise = runtime->retained(completion->promise);
-    if (completion->error != pinkjs::ErrorCode{}) {
+    const PocketInkJS::Value promise = runtime->retained(completion->promise);
+    if (completion->error != PocketInkJS::ErrorCode{}) {
       char error[5];
-      pinkjs::formatErrorCode(completion->error, error);
+      PocketInkJS::formatErrorCode(completion->error, error);
       runtime->settlePromise(promise, runtime->makeString(error, 4), true);
       runtime->release(completion->promise);
       releaseFetchCompletion(completion);
       continue;
     }
-    pinkjs::Value response = runtime->makeObject();
-    pinkjs::Value body = runtime->makeString(
+    PocketInkJS::Value response = runtime->makeObject();
+    PocketInkJS::Value body = runtime->makeString(
         reinterpret_cast<const char *>(completion->body), completion->bodyBytes);
-    pinkjs::Value headers = runtime->makeObject();
+    PocketInkJS::Value headers = runtime->makeObject();
     runtime->objectSet(response, "ok",
                        runtime->boolean(completion->statusCode >= 200 &&
                                         completion->statusCode < 300));
@@ -2532,28 +2532,28 @@ bool PinkJsApp::pumpAsyncCompletions() {
   return completedAny;
 }
 
-bool PinkJsApp::waitForPromise(pinkjs::Runtime &vm, pinkjs::Value promise) {
+bool PocketInkJSApp::waitForPromise(PocketInkJS::Runtime &vm, PocketInkJS::Value promise) {
   const uint32_t startedAt = millis();
-  while (vm.promiseState(promise) == pinkjs::PromiseState::Pending &&
+  while (vm.promiseState(promise) == PocketInkJS::PromiseState::Pending &&
          status[0] == '\0' && millis() - startedAt < 31000U) {
     pumpAsyncCompletions();
     vTaskDelay(pdMS_TO_TICKS(1));
   }
-  return vm.promiseState(promise) != pinkjs::PromiseState::Pending;
+  return vm.promiseState(promise) != PocketInkJS::PromiseState::Pending;
 }
 
-pinkjs::Value PinkJsApp::scheduleTimer(pinkjs::Runtime &vm,
-                                      const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value PocketInkJSApp::scheduleTimer(PocketInkJS::Runtime &vm,
+                                      const PocketInkJS::Value *args, size_t argc,
                                       bool repeating) {
   if (argc < 1 || !vm.isCallable(args[0]))
-    return vm.fail(pinkjs::ErrorCode{181});
+    return vm.fail(PocketInkJS::ErrorCode{181});
   const double rawDelay = argc > 1 ? vm.toNumber(args[1]) : 0;
   if (!std::isfinite(rawDelay) || rawDelay < 0 || rawDelay > UINT32_MAX)
-    return vm.fail(pinkjs::ErrorCode{182});
+    return vm.fail(PocketInkJS::ErrorCode{182});
   if (timerState == nullptr) {
     timerState = static_cast<TimerState *>(allocatePsram(sizeof(TimerState)));
     if (timerState == nullptr)
-      return vm.fail(pinkjs::ErrorCode{183});
+      return vm.fail(PocketInkJS::ErrorCode{183});
     new (timerState) TimerState();
   }
   TimerSlot *slot = nullptr;
@@ -2564,14 +2564,14 @@ pinkjs::Value PinkJsApp::scheduleTimer(pinkjs::Runtime &vm,
     }
   }
   if (slot == nullptr)
-    return vm.fail(pinkjs::ErrorCode{184});
-  pinkjs::Value arguments = vm.makeArray(argc > 2 ? argc - 2U : 0);
+    return vm.fail(PocketInkJS::ErrorCode{184});
+  PocketInkJS::Value arguments = vm.makeArray(argc > 2 ? argc - 2U : 0);
   for (size_t i = 2; i < argc; i++)
     vm.arrayPush(arguments, args[i]);
-  const pinkjs::RootHandle callback = vm.retain(args[0]);
-  const pinkjs::RootHandle argumentRoot = vm.retain(arguments);
-  if (callback == pinkjs::kInvalidRoot ||
-      argumentRoot == pinkjs::kInvalidRoot) {
+  const PocketInkJS::RootHandle callback = vm.retain(args[0]);
+  const PocketInkJS::RootHandle argumentRoot = vm.retain(arguments);
+  if (callback == PocketInkJS::kInvalidRoot ||
+      argumentRoot == PocketInkJS::kInvalidRoot) {
     vm.release(callback);
     vm.release(argumentRoot);
     return vm.undefined();
@@ -2586,10 +2586,10 @@ pinkjs::Value PinkJsApp::scheduleTimer(pinkjs::Runtime &vm,
   return vm.number(id);
 }
 
-pinkjs::Value PinkJsApp::cancelTimer(pinkjs::Runtime &vm,
-                                    const pinkjs::Value *args, size_t argc) {
+PocketInkJS::Value PocketInkJSApp::cancelTimer(PocketInkJS::Runtime &vm,
+                                    const PocketInkJS::Value *args, size_t argc) {
   if (argc != 1 || !std::isfinite(vm.toNumber(args[0])))
-    return vm.fail(pinkjs::ErrorCode{185});
+    return vm.fail(PocketInkJS::ErrorCode{185});
   const uint32_t id = static_cast<uint32_t>(vm.toNumber(args[0]));
   if (timerState != nullptr) {
     for (TimerSlot &slot : timerState->slots) {
@@ -2604,7 +2604,7 @@ pinkjs::Value PinkJsApp::cancelTimer(pinkjs::Runtime &vm,
   return vm.undefined();
 }
 
-bool PinkJsApp::pumpTimers() {
+bool PocketInkJSApp::pumpTimers() {
   if (timerState == nullptr || runtime == nullptr || status[0] != '\0')
     return false;
   bool dirty = false;
@@ -2612,10 +2612,10 @@ bool PinkJsApp::pumpTimers() {
   for (TimerSlot &slot : timerState->slots) {
     if (!slot.active || static_cast<int32_t>(now - slot.dueAt) < 0)
       continue;
-    const pinkjs::Value callback = runtime->retained(slot.callback);
-    const pinkjs::Value arguments = runtime->retained(slot.arguments);
+    const PocketInkJS::Value callback = runtime->retained(slot.callback);
+    const PocketInkJS::Value arguments = runtime->retained(slot.arguments);
     const size_t argc = runtime->arrayLength(arguments);
-    pinkjs::Value argv[16];
+    PocketInkJS::Value argv[16];
     for (size_t i = 0; i < argc && i < sizeof(argv) / sizeof(argv[0]); i++)
       argv[i] = runtime->arrayAt(arguments, i);
     const bool oneShot = slot.intervalMs == 0;
@@ -2624,9 +2624,9 @@ bool PinkJsApp::pumpTimers() {
     } else {
       slot.dueAt = now + slot.intervalMs;
     }
-    logPinkJsStackLow("timer");
-    const pinkjs::RunResult result = runtime->call(callback, argv, argc);
-    logPinkJsStackLow("timer");
+    logPocketInkJSStackLow("timer");
+    const PocketInkJS::RunResult result = runtime->call(callback, argv, argc);
+    logPocketInkJSStackLow("timer");
     if (oneShot) {
       runtime->release(slot.callback);
       runtime->release(slot.arguments);
@@ -2641,7 +2641,7 @@ bool PinkJsApp::pumpTimers() {
   return dirty;
 }
 
-void PinkJsApp::releaseTimers() {
+void PocketInkJSApp::releaseTimers() {
   if (timerState == nullptr)
     return;
   if (runtime != nullptr) {
@@ -2657,15 +2657,15 @@ void PinkJsApp::releaseTimers() {
   timerState = nullptr;
 }
 
-bool PinkJsApp::beginSystemModal(PinkJsSystemModal kind,
-                                 pinkjs::Value promise,
+bool PocketInkJSApp::beginSystemModal(PocketInkJSSystemModal kind,
+                                 PocketInkJS::Value promise,
                                  uint32_t captureDurationMs,
                                  DatePickerDate initialDate) {
-  if (systemModal != PinkJsSystemModal::None || runtime == nullptr) {
+  if (systemModal != PocketInkJSSystemModal::None || runtime == nullptr) {
     return false;
   }
-  const pinkjs::RootHandle retained = runtime->retain(promise);
-  if (retained == pinkjs::kInvalidRoot) {
+  const PocketInkJS::RootHandle retained = runtime->retain(promise);
+  if (retained == PocketInkJS::kInvalidRoot) {
     return false;
   }
   systemModal = kind;
@@ -2675,14 +2675,14 @@ bool PinkJsApp::beginSystemModal(PinkJsSystemModal kind,
   return true;
 }
 
-bool PinkJsApp::pumpSystemModal() {
-  if (systemModal == PinkJsSystemModal::None || runtime == nullptr) {
+bool PocketInkJSApp::pumpSystemModal() {
+  if (systemModal == PocketInkJSSystemModal::None || runtime == nullptr) {
     return false;
   }
   AppApiStatus status = AppApiStatus::Pending;
-  pinkjs::Value result = runtime->undefined();
+  PocketInkJS::Value result = runtime->undefined();
   switch (systemModal) {
-  case PinkJsSystemModal::FilePicker: {
+  case PocketInkJSSystemModal::FilePicker: {
     char path[288];
     status = appApiTakePickedFile(path, sizeof(path));
     if (status == AppApiStatus::Ok) {
@@ -2690,7 +2690,7 @@ bool PinkJsApp::pumpSystemModal() {
     }
     break;
   }
-  case PinkJsSystemModal::Keyboard: {
+  case PocketInkJSSystemModal::Keyboard: {
     char text[256];
     status = appApiGetKeyboardInput("", 0, 255, text, sizeof(text));
     if (status == AppApiStatus::Ok) {
@@ -2698,7 +2698,7 @@ bool PinkJsApp::pumpSystemModal() {
     }
     break;
   }
-  case PinkJsSystemModal::DatePicker: {
+  case PocketInkJSSystemModal::DatePicker: {
     DatePickerDate selected;
     status = appApiGetDateInput(systemModalDate, selected);
     if (status == AppApiStatus::Ok) {
@@ -2709,7 +2709,7 @@ bool PinkJsApp::pumpSystemModal() {
     }
     break;
   }
-  case PinkJsSystemModal::AudioCapture: {
+  case PocketInkJSSystemModal::AudioCapture: {
     const uint8_t *data = nullptr;
     size_t size = 0;
     status = appApiCaptureWav(systemModalCaptureDurationMs, &data, &size);
@@ -2719,7 +2719,7 @@ bool PinkJsApp::pumpSystemModal() {
     }
     break;
   }
-  case PinkJsSystemModal::AudioCapturePcm16: {
+  case PocketInkJSSystemModal::AudioCapturePcm16: {
     const uint8_t *data = nullptr;
     size_t size = 0;
     status = appApiCapturePcm16(systemModalCaptureDurationMs, &data, &size);
@@ -2729,7 +2729,7 @@ bool PinkJsApp::pumpSystemModal() {
     }
     break;
   }
-  case PinkJsSystemModal::None:
+  case PocketInkJSSystemModal::None:
     return false;
   }
   if (status == AppApiStatus::Pending) {
@@ -2742,49 +2742,49 @@ bool PinkJsApp::pumpSystemModal() {
   } else if (rejected) {
     result = runtime->makeString("system input failed");
   }
-  const pinkjs::Value promise = runtime->retained(systemModalPromise);
+  const PocketInkJS::Value promise = runtime->retained(systemModalPromise);
   runtime->settlePromise(promise, result, rejected);
   runtime->release(systemModalPromise);
-  systemModal = PinkJsSystemModal::None;
-  systemModalPromise = pinkjs::kInvalidRoot;
+  systemModal = PocketInkJSSystemModal::None;
+  systemModalPromise = PocketInkJS::kInvalidRoot;
   systemModalCaptureDurationMs = 0;
   return true;
 }
 
-void PinkJsApp::stopAsyncWorker() {
+void PocketInkJSApp::stopAsyncWorker() {
   if (asyncState == nullptr)
     return;
   asyncState->stopping.store(true);
   asyncState = nullptr; // The worker owns and releases its detached state.
 }
 
-pinkjs::Value nativeConfigGet(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
-  if (activePinkJsApp == nullptr || argc != 1 || !runtime.isString(args[0])) {
-    return runtime.fail(pinkjs::ErrorCode{186});
+PocketInkJS::Value nativeConfigGet(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
+  if (activePocketInkJSApp == nullptr || argc != 1 || !runtime.isString(args[0])) {
+    return runtime.fail(PocketInkJS::ErrorCode{186});
   }
-  const pinkjs::StringView key = runtime.stringView(args[0]);
+  const PocketInkJS::StringView key = runtime.stringView(args[0]);
   if (key.size >= 64) {
-    return runtime.fail(pinkjs::ErrorCode{187});
+    return runtime.fail(PocketInkJS::ErrorCode{187});
   }
   char keyText[64];
   memcpy(keyText, key.data, key.size);
   keyText[key.size] = '\0';
   char value[CONFIG_VALUE_MAX];
-  if (!configGetForApp(activePinkJsApp->id(), keyText, value, sizeof(value))) {
+  if (!configGetForApp(activePocketInkJSApp->id(), keyText, value, sizeof(value))) {
     return runtime.undefined();
   }
   return runtime.makeString(value);
 }
 
-pinkjs::Value nativeConfigSet(pinkjs::Runtime &runtime,
-                              const pinkjs::Value *args, size_t argc, void *) {
-  if (activePinkJsApp == nullptr || argc != 2 || !runtime.isString(args[0])) {
-    return runtime.fail(pinkjs::ErrorCode{188});
+PocketInkJS::Value nativeConfigSet(PocketInkJS::Runtime &runtime,
+                              const PocketInkJS::Value *args, size_t argc, void *) {
+  if (activePocketInkJSApp == nullptr || argc != 2 || !runtime.isString(args[0])) {
+    return runtime.fail(PocketInkJS::ErrorCode{188});
   }
-  const pinkjs::StringView key = runtime.stringView(args[0]);
+  const PocketInkJS::StringView key = runtime.stringView(args[0]);
   if (key.size >= 64) {
-    return runtime.fail(pinkjs::ErrorCode{187});
+    return runtime.fail(PocketInkJS::ErrorCode{187});
   }
   char keyText[64];
   memcpy(keyText, key.data, key.size);
@@ -2792,31 +2792,31 @@ pinkjs::Value nativeConfigSet(pinkjs::Runtime &runtime,
   char value[CONFIG_VALUE_MAX];
   runtime.format(args[1], value, sizeof(value));
   return runtime.boolean(
-      configSetForApp(activePinkJsApp->id(), keyText, value));
+      configSetForApp(activePocketInkJSApp->id(), keyText, value));
 }
 
-pinkjs::Value nativeHttpGet(pinkjs::Runtime &runtime,
-                            const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeHttpGet(PocketInkJS::Runtime &runtime,
+                            const PocketInkJS::Value *args, size_t argc, void *) {
 #if ENABLE_NETWORK_APPS
   if (argc < 1 || argc > 2 || !runtime.isString(args[0])) {
-    return runtime.fail(pinkjs::ErrorCode{189});
+    return runtime.fail(PocketInkJS::ErrorCode{189});
   }
   if (!wifiIsConnected()) {
-    return runtime.fail(pinkjs::ErrorCode{190});
+    return runtime.fail(PocketInkJS::ErrorCode{190});
   }
-  const pinkjs::StringView url = runtime.stringView(args[0]);
+  const PocketInkJS::StringView url = runtime.stringView(args[0]);
   if (url.size == 0 || url.size >= 512) {
-    return runtime.fail(pinkjs::ErrorCode{191});
+    return runtime.fail(PocketInkJS::ErrorCode{191});
   }
   char urlText[512];
   memcpy(urlText, url.data, url.size);
   urlText[url.size] = '\0';
-  size_t limit = kPinkJsMaxHttpBytes;
+  size_t limit = kPocketInkJSMaxHttpBytes;
   if (argc == 2) {
     const double requested = runtime.toNumber(args[1]);
     if (!std::isfinite(requested) || requested < 1 ||
-        requested > static_cast<double>(kPinkJsMaxHttpBytes)) {
-      return runtime.fail(pinkjs::ErrorCode{192});
+        requested > static_cast<double>(kPocketInkJSMaxHttpBytes)) {
+      return runtime.fail(PocketInkJS::ErrorCode{192});
     }
     limit = static_cast<size_t>(requested);
   }
@@ -2824,20 +2824,20 @@ pinkjs::Value nativeHttpGet(pinkjs::Runtime &runtime,
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
-  http.setTimeout(kPinkJsHttpTimeoutMs);
+  http.setTimeout(kPocketInkJSHttpTimeoutMs);
   if (!http.begin(client, urlText)) {
-    return runtime.fail(pinkjs::ErrorCode{193});
+    return runtime.fail(PocketInkJS::ErrorCode{193});
   }
-  http.addHeader("User-Agent", "PocketInk-PinkJS/0.1");
+  http.addHeader("User-Agent", "PocketInk-PocketInkJS/0.1");
   const int code = http.GET();
   if (code < 200 || code >= 300) {
     http.end();
-    return runtime.fail(pinkjs::ErrorCode{194});
+    return runtime.fail(PocketInkJS::ErrorCode{194});
   }
   const int expected = http.getSize();
   if (expected > 0 && static_cast<size_t>(expected) > limit) {
     http.end();
-    return runtime.fail(pinkjs::ErrorCode{195});
+    return runtime.fail(PocketInkJS::ErrorCode{195});
   }
   if (expected == 0) {
     http.end();
@@ -2852,7 +2852,7 @@ pinkjs::Value nativeHttpGet(pinkjs::Runtime &runtime,
   uint8_t *buffer = static_cast<uint8_t *>(allocatePsram(allocationSize));
   if (buffer == nullptr) {
     http.end();
-    return runtime.fail(pinkjs::ErrorCode{196});
+    return runtime.fail(PocketInkJS::ErrorCode{196});
   }
   auto *stream = http.getStreamPtr();
   size_t length = 0;
@@ -2869,7 +2869,7 @@ pinkjs::Value nativeHttpGet(pinkjs::Runtime &runtime,
         (!stream->connected() && stream->available() <= 0)) {
       break;
     }
-    if (millis() - startedAt >= kPinkJsHttpTimeoutMs) {
+    if (millis() - startedAt >= kPocketInkJSHttpTimeoutMs) {
       break;
     }
     delay(1);
@@ -2877,84 +2877,84 @@ pinkjs::Value nativeHttpGet(pinkjs::Runtime &runtime,
   http.end();
   if (expected > 0 && length != static_cast<size_t>(expected)) {
     heap_caps_free(buffer);
-    return runtime.fail(pinkjs::ErrorCode{197});
+    return runtime.fail(PocketInkJS::ErrorCode{197});
   }
-  pinkjs::Value result = runtime.makeString(
+  PocketInkJS::Value result = runtime.makeString(
       reinterpret_cast<const char *>(buffer), length);
   heap_caps_free(buffer);
   return result;
 #else
   (void)args;
   (void)argc;
-  return runtime.fail(pinkjs::ErrorCode{198});
+  return runtime.fail(PocketInkJS::ErrorCode{198});
 #endif
 }
 
-pinkjs::Value nativeFetch(pinkjs::Runtime &runtime, const pinkjs::Value *args,
+PocketInkJS::Value nativeFetch(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *args,
                           size_t argc, void *) {
-  return activePinkJsApp != nullptr
-             ? activePinkJsApp->queueFetch(runtime, args, argc)
-             : runtime.fail(pinkjs::ErrorCode{199});
+  return activePocketInkJSApp != nullptr
+             ? activePocketInkJSApp->queueFetch(runtime, args, argc)
+             : runtime.fail(PocketInkJS::ErrorCode{199});
 }
 
-pinkjs::Value nativeSetTimeout(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  return activePinkJsApp != nullptr
-             ? activePinkJsApp->scheduleTimer(runtime, args, argc, false)
-             : runtime.fail(pinkjs::ErrorCode{199});
+PocketInkJS::Value nativeSetTimeout(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  return activePocketInkJSApp != nullptr
+             ? activePocketInkJSApp->scheduleTimer(runtime, args, argc, false)
+             : runtime.fail(PocketInkJS::ErrorCode{199});
 }
 
-pinkjs::Value nativeSetInterval(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeSetInterval(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
-  return activePinkJsApp != nullptr
-             ? activePinkJsApp->scheduleTimer(runtime, args, argc, true)
-             : runtime.fail(pinkjs::ErrorCode{199});
+  return activePocketInkJSApp != nullptr
+             ? activePocketInkJSApp->scheduleTimer(runtime, args, argc, true)
+             : runtime.fail(PocketInkJS::ErrorCode{199});
 }
 
-pinkjs::Value nativeClearTimer(pinkjs::Runtime &runtime,
-                               const pinkjs::Value *args, size_t argc, void *) {
-  return activePinkJsApp != nullptr
-             ? activePinkJsApp->cancelTimer(runtime, args, argc)
+PocketInkJS::Value nativeClearTimer(PocketInkJS::Runtime &runtime,
+                               const PocketInkJS::Value *args, size_t argc, void *) {
+  return activePocketInkJSApp != nullptr
+             ? activePocketInkJSApp->cancelTimer(runtime, args, argc)
              : runtime.undefined();
 }
 
-bool awaitPendingPromise(pinkjs::Runtime &runtime, pinkjs::Value promise,
+bool awaitPendingPromise(PocketInkJS::Runtime &runtime, PocketInkJS::Value promise,
                          void *userData) {
-  PinkJsApp *app = static_cast<PinkJsApp *>(userData);
+  PocketInkJSApp *app = static_cast<PocketInkJSApp *>(userData);
   return app != nullptr && app->waitForPromise(runtime, promise);
 }
 
-pinkjs::Value nativeResponseText(pinkjs::Runtime &runtime,
-                                 pinkjs::Value receiver,
-                                 const pinkjs::Value *, size_t argc, void *) {
-  if (argc != 0 || runtime.typeOf(receiver) != pinkjs::ValueType::Object)
-    return runtime.fail(pinkjs::ErrorCode{200});
-  const pinkjs::Value body = runtime.objectGet(receiver, "_body");
-  pinkjs::Value promise = runtime.makePromise();
+PocketInkJS::Value nativeResponseText(PocketInkJS::Runtime &runtime,
+                                 PocketInkJS::Value receiver,
+                                 const PocketInkJS::Value *, size_t argc, void *) {
+  if (argc != 0 || runtime.typeOf(receiver) != PocketInkJS::ValueType::Object)
+    return runtime.fail(PocketInkJS::ErrorCode{200});
+  const PocketInkJS::Value body = runtime.objectGet(receiver, "_body");
+  PocketInkJS::Value promise = runtime.makePromise();
   runtime.settlePromise(promise, body, false);
   return promise;
 }
 
-pinkjs::Value nativeResponseJson(pinkjs::Runtime &runtime,
-                                 pinkjs::Value receiver,
-                                 const pinkjs::Value *, size_t argc, void *) {
-  if (argc != 0 || runtime.typeOf(receiver) != pinkjs::ValueType::Object)
-    return runtime.fail(pinkjs::ErrorCode{201});
+PocketInkJS::Value nativeResponseJson(PocketInkJS::Runtime &runtime,
+                                 PocketInkJS::Value receiver,
+                                 const PocketInkJS::Value *, size_t argc, void *) {
+  if (argc != 0 || runtime.typeOf(receiver) != PocketInkJS::ValueType::Object)
+    return runtime.fail(PocketInkJS::ErrorCode{201});
   return runtime.parseJsonPromise(runtime.objectGet(receiver, "_body"));
 }
 
-pinkjs::Value nativeUiButton(pinkjs::Runtime &runtime,
-                             const pinkjs::Value *args, size_t argc, void *) {
+PocketInkJS::Value nativeUiButton(PocketInkJS::Runtime &runtime,
+                             const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc < 5 || argc > 7 || !runtime.isString(args[4]))
-    return runtime.fail(pinkjs::ErrorCode{202});
+    return runtime.fail(PocketInkJS::ErrorCode{202});
   if (!numericArguments(runtime, args, 4, 4))
     return runtime.undefined();
-  if (pinkJsDrawTarget == nullptr)
+  if (PocketInkJSDrawTarget == nullptr)
     return runtime.undefined();
-  const pinkjs::StringView label = runtime.stringView(args[4]);
+  const PocketInkJS::StringView label = runtime.stringView(args[4]);
   if (label.size >= 96)
-    return runtime.fail(pinkjs::ErrorCode{203});
+    return runtime.fail(PocketInkJS::ErrorCode{203});
   char text[96];
   memcpy(text, label.data, label.size);
   text[label.size] = '\0';
@@ -2965,13 +2965,13 @@ pinkjs::Value nativeUiButton(pinkjs::Runtime &runtime,
                          toI16(runtime.toNumber(args[1])),
                          toI16(runtime.toNumber(args[2])),
                          toI16(runtime.toNumber(args[3]))};
-  TouchButton(bounds, content).draw(*pinkJsDrawTarget,
+  TouchButton(bounds, content).draw(*PocketInkJSDrawTarget,
                                     argc > 5 && runtime.toBoolean(args[5]));
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiButtonContains(pinkjs::Runtime &runtime,
-                                     const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiButtonContains(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *args, size_t argc,
                                      void *) {
   if (argc < 6 || argc > 7 || !numericArguments(runtime, args, argc, argc))
     return runtime.undefined();
@@ -2990,8 +2990,8 @@ pinkjs::Value nativeUiButtonContains(pinkjs::Runtime &runtime,
           .contains(point));
 }
 
-pinkjs::Value nativeUiListTouch(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiListTouch(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   if (!numericArguments(runtime, args, argc, 10))
     return runtime.undefined();
@@ -3007,7 +3007,7 @@ pinkjs::Value nativeUiListTouch(pinkjs::Runtime &runtime,
       toI16(runtime.toNumber(args[4])), toI16(runtime.toNumber(args[5])),
       toI16(runtime.toNumber(args[6])), toI16(runtime.toNumber(args[7])), mode,
       offset);
-  pinkjs::Value result = runtime.makeObject();
+  PocketInkJS::Value result = runtime.makeObject();
   const char *action = hit.action == UiListTouchAction::Scroll
                            ? "scroll"
                            : (hit.action == UiListTouchAction::Select ? "select"
@@ -3018,14 +3018,14 @@ pinkjs::Value nativeUiListTouch(pinkjs::Runtime &runtime,
   return result;
 }
 
-bool readOptionRect(pinkjs::Runtime &runtime, pinkjs::Value option,
+bool readOptionRect(PocketInkJS::Runtime &runtime, PocketInkJS::Value option,
                     UiRect &rect) {
-  if (runtime.typeOf(option) != pinkjs::ValueType::Object)
+  if (runtime.typeOf(option) != PocketInkJS::ValueType::Object)
     return false;
-  const pinkjs::Value x = runtime.objectGet(option, "x");
-  const pinkjs::Value y = runtime.objectGet(option, "y");
-  const pinkjs::Value w = runtime.objectGet(option, "w");
-  const pinkjs::Value h = runtime.objectGet(option, "h");
+  const PocketInkJS::Value x = runtime.objectGet(option, "x");
+  const PocketInkJS::Value y = runtime.objectGet(option, "y");
+  const PocketInkJS::Value w = runtime.objectGet(option, "w");
+  const PocketInkJS::Value h = runtime.objectGet(option, "h");
   if (!runtime.isNumber(x) || !runtime.isNumber(y) || !runtime.isNumber(w) ||
       !runtime.isNumber(h))
     return false;
@@ -3034,62 +3034,62 @@ bool readOptionRect(pinkjs::Runtime &runtime, pinkjs::Value option,
   return true;
 }
 
-pinkjs::Value nativeUiSelectDraw(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiSelectDraw(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
   if (argc < 2 || argc > 3 ||
-      runtime.typeOf(args[0]) != pinkjs::ValueType::Array)
-    return runtime.fail(pinkjs::ErrorCode{204});
-  if (pinkJsDrawTarget == nullptr)
+      runtime.typeOf(args[0]) != PocketInkJS::ValueType::Array)
+    return runtime.fail(PocketInkJS::ErrorCode{204});
+  if (PocketInkJSDrawTarget == nullptr)
     return runtime.undefined();
   const double selected = runtime.toNumber(args[1]);
   for (size_t i = 0; i < runtime.arrayLength(args[0]); i++) {
-    const pinkjs::Value option = runtime.arrayAt(args[0], i);
+    const PocketInkJS::Value option = runtime.arrayAt(args[0], i);
     UiRect rect;
-    const pinkjs::Value labelValue = runtime.objectGet(option, "label");
+    const PocketInkJS::Value labelValue = runtime.objectGet(option, "label");
     if (!readOptionRect(runtime, option, rect) ||
         !runtime.isString(labelValue))
-      return runtime.fail(pinkjs::ErrorCode{205});
-    const pinkjs::StringView label = runtime.stringView(labelValue);
+      return runtime.fail(PocketInkJS::ErrorCode{205});
+    const PocketInkJS::StringView label = runtime.stringView(labelValue);
     if (label.size >= 64)
-      return runtime.fail(pinkjs::ErrorCode{206});
+      return runtime.fail(PocketInkJS::ErrorCode{206});
     char text[64];
     memcpy(text, label.data, label.size);
     text[label.size] = '\0';
     const bool pressed = runtime.toNumber(runtime.objectGet(option, "value")) ==
                          selected;
-    uiDrawButton(*pinkJsDrawTarget, rect, text, pressed,
+    uiDrawButton(*PocketInkJSDrawTarget, rect, text, pressed,
                  argc > 2 ? toU8(runtime.toNumber(args[2])) : 1);
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeUiSelectHit(pinkjs::Runtime &runtime,
-                                const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeUiSelectHit(PocketInkJS::Runtime &runtime,
+                                const PocketInkJS::Value *args, size_t argc,
                                 void *) {
   if (argc < 3 || argc > 4 || !runtime.isNumber(args[0]) ||
       !runtime.isNumber(args[1]) ||
-      runtime.typeOf(args[2]) != pinkjs::ValueType::Array)
-    return runtime.fail(pinkjs::ErrorCode{207});
+      runtime.typeOf(args[2]) != PocketInkJS::ValueType::Array)
+    return runtime.fail(PocketInkJS::ErrorCode{207});
   const TouchPoint point = {toU16(runtime.toNumber(args[0])),
                             toU16(runtime.toNumber(args[1]))};
   const uint8_t padding = argc > 3 ? toU8(runtime.toNumber(args[3]))
                                    : UI_TOUCH_ASSIST_PX;
   for (size_t i = 0; i < runtime.arrayLength(args[2]); i++) {
-    const pinkjs::Value option = runtime.arrayAt(args[2], i);
+    const PocketInkJS::Value option = runtime.arrayAt(args[2], i);
     UiRect rect;
     if (!readOptionRect(runtime, option, rect))
-      return runtime.fail(pinkjs::ErrorCode{205});
+      return runtime.fail(PocketInkJS::ErrorCode{205});
     if (uiTouchContains(rect, point, padding))
       return runtime.objectGet(option, "value");
   }
   return runtime.undefined();
 }
 
-pinkjs::Value nativeGetKeyboardInput(pinkjs::Runtime &runtime,
-                                     const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeGetKeyboardInput(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *args, size_t argc,
                                      void *) {
-  if (activePinkJsApp == nullptr || argc < 1 || argc > 3 ||
+  if (activePocketInkJSApp == nullptr || argc < 1 || argc > 3 ||
       !runtime.isString(args[0])) {
     return runtime.fail("ui.getKeyboardInput expects initialText, layout?, maxLength?");
   }
@@ -3105,25 +3105,25 @@ pinkjs::Value nativeGetKeyboardInput(pinkjs::Runtime &runtime,
       strlen(initial) > static_cast<size_t>(maxValue)) {
     return runtime.fail("initial keyboard text is too long");
   }
-  pinkjs::Value promise = runtime.makePromise();
+  PocketInkJS::Value promise = runtime.makePromise();
   if (runtime.isUndefined(promise)) {
     return promise;
   }
-  if (!activePinkJsApp->systemModalIdle() ||
+  if (!activePocketInkJSApp->systemModalIdle() ||
       appApiGetKeyboardInput(initial, static_cast<uint8_t>(layoutValue),
                              static_cast<size_t>(maxValue), initial,
                              sizeof(initial)) != AppApiStatus::Pending ||
-      !activePinkJsApp->beginSystemModal(PinkJsSystemModal::Keyboard,
+      !activePocketInkJSApp->beginSystemModal(PocketInkJSSystemModal::Keyboard,
                                          promise)) {
     runtime.settlePromise(promise, runtime.makeString("keyboard is busy"), true);
   }
   return promise;
 }
 
-pinkjs::Value nativeGetDateInput(pinkjs::Runtime &runtime,
-                                 const pinkjs::Value *args, size_t argc,
+PocketInkJS::Value nativeGetDateInput(PocketInkJS::Runtime &runtime,
+                                 const PocketInkJS::Value *args, size_t argc,
                                  void *) {
-  if (activePinkJsApp == nullptr || !numericArguments(runtime, args, argc, 3)) {
+  if (activePocketInkJSApp == nullptr || !numericArguments(runtime, args, argc, 3)) {
     return runtime.fail("ui.getDateInput expects year, month, day");
   }
   const double yearValue = runtime.toNumber(args[0]);
@@ -3140,14 +3140,14 @@ pinkjs::Value nativeGetDateInput(pinkjs::Runtime &runtime,
   if (day > DateTimePickerComponent::daysInMonth(year, month))
     return runtime.fail("invalid date picker date");
   const DatePickerDate initial{year, month, day};
-  pinkjs::Value promise = runtime.makePromise();
+  PocketInkJS::Value promise = runtime.makePromise();
   DatePickerDate ignored;
   if (runtime.isUndefined(promise)) {
     return promise;
   }
-  if (!activePinkJsApp->systemModalIdle() ||
+  if (!activePocketInkJSApp->systemModalIdle() ||
       appApiGetDateInput(initial, ignored) != AppApiStatus::Pending ||
-      !activePinkJsApp->beginSystemModal(PinkJsSystemModal::DatePicker,
+      !activePocketInkJSApp->beginSystemModal(PocketInkJSSystemModal::DatePicker,
                                          promise, 0, initial)) {
     runtime.settlePromise(promise, runtime.makeString("date picker is busy"),
                           true);
@@ -3155,19 +3155,19 @@ pinkjs::Value nativeGetDateInput(pinkjs::Runtime &runtime,
   return promise;
 }
 
-bool PinkJsApp::installBindings() {
+bool PocketInkJSApp::installBindings() {
   if (runtime == nullptr) {
     return false;
   }
   const struct {
     const char *path;
-    pinkjs::NativeFunction function;
+    PocketInkJS::NativeFunction function;
   } bindings[] = {
       {"console.log", nativeConsoleLog},
       {"time.millis", nativeMillis},
-      {"pinkjs.heapUsed", nativePinkJsHeapUsed},
-      {"pinkjs.heapFree", nativePinkJsHeapFree},
-      {"pinkjs.heapPeak", nativePinkJsHeapPeak},
+      {"PocketInkJS.heapUsed", nativePocketInkJSHeapUsed},
+      {"PocketInkJS.heapFree", nativePocketInkJSHeapFree},
+      {"PocketInkJS.heapPeak", nativePocketInkJSHeapPeak},
       {"network.connected", nativeNetworkConnected},
       {"network.scan", nativeNetworkScan},
       {"network.networks", nativeNetworkNetworks},
@@ -3279,7 +3279,7 @@ bool PinkJsApp::installBindings() {
          runtime->set("app.path", runtime->makeString(path));
 }
 
-void PinkJsApp::load() {
+void PocketInkJSApp::load() {
   if (path == nullptr) {
     copyText(status, sizeof(status), "PATH MISSING");
     return;
@@ -3293,7 +3293,7 @@ void PinkJsApp::load() {
     return;
   }
   const size_t sourceBytes = file.size();
-  if (sourceBytes > kPinkJsMaxSourceBytes) {
+  if (sourceBytes > kPocketInkJSMaxSourceBytes) {
     copyText(status, sizeof(status), "SCRIPT TOO LARGE");
     return;
   }
@@ -3310,13 +3310,13 @@ void PinkJsApp::load() {
   }
   source[sourceBytes] = '\0';
 
-  workspaceAllocation = allocatePinkJsWorkspace(&workspaceBytes);
+  workspaceAllocation = allocatePocketInkJSWorkspace(&workspaceBytes);
   if (workspaceAllocation == nullptr) {
     heap_caps_free(source);
     copyText(status, sizeof(status), "NO RUNTIME PSRAM");
     return;
   }
-  runtimeStorage = heap_caps_malloc(sizeof(pinkjs::Runtime),
+  runtimeStorage = heap_caps_malloc(sizeof(PocketInkJS::Runtime),
                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (runtimeStorage == nullptr) {
     heap_caps_free(source);
@@ -3325,27 +3325,27 @@ void PinkJsApp::load() {
     copyText(status, sizeof(status), "NO VM DRAM");
     return;
   }
-  pinkjs::Options options;
+  PocketInkJS::Options options;
   options.maxBindings = 192;
   options.maxNatives = 96;
   options.maxHostRoots = 48;
   options.maxCallDepth = 24;
   options.maxSteps = 160000;
-  options.nowMilliseconds = pinkJsNowMilliseconds;
+  options.nowMilliseconds = PocketInkJSNowMilliseconds;
   options.awaitPending = awaitPendingPromise;
   options.awaitUserData = this;
-#if PINKJS_USE_LIGHTWEIGHT_JSON_PARSER
-  options.jsonParse = parsePinkJsJson;
+#if POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER
+  options.jsonParse = parsePocketInkJSJson;
 #endif
   runtime = new (runtimeStorage)
-      pinkjs::Runtime(workspaceAllocation, workspaceBytes, options);
+      PocketInkJS::Runtime(workspaceAllocation, workspaceBytes, options);
   if (!runtime->ready() || !installBindings()) {
     setRuntimeError();
     heap_caps_free(source);
     releaseRuntime();
     return;
   }
-  const pinkjs::RunResult evaluated = runtime->eval(source, sourceBytes);
+  const PocketInkJS::RunResult evaluated = runtime->eval(source, sourceBytes);
   heap_caps_free(source);
   if (!evaluated.ok) {
     setRuntimeError();
@@ -3354,18 +3354,18 @@ void PinkJsApp::load() {
   }
   refreshTouchCallbacks();
   status[0] = '\0';
-  const pinkjs::MemoryStats stats = runtime->memoryStats();
-  pinkJsLogPrintf("[pinkjs] loaded %s workspace=%lu heap=%lu/%lu peak=%lu\n",
+  const PocketInkJS::MemoryStats stats = runtime->memoryStats();
+  PocketInkJSLogPrintf("[PocketInkJS] loaded %s workspace=%lu heap=%lu/%lu peak=%lu\n",
                   path, static_cast<unsigned long>(workspaceBytes),
                   static_cast<unsigned long>(stats.heapUsedBytes),
                   static_cast<unsigned long>(stats.heapBytes),
                   static_cast<unsigned long>(stats.peakHeapUsedBytes));
 }
 
-PinkJsApp pinkJsApp;
+PocketInkJSApp PocketInkJSApp;
 
 AppEventResult handleButton(const char *callback) {
-  return activePinkJsApp != nullptr ? activePinkJsApp->button(callback)
+  return activePocketInkJSApp != nullptr ? activePocketInkJSApp->button(callback)
                                     : AppEventResult::Unhandled;
 }
 
@@ -3380,30 +3380,30 @@ AppEventResult handlePower() { return handleButton("onPower"); }
 AppEventResult handlePowerDouble() { return handleButton("onPowerDouble"); }
 AppEventResult handlePowerLong() { return handleButton("onPowerLong"); }
 
-void pausePinkJsApp() { pinkJsApp.pause(); }
-void resumePinkJsApp() { pinkJsApp.resume(); }
-void releasePinkJsApp() { pinkJsApp.stop(); }
+void pausePocketInkJSApp() { PocketInkJSApp.pause(); }
+void resumePocketInkJSApp() { PocketInkJSApp.resume(); }
+void releasePocketInkJSApp() { PocketInkJSApp.stop(); }
 
 void handleRawTouch(const TouchEvent &event) {
-  if (activePinkJsApp != nullptr) {
-    activePinkJsApp->rawTouch(event);
+  if (activePocketInkJSApp != nullptr) {
+    activePocketInkJSApp->rawTouch(event);
   }
 }
 
 size_t saveContext(uint8_t *buffer, size_t capacity) {
-  return activePinkJsApp != nullptr ? activePinkJsApp->save(buffer, capacity) : 0;
+  return activePocketInkJSApp != nullptr ? activePocketInkJSApp->save(buffer, capacity) : 0;
 }
 
 void restoreContext(const uint8_t *buffer, size_t length) {
-  if (activePinkJsApp != nullptr) {
-    activePinkJsApp->restore(buffer, length);
+  if (activePocketInkJSApp != nullptr) {
+    activePocketInkJSApp->restore(buffer, length);
   }
 }
 
-AppBehavior pinkJsBehavior() {
+AppBehavior PocketInkJSBehavior() {
   AppBehavior behavior;
-  behavior.onEnter = resumePinkJsApp;
-  behavior.onExit = pausePinkJsApp;
+  behavior.onEnter = resumePocketInkJSApp;
+  behavior.onExit = pausePocketInkJSApp;
   behavior.onMenu = handleMenu;
   behavior.onMenuDouble = handleMenuDouble;
   behavior.onMenuLong = handleMenuLong;
@@ -3413,15 +3413,15 @@ AppBehavior pinkJsBehavior() {
   behavior.onRawTouch = handleRawTouch;
   behavior.onSaveContext = saveContext;
   behavior.onRestoreContext = restoreContext;
-  behavior.onRelease = releasePinkJsApp;
+  behavior.onRelease = releasePocketInkJSApp;
   return behavior;
 }
 
 } // namespace
 
-ActiveApp *pinkJsAppRuntime() { return &pinkJsApp; }
+ActiveApp *PocketInkJSAppRuntime() { return &PocketInkJSApp; }
 
-bool pinkJsAppLaunchPath(const char *path, AppDefinition *out, char *id,
+bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
                          size_t idSize, char *label, size_t labelSize,
                          char *icon, size_t iconSize) {
   if (path == nullptr || path[0] == '\0' || out == nullptr || id == nullptr ||
@@ -3436,17 +3436,17 @@ bool pinkJsAppLaunchPath(const char *path, AppDefinition *out, char *id,
   if (iconSize > 1) {
     icon[1] = '\0';
   }
-  pinkJsApp.launch(path, id);
+  PocketInkJSApp.launch(path, id);
 
   *out = AppDefinition{};
   out->id = id;
   out->label = label;
   out->icon = icon;
   out->category = MENU_APPS;
-  out->runtime = pinkJsAppRuntime();
+  out->runtime = PocketInkJSAppRuntime();
   out->visible = sdStorageMounted;
-  out->behavior = pinkJsBehavior();
+  out->behavior = PocketInkJSBehavior();
   return true;
 }
 
-void pinkJsAppStop() { pinkJsApp.stop(); }
+void PocketInkJSAppStop() { PocketInkJSApp.stop(); }
