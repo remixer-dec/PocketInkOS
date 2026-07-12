@@ -2,7 +2,7 @@
 #define PAINT_APP_H
 
 #include "sys/app_display.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include <Adafruit_GFX.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"

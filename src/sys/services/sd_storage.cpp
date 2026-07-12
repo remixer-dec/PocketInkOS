@@ -1,8 +1,7 @@
 #include "sys/services/sd_storage.h"
-#include "sys/global.h"
+#include "sys/drivers/sd_card.h"
 
 #include <Arduino.h>
-#include <SD_MMC.h>
 
 namespace {
 
@@ -22,8 +21,9 @@ uint32_t roundedGb(uint64_t bytes) {
 SdStorageSnapshot readMountedSnapshot() {
   SdStorageSnapshot next;
   next.mounted = true;
-  const uint64_t total = SD_MMC.totalBytes();
-  const uint64_t used = SD_MMC.usedBytes();
+  const SdCardCapacity capacity = sdCardCapacity();
+  const uint64_t total = capacity.totalBytes;
+  const uint64_t used = capacity.usedBytes;
   const uint64_t free = used < total ? total - used : 0;
   next.totalGb = roundedGb(total);
   next.freeGb = roundedGb(free);
@@ -35,26 +35,18 @@ bool snapshotsDiffer(const SdStorageSnapshot &a, const SdStorageSnapshot &b) {
          a.freeGb != b.freeGb;
 }
 
-bool mountCard() {
-  SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN);
-  if (!SD_MMC.begin("/sdcard", true)) {
-    return false;
-  }
-  return SD_MMC.cardType() != CARD_NONE;
-}
-
 bool refreshSnapshot() {
   SdStorageSnapshot next;
   if (snapshot.mounted) {
-    if (SD_MMC.cardType() != CARD_NONE) {
+    if (sdCardPresent()) {
       next = readMountedSnapshot();
     } else {
-      SD_MMC.end();
+      sdCardUnmount();
     }
-  } else if (mountCard()) {
+  } else if (sdCardMount()) {
     next = readMountedSnapshot();
   } else {
-    SD_MMC.end();
+    sdCardUnmount();
   }
 
   const bool changed = snapshotsDiffer(snapshot, next);
@@ -93,7 +85,7 @@ void sdStorageBegin() {
 }
 
 void sdStorageEnd() {
-  SD_MMC.end();
+  sdCardUnmount();
   snapshot = SdStorageSnapshot{};
   nextPollAt = 0;
   retryDelayMs = kSdRetryInitialMs;

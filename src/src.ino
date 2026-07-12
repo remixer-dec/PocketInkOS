@@ -5,7 +5,7 @@
 #endif
 #include "sys/system_config.h"
 #include "shell/shell_buttons.h"
-#include "sys/drivers/audio_power.h"
+#include "sys/audio/audio_power.h"
 #include "sys/services/device_clock.h"
 #include "sys/services/battery_monitor.h"
 #include "sys/services/device_controls.h"
@@ -15,6 +15,7 @@
 #include "sys/services/lockscreen_guard.h"
 #include "sys/services/power_control.h"
 #include "sys/drivers/pcf85063_clock.h"
+#include "sys/drivers/shared_i2c_bus.h"
 #include "sys/pink_executable.h"
 #include "sys/sleep_clock_context.h"
 #include "sys/services/sd_storage.h"
@@ -70,7 +71,7 @@ void refreshUsbConnectionState();
 void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock);
 uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix);
 uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds);
-bool syncDeviceClockFromRtc();
+bool syncDeviceClockFromRtc(int32_t utcOffsetSeconds);
 bool waitForRtcMinuteChangeIfNeeded();
 void refreshHomeShell(void *context);
 void noteUserActivityShell(void *context);
@@ -265,19 +266,19 @@ uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds) {
   return static_cast<uint64_t>(wakeIntervalSeconds) * 1000ULL * 1000ULL;
 }
 
-bool syncDeviceClockFromRtc() {
+bool syncDeviceClockFromRtc(int32_t utcOffsetSeconds) {
 #if ENABLE_RTC_CLOCK
   // The RTC shares the touch I2C bus; release touch reset after deep sleep so
   // it cannot hold the shared lines in an undefined state.
   pinMode(EPD_TP_RST_PIN, OUTPUT);
   digitalWrite(EPD_TP_RST_PIN, HIGH);
   delay(5);
-  touchI2cBegin();
+  sharedI2cBegin();
   rtcClock.begin();
   int64_t localUnix = 0;
   const bool updated = rtcClock.readLocalUnix(localUnix);
   if (updated) {
-    deviceClock.set(localUnix, 0);
+    deviceClock.restoreLocalUnix(localUnix, utcOffsetSeconds);
   }
   digitalWrite(EPD_TP_RST_PIN, LOW);
   return updated;
@@ -304,7 +305,7 @@ bool waitForRtcMinuteChangeIfNeeded() {
   const unsigned long startedAt = millis();
   while (millis() - startedAt < 1500) {
     delay(25);
-    if (!syncDeviceClockFromRtc()) {
+    if (!syncDeviceClockFromRtc(deviceClock.utcOffsetSeconds())) {
       continue;
     }
     int64_t refreshedUnix = 0;
@@ -322,7 +323,8 @@ void enterSleepClockDeepSleep() {
   const uint16_t wakeIntervalSeconds =
       sleepClockWakeIntervalSeconds(clockSet, localUnix);
   const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
-  sleepClockContextStart(clockSet, localUnix, wakeIntervalSeconds, timeFormat);
+  sleepClockContextStart(clockSet, localUnix, deviceClock.utcOffsetSeconds(),
+                         wakeIntervalSeconds, timeFormat);
   renderSleepClockScreen(false, timeFormat);
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
@@ -332,7 +334,8 @@ void enterSleepClockDeepSleep() {
 
 void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock) {
   if (sleepClock.clockSet) {
-    deviceClock.restoreLocalUnix(sleepClock.localUnix);
+    deviceClock.restoreLocalUnix(sleepClock.localUnix,
+                                 sleepClock.utcOffsetSeconds);
   }
 
   display.lock();
@@ -362,10 +365,11 @@ bool handleSleepClockTimerWake() {
     seedSleepClockPreviousFrame(sleepClock);
   }
 
-  bool clockSet = syncDeviceClockFromRtc();
+  bool clockSet = syncDeviceClockFromRtc(sleepClock.utcOffsetSeconds);
   if (!clockSet && sleepClock.clockSet) {
     deviceClock.restoreLocalUnix(sleepClock.localUnix +
-                                 sleepClock.wakeIntervalSeconds);
+                                     sleepClock.wakeIntervalSeconds,
+                                 sleepClock.utcOffsetSeconds);
     clockSet = true;
   }
   if (waitForRtcMinuteChangeIfNeeded()) {
@@ -385,7 +389,8 @@ bool handleSleepClockTimerWake() {
   }
   const uint16_t wakeIntervalSeconds =
       sleepClockWakeIntervalSeconds(clockSet, localUnix);
-  sleepClockContextUpdate(clockSet, localUnix, wakeIntervalSeconds,
+  sleepClockContextUpdate(clockSet, localUnix,
+                          deviceClock.utcOffsetSeconds(), wakeIntervalSeconds,
                           sleepClock.timeFormat);
   prepareForPowerTransition();
   enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
@@ -482,8 +487,9 @@ void setup() {
   logSetupStage("rtc");
   rtcClock.begin();
   int64_t localUnix = 0;
+  const int32_t utcOffsetSeconds = configEffectiveUtcOffset();
   if (rtcClock.readLocalUnix(localUnix)) {
-    deviceClock.set(localUnix, 0);
+    deviceClock.restoreLocalUnix(localUnix, utcOffsetSeconds);
   }
   heapMark("after-rtc");
 #endif

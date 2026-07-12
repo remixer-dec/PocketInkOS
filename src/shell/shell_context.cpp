@@ -39,6 +39,7 @@ void shellContextSaveForSleep(Screen screen, bool textInputScreen,
   snapshot.system.wifiOn = wifiIsOn();
   snapshot.system.clockSet =
       deviceClock.snapshotLocalUnix(snapshot.system.clockLocalUnix);
+  snapshot.system.clockUtcOffsetSeconds = deviceClock.utcOffsetSeconds();
   DeviceControlSnapshot controls = deviceControlsSnapshot();
   snapshot.system.volume = controls.volume;
   snapshot.system.muted = controls.muted;
@@ -70,7 +71,8 @@ bool shellContextRestoreAfterSleep(MenuState &menuState,
   }
 
   if (!deviceClock.isSet() && snapshot.system.clockSet) {
-    deviceClock.restoreLocalUnix(snapshot.system.clockLocalUnix);
+    deviceClock.restoreLocalUnix(snapshot.system.clockLocalUnix,
+                                 snapshot.system.clockUtcOffsetSeconds);
   }
 
   restoreWifiOn(snapshot.system.wifiOn);

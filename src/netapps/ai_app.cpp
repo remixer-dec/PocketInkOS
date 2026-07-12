@@ -9,7 +9,7 @@
 #include "sys/services/connectivity_service.h"
 #include "secrets_config.h"
 #include "sys/psram_allocator.h"
-#include "sys/wav_encoder.h"
+#include "sys/audio/wav_encoder.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>

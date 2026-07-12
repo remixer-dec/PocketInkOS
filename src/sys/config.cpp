@@ -135,6 +135,20 @@ bool parseInactivityMinutes(const char *value, uint8_t &out) {
   return true;
 }
 
+bool parseStoredUtcOffset(const char *value, int32_t &out) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  char *end = nullptr;
+  const long parsed = strtol(value, &end, 10);
+  if (end == value || end == nullptr || *end != '\0' || parsed < -86399L ||
+      parsed > 86399L) {
+    return false;
+  }
+  out = static_cast<int32_t>(parsed);
+  return true;
+}
+
 bool validSystemValue(const char *key, const char *value) {
   if (key == nullptr || value == nullptr) {
     return false;
@@ -142,6 +156,10 @@ bool validSystemValue(const char *key, const char *value) {
   if (strcmp(key, "lockscreen.inactivityMinutes") == 0) {
     uint8_t minutes = 0;
     return parseInactivityMinutes(value, minutes);
+  }
+  if (strcmp(key, "time.lastUtcOffsetSeconds") == 0) {
+    int32_t offset = 0;
+    return parseStoredUtcOffset(value, offset);
   }
   return true;
 }
@@ -273,6 +291,11 @@ void applySystemKey(const char *key, const char *value) {
   } else if (strcmp(key, "time.format") == 0) {
     currentConfig.time.timeFormat =
         asciiEqualIgnoreCase(value, "12h") ? CONFIG_TIME_12H : CONFIG_TIME_24H;
+  } else if (strcmp(key, "time.lastUtcOffsetSeconds") == 0) {
+    int32_t offset = 0;
+    if (parseStoredUtcOffset(value, offset)) {
+      currentConfig.time.lastUtcOffsetSeconds = offset;
+    }
   } else if (strcmp(key, "date.format") == 0) {
     if (asciiEqualIgnoreCase(value, "mdy")) {
       currentConfig.time.dateFormat = CONFIG_DATE_MDY;
@@ -411,6 +434,9 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
   } else if (strcmp(key, "time.format") == 0) {
     copyValue(out, outSize,
               currentConfig.time.timeFormat == CONFIG_TIME_12H ? "12h" : "24h");
+  } else if (strcmp(key, "time.lastUtcOffsetSeconds") == 0) {
+    snprintf(out, outSize, "%ld",
+             static_cast<long>(currentConfig.time.lastUtcOffsetSeconds));
   } else if (strcmp(key, "date.format") == 0) {
     const char *value = "iso";
     if (currentConfig.time.dateFormat == CONFIG_DATE_MDY) {
@@ -482,6 +508,75 @@ void configLoadDefaults() { resetSystemDefaults(); }
 
 bool configParseLockscreenInactivityMinutes(const char *value, uint8_t &out) {
   return parseInactivityMinutes(value, out);
+}
+
+bool configParseUtcOffset(const char *value, int32_t &out) {
+  const char *cursor = value;
+  if (cursor == nullptr || cursor[0] == '\0' ||
+      asciiEqualIgnoreCase(cursor, "auto") ||
+      asciiEqualIgnoreCase(cursor, "utc") ||
+      asciiEqualIgnoreCase(cursor, "z")) {
+    out = 0;
+    return true;
+  }
+  if (strlen(cursor) >= 3 &&
+      tolower(static_cast<unsigned char>(cursor[0])) == 'u' &&
+      tolower(static_cast<unsigned char>(cursor[1])) == 't' &&
+      tolower(static_cast<unsigned char>(cursor[2])) == 'c') {
+    cursor += 3;
+  }
+
+  const int sign = *cursor == '-' ? -1 : 1;
+  if (*cursor != '+' && *cursor != '-') {
+    return false;
+  }
+  cursor++;
+  if (!isdigit(static_cast<unsigned char>(*cursor))) {
+    return false;
+  }
+
+  int hours = *cursor++ - '0';
+  if (isdigit(static_cast<unsigned char>(*cursor))) {
+    hours = hours * 10 + (*cursor++ - '0');
+  }
+  int minutes = 0;
+  if (*cursor == ':') {
+    cursor++;
+  }
+  if (*cursor != '\0') {
+    if (!isdigit(static_cast<unsigned char>(cursor[0])) ||
+        !isdigit(static_cast<unsigned char>(cursor[1])) ||
+        cursor[2] != '\0') {
+      return false;
+    }
+    minutes = (cursor[0] - '0') * 10 + (cursor[1] - '0');
+  }
+  if (hours > 23 || minutes > 59) {
+    return false;
+  }
+  out = sign * (hours * 3600 + minutes * 60);
+  return true;
+}
+
+int32_t configEffectiveUtcOffset() {
+  if (asciiEqualIgnoreCase(currentConfig.time.timezone, "auto")) {
+    return currentConfig.time.lastUtcOffsetSeconds;
+  }
+  int32_t offset = 0;
+  configParseUtcOffset(currentConfig.time.timezone, offset);
+  return offset;
+}
+
+bool configRememberUtcOffset(int32_t offsetSeconds) {
+  if (offsetSeconds < -86399 || offsetSeconds > 86399) {
+    return false;
+  }
+  if (currentConfig.time.lastUtcOffsetSeconds == offsetSeconds) {
+    return true;
+  }
+  char value[16];
+  snprintf(value, sizeof(value), "%ld", static_cast<long>(offsetSeconds));
+  return configSet("time.lastUtcOffsetSeconds", value);
 }
 
 void configReload() {

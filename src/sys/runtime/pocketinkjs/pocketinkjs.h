@@ -17,10 +17,12 @@
 
 namespace PocketInkJS {
 
+/// Compact NaN-boxed JavaScript value; only Runtime should interpret its bits.
 struct Value {
   uint64_t bits = 0;
 };
 
+/// Public type categories returned by Runtime::typeOf().
 enum class ValueType : uint8_t {
   Undefined,
   Null,
@@ -34,13 +36,16 @@ enum class ValueType : uint8_t {
   Function,
 };
 
+/// Non-owning UTF-8 byte span into runtime-managed string storage.
 struct StringView {
   const char *data = nullptr;
   size_t size = 0;
 };
 
+/// Stable numeric script error code used where retaining messages is too costly.
 enum class ErrorCode : uint8_t {};
 
+/// Formats a numeric error as the fixed-width string E000 through E255.
 inline void formatErrorCode(ErrorCode code, char *out) {
   const uint8_t value = static_cast<uint8_t>(code);
   out[0] = 'E';
@@ -51,66 +56,111 @@ inline void formatErrorCode(ErrorCode code, char *out) {
 }
 
 class Runtime;
+/// Host callback installed as a JavaScript global function.
 using NativeFunction = Value (*)(Runtime &runtime, const Value *args,
                                  size_t argc, void *userData);
+/// Host callback installed as a method and given its JavaScript receiver.
 using NativeMethodFunction = Value (*)(Runtime &runtime, Value receiver,
                                        const Value *args, size_t argc,
                                        void *userData);
+/// Optional host JSON parser used to avoid duplicating a parser in the runtime.
 using JsonParseFunction = Value (*)(Runtime &runtime, StringView json,
                                     void *userData);
+/// Hook that lets the host advance platform work while awaiting a promise.
 using AwaitPendingFunction = bool (*)(Runtime &runtime, Value promise,
                                       void *userData);
 
+/// Observable lifecycle of a JavaScript promise.
 enum class PromiseState : uint8_t { Pending, Fulfilled, Rejected };
 
+/// Index of a host-retained GC root; release it when the host no longer needs it.
 using RootHandle = uint16_t;
+/// Sentinel returned when no host root slot is available.
 static constexpr RootHandle kInvalidRoot = UINT16_MAX;
 
+/// Fixed capacity limits and optional platform hooks for one Runtime instance.
 struct Options {
+  /// Maximum simultaneous lexical/global bindings.
   uint16_t maxBindings = 160;
+  /// Maximum registered host functions and methods.
   uint16_t maxNatives = 48;
+  /// Maximum values protected transiently during nested runtime operations.
   uint16_t maxTemporaryRoots = 48;
+  /// Maximum values retained explicitly by host code.
   uint16_t maxHostRoots = 32;
+  /// Maximum object offsets held by one garbage-collection traversal.
   uint16_t maxGcWork = 256;
+  /// Maximum nested JavaScript/native calls.
   uint8_t maxCallDepth = 12;
+  /// Maximum arguments accepted by one call expression.
   uint8_t maxCallArguments = 16;
+  /// Maximum nested parser structures.
   uint8_t maxParseDepth = 32;
+  /// Instruction budget reset for each top-level execution.
   uint32_t maxSteps = 120000;
+  /// Optional host monotonic/wall-clock provider used by Date.
   int64_t (*nowMilliseconds)(void *userData) = nullptr;
+  /// Opaque context passed to nowMilliseconds.
   void *nowUserData = nullptr;
+  /// Optional JSON parsing hook.
   JsonParseFunction jsonParse = nullptr;
+  /// Opaque context passed to jsonParse.
   void *jsonUserData = nullptr;
+  /// Optional hook used to advance host work while await is pending.
   AwaitPendingFunction awaitPending = nullptr;
+  /// Opaque context passed to awaitPending.
   void *awaitUserData = nullptr;
 };
 
+/// Last script failure with location and a bounded source excerpt.
 struct Error {
+  /// Bounded human-readable failure message.
   char message[96] = {};
+  /// Bounded copy of the source line containing the failure.
   char sourceLine[160] = {};
+  /// One-based source line number.
   uint32_t line = 0;
+  /// One-based byte column in the complete source.
   uint32_t column = 0;
+  /// Byte column of the marker within sourceLine.
   uint16_t sourceColumn = 0;
 };
 
+/// Outcome and resulting value from evaluation or a function call.
 struct RunResult {
+  /// True when execution completed without a script/runtime error.
   bool ok = false;
+  /// Completion value, or undefined when ok is false.
   Value value = {};
 };
 
+/// Current and peak use of the caller-owned runtime workspace.
 struct MemoryStats {
+  /// Total bytes supplied by the host.
   size_t workspaceBytes = 0;
+  /// Bytes reserved for bindings, roots, and GC work tables.
   size_t metadataBytes = 0;
+  /// Bytes remaining for runtime heap blocks after metadata.
   size_t heapBytes = 0;
+  /// Bytes currently occupied by live or not-yet-collected heap blocks.
   size_t heapUsedBytes = 0;
+  /// Currently unused heap bytes.
   size_t heapFreeBytes = 0;
+  /// Highest observed heap use since construction.
   size_t peakHeapUsedBytes = 0;
+  /// Number of active global and lexical bindings.
   size_t bindingCount = 0;
 };
 
+/// C callback facade for temporary memory borrowed from a runtime workspace.
 struct ScratchAllocator {
+  /// Opaque lease context passed to every callback.
   void *context = nullptr;
+  /// Allocates aligned temporary bytes from the active lease.
   void *(*allocate)(void *context, size_t bytes, size_t alignment) = nullptr;
+  /// Releases a prior scratch allocation early.
   void (*release)(void *context, void *memory) = nullptr;
+  /// Reports currently available scratch capacity.
   size_t (*available)(void *context) = nullptr;
 };
 
@@ -462,8 +512,10 @@ inline Value findBuiltinProperty(const BuiltinProperty<Width> (&entries)[Count],
 
 class Parser;
 
+/// Allocation-bounded JavaScript VM operating entirely in caller-owned memory.
 class Runtime {
 public:
+  /// Move-disabled scope that owns temporary allocations until destruction.
   class ScratchLease {
   public:
     ScratchLease() = default;
@@ -473,11 +525,16 @@ public:
     ScratchLease &operator=(ScratchLease &&) = delete;
     ~ScratchLease();
 
+    /// Borrows aligned scratch memory, returning null when capacity is exhausted.
     void *allocate(size_t bytes,
                    size_t alignment = alignof(std::max_align_t));
+    /// Returns an individual allocation before the lease itself ends.
     void release(void *memory);
+    /// Reports bytes currently available through this lease's allocation policy.
     size_t available() const;
+    /// Exposes this lease through callbacks accepted by C-style host APIs.
     ScratchAllocator allocator();
+    /// Reports whether the runtime successfully created the lease.
     explicit operator bool() const { return runtime_ != nullptr; }
 
   private:
@@ -493,6 +550,7 @@ public:
     uint32_t firstBlock_ = 0;
   };
 
+  /// Initializes a VM in the supplied aligned workspace using fixed capacities.
   Runtime(void *workspace, size_t workspaceBytes,
           const Options &options = Options{})
       : workspace_(static_cast<uint8_t *>(workspace)),
@@ -503,87 +561,141 @@ public:
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
 
+  /// Reports whether the workspace could satisfy the configured metadata limits.
   bool ready() const { return ready_; }
+  /// Returns the most recent bounded parse, runtime, or host error.
   const Error &error() const { return error_; }
 
+  /// Constructs primitive values without allocating runtime heap storage.
   Value undefined() const { return detail::boxed(detail::Tag::Undefined); }
+  /// Constructs JavaScript null.
   Value null() const { return detail::boxed(detail::Tag::Null); }
+  /// Constructs a JavaScript boolean.
   Value boolean(bool value) const {
     return detail::boxed(detail::Tag::Boolean, value ? 1U : 0U);
   }
+  /// Constructs a JavaScript number, canonicalizing NaN for value boxing.
   Value number(double value) const { return detail::number(value); }
 
+  /// Inspects and converts values using JavaScript truthiness/number semantics.
   ValueType typeOf(Value value) const;
+  /// Reports whether call() accepts the value as a function.
   bool isCallable(Value value) const;
+  /// Applies JavaScript truthiness without allocating.
   bool isTruthy(Value value) const;
+  /// Reports whether a value is JavaScript undefined.
   bool isUndefined(Value value) const {
     return detail::tagOf(value) == detail::Tag::Undefined;
   }
+  /// Reports whether a value references a runtime string.
   bool isString(Value value) const {
     return detail::tagOf(value) == detail::Tag::String;
   }
+  /// Reports whether a value is a number, including canonical NaN.
   bool isNumber(Value value) const {
     return !detail::isBoxed(value) ||
            detail::tagOf(value) == detail::Tag::NumberNaN;
   }
+  /// Applies JavaScript numeric conversion, returning NaN on failure.
   double toNumber(Value value) const;
+  /// Applies JavaScript boolean conversion.
   bool toBoolean(Value value) const { return isTruthy(value); }
+  /// Returns a non-owning view of a runtime string, or an empty view.
   StringView stringView(Value value) const;
+  /// Writes a bounded human-readable JavaScript representation.
   size_t format(Value value, char *out, size_t outSize) const;
 
+  /// Allocates strings and collection values in the runtime workspace.
   Value makeString(const char *text, size_t length);
+  /// Allocates a null-terminated host string in the runtime workspace.
   Value makeString(const char *text) {
     return makeString(text, text != nullptr ? std::strlen(text) : 0);
   }
+  /// Allocates a string of exact length and returns its writable byte storage.
   Value makeStringBuffer(size_t length, char **data);
+  /// Allocates an empty JavaScript object.
   Value makeObject();
+  /// Allocates an array with optional reserved element capacity.
   Value makeArray(size_t reserve = 0);
+  /// Allocates an empty JavaScript Set.
   Value makeSet();
+  /// Allocates a pending promise intended for later host settlement.
   Value makePromise();
+  /// Rejects a promise using the current error and clears that host failure path.
   Value rejectCurrentError();
+  /// Reads and mutates runtime-owned arrays and object properties.
   bool arrayPush(Value array, Value value);
+  /// Returns an array's logical length, or zero for a non-array.
   size_t arrayLength(Value array) const;
+  /// Returns an indexed element, or undefined when it is unavailable.
   Value arrayAt(Value array, size_t index) const;
+  /// Replaces or extends an indexed array element.
   bool arraySet(Value array, size_t index, Value value);
+  /// Sets an object property using a null-terminated key.
   bool objectSet(Value object, const char *key, Value value) {
     return objectSet(object, key, key != nullptr ? std::strlen(key) : 0, value);
   }
+  /// Sets an object property using an explicit key byte length.
   bool objectSet(Value object, const char *key, size_t keyLength, Value value);
+  /// Reads an object property using a null-terminated key.
   Value objectGet(Value object, const char *key) const {
     return objectGet(object, key, key != nullptr ? std::strlen(key) : 0);
   }
+  /// Reads an object property using an explicit key byte length.
   Value objectGet(Value object, const char *key, size_t keyLength) const;
+  /// Returns the number of own properties stored on an object.
   size_t objectPropertyCount(Value object) const;
+  /// Enumerates one own key/value pair by insertion order.
   bool objectPropertyAt(Value object, size_t index, Value *key,
                         Value *value) const;
 
+  /// Installs native callbacks or constant values at dotted global paths.
   bool bind(const char *path, NativeFunction function,
             void *userData = nullptr);
+  /// Installs a receiver-aware native method at a dotted path.
   bool bindMethod(const char *path, NativeMethodFunction function,
                   void *userData = nullptr);
+  /// Defines a host-provided global value, optionally preventing reassignment.
   bool set(const char *path, Value value, bool constant = true);
+  /// Looks up a global binding, returning undefined when it is absent.
   Value get(const char *name) const;
 
+  /// Evaluates source or invokes JavaScript functions within configured limits.
   RunResult eval(const char *source, size_t length);
+  /// Evaluates null-terminated JavaScript source.
   RunResult eval(const char *source) {
     return eval(source, source != nullptr ? std::strlen(source) : 0);
   }
+  /// Calls a named global function with host-provided arguments.
   RunResult call(const char *name, const Value *args = nullptr,
                  size_t argc = 0);
+  /// Calls a previously obtained callable value.
   RunResult call(Value function, const Value *args = nullptr, size_t argc = 0);
+  /// Calls a named binding only when present and callable, reporting that choice.
   RunResult callIfFunction(const char *name, const Value *args, size_t argc,
                            bool *called);
 
+  /// Reclaims unreachable workspace objects immediately.
   void collectGarbage();
+  /// Keeps a value reachable across host calls until release(handle).
   RootHandle retain(Value value);
+  /// Releases a host root; invalid or already released handles are harmless.
   void release(RootHandle handle);
+  /// Reads a retained value, returning undefined for an invalid handle.
   Value retained(RootHandle handle) const;
+  /// Inspects a promise and its settled result.
   PromiseState promiseState(Value promise) const;
+  /// Returns a settled promise's value, or undefined while pending/invalid.
   Value promiseResult(Value promise) const;
+  /// Resolves or rejects a pending host-created promise exactly once.
   bool settlePromise(Value promise, Value result, bool rejected = false);
+  /// Passes a string to the configured JSON hook and wraps its result as a promise.
   Value parseJsonPromise(Value text);
+  /// Runs at most maximum queued promise reactions.
   RunResult drainJobs(size_t maximum = 8);
+  /// Returns workspace capacity, live heap use, peak use, and binding count.
   MemoryStats memoryStats() const;
+  /// Borrows temporary workspace memory with automatic scope cleanup.
   ScratchLease leaseScratch();
 
   // Native functions use fail() to raise a normal script error.

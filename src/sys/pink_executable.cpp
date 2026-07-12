@@ -1,7 +1,7 @@
 #include "sys/pink_executable.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
-#include "sys/app_api_services.h"
+#include "sys/ext_app_api/app_api.h"
 #include "sys/psram_allocator.h"
 #include "sys/services/connectivity_service.h"
 #include "fs/file_provider.h"

@@ -13,6 +13,8 @@ struct SleepClockSnapshot {
   bool clockSet;
   /// Local Unix timestamp captured for the next wake cycle.
   int64_t localUnix;
+  /// UTC offset paired with localUnix.
+  int32_t utcOffsetSeconds;
   /// Requested wake interval in seconds.
   uint16_t wakeIntervalSeconds;
   /// Clock presentation used for the previous e-paper frame.
@@ -21,12 +23,14 @@ struct SleepClockSnapshot {
 
 /// Starts periodic sleep clock mode with the current clock state.
 void sleepClockContextStart(bool clockSet, int64_t localUnix,
+                            int32_t utcOffsetSeconds,
                             uint16_t wakeIntervalSeconds,
                             ConfigTimeFormat timeFormat);
 /// Loads periodic sleep clock state after wake.
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot);
 /// Updates periodic sleep clock state before returning to sleep.
 void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
+                             int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
                              ConfigTimeFormat timeFormat);
 /// Clears periodic sleep clock state.

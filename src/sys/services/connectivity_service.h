@@ -1,4 +1,4 @@
-/// System-facing Wi-Fi facade shared by the shell, runtime hosts, and network
+/// System-facing Wi-Fi service shared by the shell, runtime hosts, and network
 /// apps. WifiManager owns the lifecycle; this keeps its compile-time feature
 /// boundary and compact presentation helpers in one place.
 #ifndef CONNECTIVITY_SERVICE_H

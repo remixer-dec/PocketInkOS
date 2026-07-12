@@ -1,3 +1,6 @@
+/// Owns the presentation of the screen shown while the device is entering or
+/// remaining in low-power lockscreen mode. It keeps drawing separate from the
+/// sleep-clock state machine and exposes the small user-configurable layout.
 #ifndef SHELL_LOCKSCREEN_LAYOUT_H
 #define SHELL_LOCKSCREEN_LAYOUT_H
 
@@ -5,7 +8,9 @@
 
 /// User-configurable presentation state for the lockscreen/sleep clock.
 struct LockscreenLayoutConfig {
+  /// Icon-font character drawn above the clock; null hides it.
   char topIcon = 'S';
+  /// Whether the local date is drawn below the time.
   bool showDate = true;
 };
 

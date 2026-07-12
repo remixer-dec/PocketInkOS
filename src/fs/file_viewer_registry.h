@@ -2,7 +2,7 @@
 #define FILE_VIEWER_REGISTRY_H
 
 #include <Adafruit_GFX.h>
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include <stddef.h>
 #include <stdint.h>
 

@@ -157,7 +157,9 @@ bool TimeSyncService::fetchHttpsTime() {
   }
   deviceClock.set(unixTime, utcOffsetSeconds);
 #if ENABLE_RTC_CLOCK
-  rtcClock.writeFromUnix(unixTime, utcOffsetSeconds);
+  if (rtcClock.writeFromUnix(unixTime, utcOffsetSeconds)) {
+    configRememberUtcOffset(utcOffsetSeconds);
+  }
 #endif
   setStatus("Time synced");
   return true;
@@ -231,7 +233,9 @@ bool TimeSyncService::fetchNtpTime() {
       }
       deviceClock.set(unixTime, utcOffsetSeconds);
 #if ENABLE_RTC_CLOCK
-      rtcClock.writeFromUnix(unixTime, utcOffsetSeconds);
+      if (rtcClock.writeFromUnix(unixTime, utcOffsetSeconds)) {
+        configRememberUtcOffset(utcOffsetSeconds);
+      }
 #endif
       strncpy(datetime, "NTP synced", DATETIME_SIZE - 1);
       datetime[DATETIME_SIZE - 1] = '\0';
@@ -336,50 +340,7 @@ bool TimeSyncService::parseUtcOffset(const char *json, int32_t &out) const {
 }
 
 bool TimeSyncService::parseConfiguredUtcOffset(int32_t &out) const {
-  const char *cursor = currentSystemConfig().time.timezone;
-  if (cursor == nullptr || cursor[0] == '\0' ||
-      strcasecmp(cursor, "auto") == 0 || strcasecmp(cursor, "utc") == 0 ||
-      strcasecmp(cursor, "z") == 0) {
-    out = 0;
-    return true;
-  }
-  if ((cursor[0] == 'U' || cursor[0] == 'u') &&
-      (cursor[1] == 'T' || cursor[1] == 't') &&
-      (cursor[2] == 'C' || cursor[2] == 'c')) {
-    cursor += 3;
-  }
-
-  const int sign = *cursor == '-' ? -1 : 1;
-  if (*cursor != '+' && *cursor != '-') {
-    return false;
-  }
-  cursor++;
-  if (!isdigit(static_cast<unsigned char>(cursor[0]))) {
-    return false;
-  }
-
-  int hours = cursor[0] - '0';
-  cursor++;
-  if (isdigit(static_cast<unsigned char>(*cursor))) {
-    hours = hours * 10 + (*cursor - '0');
-    cursor++;
-  }
-
-  int minutes = 0;
-  if (*cursor == ':') {
-    cursor++;
-  }
-  if (isdigit(static_cast<unsigned char>(cursor[0])) &&
-      isdigit(static_cast<unsigned char>(cursor[1]))) {
-    minutes = (cursor[0] - '0') * 10 + (cursor[1] - '0');
-  } else if (*cursor != '\0') {
-    return false;
-  }
-
-  if (hours > 23 || minutes > 59) {
-    return false;
-  }
-  out = sign * (hours * 3600 + minutes * 60);
+  out = configEffectiveUtcOffset();
   return true;
 }
 

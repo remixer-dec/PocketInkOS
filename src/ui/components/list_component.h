@@ -1,7 +1,7 @@
 #ifndef LIST_COMPONENT_H
 #define LIST_COMPONENT_H
 
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include <stdint.h>
 
 /// Touch navigation behavior for compact list controls.

@@ -30,6 +30,8 @@ struct RtcSystemContext {
   bool clockSet;
   /// Local Unix timestamp captured before sleep.
   int64_t clockLocalUnix;
+  /// UTC offset paired with clockLocalUnix.
+  int32_t clockUtcOffsetSeconds;
   /// Whether Wi-Fi was enabled before sleep.
   bool wifiOn;
   /// Runtime output volume before sleep.

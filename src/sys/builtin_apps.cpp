@@ -7,7 +7,7 @@
 #include "apps/contact_links_app.h"
 #include "apps/settings_app.h"
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-#include "apps/dictaphone_app.h"
+#include "apps/voice_notes_app.h"
 #endif
 #include "apps/deghost_app.h"
 #include "apps/files_app.h"
@@ -52,7 +52,7 @@ FilesApp filesApp;
 ContactLinksApp contactLinks;
 SettingsApp settingsApp;
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-DictaphoneApp dictaphoneApp;
+VoiceNotesApp voiceNotesApp;
 #endif
 #if ENABLE_TTS
 TtsApp ttsApp;
@@ -90,7 +90,7 @@ AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
 AppScreen<SettingsApp, true> settingsScreen(settingsApp);
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-AppScreen<DictaphoneApp, true> dictaphoneScreen(dictaphoneApp);
+AppScreen<VoiceNotesApp, true> voiceNotesScreen(voiceNotesApp);
 #endif
 #if ENABLE_TTS
 AppScreen<TtsApp, true> ttsScreen(ttsApp);
@@ -309,22 +309,22 @@ const AppDefinition builtInApps[] = {
                            .build(),
                        true, sdStorageMounted),
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-    builtInApp("dictaphone", "dictaphone", "$", MENU_APPS,
-               &dictaphoneScreen, []() { dictaphoneApp.reset(); },
+    builtInApp("voice_notes", "Voice notes", "$", MENU_APPS,
+               &voiceNotesScreen, []() { voiceNotesApp.reset(); },
                defaultBehavior()
-                   .withEnter([]() { dictaphoneApp.onEnter(); })
-                   .withExit([]() { dictaphoneApp.onExit(); })
+                   .withEnter([]() { voiceNotesApp.onEnter(); })
+                   .withExit([]() { voiceNotesApp.onExit(); })
                    .withMenuBtn(
                        []() {
-                         return dictaphoneApp.handleMenuButton()
+                         return voiceNotesApp.handleMenuButton()
                                     ? AppEventResult::Dirty
                                     : AppEventResult::GoMenu;
                        },
                        []() {
                          return dirtyIfHandled(
-                             dictaphoneApp.handleMenuDoubleButton());
+                             voiceNotesApp.handleMenuDoubleButton());
                        })
-                   .withRelease([]() { dictaphoneApp.release(); })
+                   .withRelease([]() { voiceNotesApp.release(); })
                    .build(),
                true, sdStorageMounted),
 #endif

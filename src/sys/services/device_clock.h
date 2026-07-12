@@ -22,8 +22,10 @@ public:
   /// such as JavaScript Date.now().
   bool snapshotUnixMillis(int64_t &unixTime,
                           uint16_t &millisIntoSecond) const;
-  /// Restores local Unix time after deep sleep without a fresh network sync.
-  void restoreLocalUnix(int64_t localUnix);
+  /// Restores local Unix time and its UTC offset after deep sleep.
+  void restoreLocalUnix(int64_t localUnix, int32_t utcOffsetSeconds);
+  /// Returns the UTC offset currently applied to local snapshots.
+  int32_t utcOffsetSeconds() const;
   /// Returns the current local minute index for minute-granularity UI refresh.
   int64_t localMinuteIndex() const;
   /// Formats local time according to system config.

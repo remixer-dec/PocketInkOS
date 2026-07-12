@@ -3,7 +3,7 @@
 
 #include "fs/file_viewer_registry.h"
 #include "fs/file_provider.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
 #include <Adafruit_GFX.h>
 #include <FS.h>

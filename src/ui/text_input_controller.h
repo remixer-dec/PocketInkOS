@@ -3,7 +3,7 @@
 
 #include "sys/app_display.h"
 #include "sys/app_runtime.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include <Arduino.h>

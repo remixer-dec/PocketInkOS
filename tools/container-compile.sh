@@ -117,19 +117,24 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/app_config.cpp" \
-  "$ROOT/src/sys/app_api_services.cpp" \
-  "$ROOT/src/sys/services/app_api/service_utils.cpp" \
-  "$ROOT/src/sys/services/app_api/permission_service.cpp" \
-  "$ROOT/src/sys/services/app_api/file_service.cpp" \
-  "$ROOT/src/sys/services/app_api/modal_service.cpp" \
-  "$ROOT/src/sys/services/app_api/audio_capture_service.cpp" \
-  "$ROOT/src/sys/services/app_api/audio_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/app_api.cpp" \
+  "$ROOT/src/sys/ext_app_api/service_utils.cpp" \
+  "$ROOT/src/sys/ext_app_api/permission_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/file_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/modal_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/audio_capture_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/audio_service.cpp" \
   "$ROOT/src/sys/services/connectivity_service.cpp" \
   "$ROOT/src/sys/drivers/epaper_driver_bsp.cpp" \
-  "$ROOT/src/sys/drivers/audio_capture.cpp" \
-  "$ROOT/src/sys/wav_encoder.cpp" \
-  "$ROOT/src/sys/drivers/audio_playback_renderer.cpp" \
-  "$ROOT/src/sys/drivers/audio_power.cpp" \
+  "$ROOT/src/sys/audio/audio_capture.cpp" \
+  "$ROOT/src/sys/audio/wav_encoder.cpp" \
+  "$ROOT/src/sys/audio/audio_playback_renderer.cpp" \
+  "$ROOT/src/sys/audio/audio_power.cpp" \
+  "$ROOT/src/sys/drivers/shared_i2c_bus.cpp" \
+  "$ROOT/src/sys/drivers/touch_controller.cpp" \
+  "$ROOT/src/sys/drivers/environment_sensors.cpp" \
+  "$ROOT/src/sys/drivers/power_hardware.cpp" \
+  "$ROOT/src/sys/drivers/sd_card.cpp" \
   "$ROOT/src/sys/builtin_apps.cpp" \
   "$ROOT/src/netapps/ai_app.cpp" \
   "$ROOT/src/apps/alarm_app.cpp" \
@@ -158,12 +163,12 @@ FILES=( \
   "$ROOT/src/sys/services/lockscreen_guard.cpp" \
   "$ROOT/src/sys/drivers/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
-  "$ROOT/src/sys/pinkjs_app.cpp" \
+  "$ROOT/src/sys/pocketinkjs_app.cpp" \
   "$ROOT/src/sys/services/power_control.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/services/sd_storage.cpp" \
   "$ROOT/src/sys/system_fonts.cpp" \
-  "$ROOT/src/sys/services/screenshot.cpp" \
+  "$ROOT/src/shell/screenshot.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/shell/shell_buttons.cpp" \
@@ -190,7 +195,7 @@ FILES=( \
   "$ROOT/src/ui/components/t9_keyboard_component.cpp" \
   "$ROOT/src/ui/text_input_controller.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
-  "$ROOT/src/sys/drivers/touch_input.cpp" \
+  "$ROOT/src/sys/services/touch_input.cpp" \
   "$ROOT/src/sys/drivers/usb_status.cpp" \
   "$ROOT/src/sys/services/time_sync.cpp" \
   "$ROOT/src/sys/services/wifi_manager.cpp" \
@@ -222,8 +227,8 @@ fi
 
 if [[ "$EXTENDED" != "0" ]]; then
   FILES+=( \
-    "$ROOT/src/sys/audio.cpp" \
-    "$ROOT/src/apps/dictaphone_app.cpp" \
+    "$ROOT/src/sys/audio/audio.cpp" \
+    "$ROOT/src/apps/voice_notes_app.cpp" \
     "$ROOT/src/fs/providers/audio_file_viewer.cpp")
 fi
 

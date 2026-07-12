@@ -1,10 +1,10 @@
 #ifndef AI_APP_H
 #define AI_APP_H
 
-#include "sys/drivers/audio_capture.h"
+#include "sys/audio/audio_capture.h"
 #include "ui/qwerty_zoom/qwerty_zoom_keyboard_component.h"
 #include "ui/components/t9_keyboard_component.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <WiFiClientSecure.h>
 

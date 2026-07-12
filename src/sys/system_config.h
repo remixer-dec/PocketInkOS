@@ -91,6 +91,7 @@ struct SystemConfig {
     ConfigTimeFormat timeFormat;
     ConfigDateFormat dateFormat;
     ConfigTimeSyncProtocol syncProtocol;
+    int32_t lastUtcOffsetSeconds;
     char timezone[32];
     char syncServer[96];
   } time;
@@ -113,6 +114,13 @@ const SystemConfig &currentSystemConfig();
 /// Parses a whole-minute inactivity timeout in the supported 0–255 range.
 bool configParseLockscreenInactivityMinutes(const char *value,
                                             uint8_t &out);
+/// Parses UTC, auto, or a fixed UTC offset such as UTC+02:30.
+bool configParseUtcOffset(const char *value, int32_t &out);
+/// Returns the configured fixed offset, or the last network-provided offset
+/// when timezone is automatic.
+int32_t configEffectiveUtcOffset();
+/// Persists the latest trusted network UTC offset for automatic timezone use.
+bool configRememberUtcOffset(int32_t offsetSeconds);
 
 /// Reads a raw config value by key into out.
 bool configGet(const char *key, char *out, size_t outSize);
@@ -120,10 +128,14 @@ bool configGet(const char *key, char *out, size_t outSize);
 bool configSet(const char *key, const char *value);
 /// Removes a raw config value by key.
 bool configRemove(const char *key);
-/// Reads a value scoped to a single app id.
+/// Reads a raw string value from the config file scoped to a single app id.
+/// Does not validate the value or apply an app setting default; use
+/// appConfigGet for schema-aware reads with validation and defaults.
 bool configGetForApp(const char *appId, const char *key, char *out,
                      size_t outSize);
-/// Writes a value scoped to a single app id.
+/// Writes a raw string value to the config file scoped to a single app id.
+/// Does not validate the value against an AppConfigSetting schema; use
+/// appConfigSet for schema-aware writes.
 bool configSetForApp(const char *appId, const char *key, const char *value);
 
 #endif

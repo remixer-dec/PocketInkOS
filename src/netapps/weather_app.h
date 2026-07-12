@@ -7,7 +7,7 @@
 
 #if ENABLE_NETWORK_APPS
 
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include "sys/app_config.h"
 #include <Adafruit_GFX.h>
 #include <stdint.h>

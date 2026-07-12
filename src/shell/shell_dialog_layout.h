@@ -2,7 +2,7 @@
 #define SHELL_DIALOG_LAYOUT_H
 
 #include "sys/app_display.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include "ui/status_bar.h"
 #include <stdint.h>
 

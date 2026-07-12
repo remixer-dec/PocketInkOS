@@ -1,7 +1,7 @@
 #ifndef FILE_PICKER_COMPONENT_H
 #define FILE_PICKER_COMPONENT_H
 
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 
 #include <Adafruit_GFX.h>
 #include <stddef.h>

@@ -1,3 +1,6 @@
+/// Declares the schema registry used by built-in apps to expose their settings
+/// in the system Settings app. Schemas stay in flash; values are validated and
+/// read from or written to app-scoped configuration files on demand.
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
@@ -11,7 +14,9 @@ enum class AppConfigType : uint8_t { Bool, Int, Float, String, OneOf };
 
 /// One labelled value for an AppConfigType::OneOf setting.
 struct AppConfigOption {
+  /// Human-readable choice shown by Settings.
   const char *label;
+  /// Canonical string persisted when this choice is selected.
   const char *value;
 };
 
@@ -20,20 +25,31 @@ struct AppConfigOption {
 /// Definitions should be const so they remain in flash. Values themselves are
 /// persisted lazily in /cfg/app-<id>.cfg and are never cached here.
 struct AppConfigSetting {
+  /// App-local key used in persistent configuration.
   const char *key;
+  /// Human-readable setting name shown by Settings.
   const char *label;
+  /// Validation and editor behavior for the stored string value.
   AppConfigType type;
+  /// Value used when storage is absent or invalid.
   const char *defaultValue;
+  /// Choice table used only by OneOf settings.
   const AppConfigOption *options;
+  /// Number of entries in options.
   uint8_t optionCount;
+  /// Maximum editor buffer size for free-form string values.
   uint8_t inputCapacity;
 };
 
 /// Settings metadata registered by one built-in app.
 struct AppConfigRegistration {
+  /// Stable app identifier used to scope its config file.
   const char *appId;
+  /// App name shown as the Settings section label.
   const char *label;
+  /// Flash-resident array of setting schemas.
   const AppConfigSetting *settings;
+  /// Number of entries in settings.
   uint8_t settingCount;
 };
 

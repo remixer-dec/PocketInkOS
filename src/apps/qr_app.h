@@ -5,7 +5,7 @@
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/ui_helpers.h"
 #include "ui/system_qr.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 #include <stdint.h>

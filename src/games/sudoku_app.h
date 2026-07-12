@@ -1,7 +1,7 @@
 #ifndef SUDOKU_APP_H
 #define SUDOKU_APP_H
 
-#include "sys/drivers/touch_input.h"
+#include "sys/services/touch_input.h"
 #include "ui/ui_helpers.h"
 #include <Adafruit_GFX.h>
 #include <stddef.h>

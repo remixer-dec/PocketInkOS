@@ -1,3 +1,6 @@
+/// Adapts a JavaScript file on SD storage to the firmware's ActiveApp lifecycle.
+/// Launch creates a fresh PocketInkJS VM and metadata; stop tears down all VM and
+/// source memory so relaunching a file provides a clean hot-reload boundary.
 #ifndef POCKETINKJS_APP_H
 #define POCKETINKJS_APP_H
 

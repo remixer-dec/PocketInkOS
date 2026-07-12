@@ -59,7 +59,12 @@ bool DeviceClock::snapshotUnixMillis(int64_t &unixTime,
   return true;
 }
 
-void DeviceClock::restoreLocalUnix(int64_t localUnix) { set(localUnix, 0); }
+void DeviceClock::restoreLocalUnix(int64_t localUnix,
+                                   int32_t utcOffsetSeconds) {
+  set(localUnix - utcOffsetSeconds, utcOffsetSeconds);
+}
+
+int32_t DeviceClock::utcOffsetSeconds() const { return utcOffset; }
 
 int64_t DeviceClock::localMinuteIndex() const {
   if (!setFlag) {

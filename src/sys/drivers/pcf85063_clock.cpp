@@ -2,8 +2,7 @@
 
 #if ENABLE_RTC_CLOCK
 
-#include "sys/global.h"
-#include "sys/drivers/touch_input.h"
+#include "sys/drivers/shared_i2c_bus.h"
 
 #include <Arduino.h>
 #include <driver/i2c_master.h>
@@ -20,8 +19,8 @@ bool ensureRtcDevice() {
     return true;
   }
 
-  touchI2cBegin();
-  i2c_master_bus_handle_t bus = touchI2cBusHandle();
+  sharedI2cBegin();
+  i2c_master_bus_handle_t bus = sharedI2cBusHandle();
   if (bus == NULL) {
     return false;
   }
@@ -70,7 +69,8 @@ bool Pcf85063Clock::readLocalUnix(int64_t &localUnix) {
   return true;
 }
 
-bool Pcf85063Clock::writeFromUnix(int64_t unixTime, int32_t utcOffsetSeconds) {
+bool Pcf85063Clock::writeFromUnix(int64_t unixTime,
+                                  int32_t utcOffsetSeconds) {
   if (!ensureRtcDevice()) {
     return false;
   }

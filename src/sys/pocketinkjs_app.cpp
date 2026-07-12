@@ -4,7 +4,7 @@
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
 #include "sys/services/connectivity_service.h"
-#include "sys/app_api_services.h"
+#include "sys/ext_app_api/app_api.h"
 #include "sys/services/device_clock.h"
 #include "sys/global.h"
 #include "sys/services/lockscreen_guard.h"
@@ -975,7 +975,7 @@ PocketInkJS::Value readPocketInkJSFile(PocketInkJS::Runtime &runtime,
   runtime.objectSet(result, "size", runtime.number(fileSize));
   runtime.objectSet(result, "offset", runtime.number(offset));
   runtime.objectSet(result, "eof",
-                    runtime.boolean(status == AppApiStatus::End));
+                    runtime.boolean(status == kAppApiEnd));
   return result;
 }
 
@@ -1076,7 +1076,7 @@ PocketInkJS::Value nativeFsReadFileSync(PocketInkJS::Runtime &runtime,
   size_t bytes = 0;
   const AppApiStatus status =
       appApiReadFile(path, 0, buffer, fileSize, &bytes, nullptr);
-  if ((status != AppApiStatus::Ok && status != AppApiStatus::End) ||
+  if ((status != AppApiStatus::Ok && status != kAppApiEnd) ||
       bytes != fileSize) {
     psram::release(buffer);
     return runtime.fail("file read failed");
@@ -2713,7 +2713,7 @@ bool PocketInkJSApp::pumpSystemModal() {
     const uint8_t *data = nullptr;
     size_t size = 0;
     status = appApiCaptureWav(systemModalCaptureDurationMs, &data, &size);
-    if (status == AppApiStatus::End && data != nullptr) {
+    if (status == kAppApiEnd && data != nullptr) {
       result = runtime->makeString(reinterpret_cast<const char *>(data), size);
       status = AppApiStatus::Ok;
     }
@@ -2723,7 +2723,7 @@ bool PocketInkJSApp::pumpSystemModal() {
     const uint8_t *data = nullptr;
     size_t size = 0;
     status = appApiCapturePcm16(systemModalCaptureDurationMs, &data, &size);
-    if (status == AppApiStatus::End && data != nullptr) {
+    if (status == kAppApiEnd && data != nullptr) {
       result = runtime->makeString(reinterpret_cast<const char *>(data), size);
       status = AppApiStatus::Ok;
     }
@@ -3163,77 +3163,285 @@ bool PocketInkJSApp::installBindings() {
     const char *path;
     PocketInkJS::NativeFunction function;
   } bindings[] = {
+      //JS/ Prints values to the PocketInkJS debug log.
+      //JS/ Returns: void
+      //JS/ Args: ...values (any)
       {"console.log", nativeConsoleLog},
+      //JS/ Returns the number of milliseconds since boot.
+      //JS/ Returns: number
       {"time.millis", nativeMillis},
+      //JS/ Returns the number of heap bytes currently used by the JS runtime.
+      //JS/ Returns: number
       {"PocketInkJS.heapUsed", nativePocketInkJSHeapUsed},
+      //JS/ Returns the number of heap bytes currently free in the JS runtime.
+      //JS/ Returns: number
       {"PocketInkJS.heapFree", nativePocketInkJSHeapFree},
+      //JS/ Returns the peak heap usage since the JS runtime was created.
+      //JS/ Returns: number
       {"PocketInkJS.heapPeak", nativePocketInkJSHeapPeak},
+      //JS/ Checks whether Wi-Fi is connected.
+      //JS/ Returns: boolean
       {"network.connected", nativeNetworkConnected},
+      //JS/ Starts an asynchronous scan for nearby Wi-Fi networks.
+      //JS/ Returns: Permissions
       {"network.scan", nativeNetworkScan},
+      //JS/ Returns the list of networks found by the last scan.
+      //JS/ Returns: object[] - { ssid: string, rssi: number }
       {"network.networks", nativeNetworkNetworks},
+      //JS/ Performs a synchronous HTTP GET request and returns the response body.
+      //JS/ Returns: string
+      //JS/ Args: url (string), maxBytes? (number)
       {"http.get", nativeHttpGet},
+      //JS/ Queues an async HTTP request. Returns a Promise that resolves with a Response object.
+      //JS/ Returns: Promise
+      //JS/ Args: url (string), options? (object)
       {"fetch", nativeFetch},
+      //JS/ Schedules a function to run once after a delay in milliseconds.
+      //JS/ Returns: number
+      //JS/ Args: callback (function), delayMs (number)
       {"setTimeout", nativeSetTimeout},
+      //JS/ Schedules a function to run repeatedly at an interval in milliseconds.
+      //JS/ Returns: number
+      //JS/ Args: callback (function), intervalMs (number)
       {"setInterval", nativeSetInterval},
+      //JS/ Cancels a timeout or interval previously created with setTimeout or setInterval.
+      //JS/ Returns: void
+      //JS/ Args: id (number)
       {"clearTimeout", nativeClearTimer},
+      //JS/ Cancels a timeout or interval previously created with setTimeout or setInterval.
+      //JS/ Returns: void
+      //JS/ Args: id (number)
       {"clearInterval", nativeClearTimer},
+      //JS/ Prevents the device from entering sleep while the app is active.
+      //JS/ Returns: void
+      //JS/ Args: active (boolean)
       {"app.setWakeLock", nativeSetWakeLock},
+      //JS/ Reads a per-app configuration value by key. Returns the value string or undefined.
+      //JS/ Returns: string | undefined
+      //JS/ Args: key (string)
       {"app.configGet", nativeConfigGet},
+      //JS/ Writes a per-app configuration value by key.
+      //JS/ Returns: boolean
+      //JS/ Args: key (string), value (string)
       {"app.configSet", nativeConfigSet},
+      //JS/ Launches another app by its app ID.
+      //JS/ Returns: boolean
+      //JS/ Args: appId (string)
       {"app.open", nativeAppOpen},
+      //JS/ Reads a file and returns an object with data, bytes, size, offset, and eof properties.
+      //JS/ Returns: object - { data: string, bytes: number, size: number, offset: number, eof: boolean }
+      //JS/ Args: path (string), offset? (number), maxBytes? (number)
       {"files.readText", nativeFilesReadText},
+      //JS/ Reads a file and returns binary data with metadata (same as readText).
+      //JS/ Returns: object - { data: string, bytes: number, size: number, offset: number, eof: boolean }
+      //JS/ Args: path (string), offset? (number), maxBytes? (number)
       {"files.readBinary", nativeFilesReadBinary},
+      //JS/ Writes string data to a file. Optionally appends instead of overwriting.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), data (string), append? (boolean)
       {"files.write", nativeFilesWrite},
+      //JS/ Deletes a file by path.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string)
       {"files.delete", nativeFilesDelete},
+      //JS/ Opens the system file picker UI. Returns a Promise that resolves with the selected path.
+      //JS/ Returns: Promise
+      //JS/ Args: initialPath? (string), filter? (string)
       {"files.pick", nativeFilesPick},
+      //JS/ Reads an entire file as a string. Returns a Promise.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string), encoding? (string)
       {"fs.readFile", nativeFsReadFile},
+      //JS/ Reads an entire file as a string. Synchronous.
+      //JS/ Returns: string
+      //JS/ Args: path (string), encoding? (string)
       {"fs.readFileSync", nativeFsReadFileSync},
+      //JS/ Writes data to a file. Returns a Promise.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string), data (string), encoding? (string)
       {"fs.writeFile", nativeFsWriteFile},
+      //JS/ Writes data to a file. Synchronous.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), data (string), encoding? (string)
       {"fs.writeFileSync", nativeFsWriteFileSync},
+      //JS/ Appends data to a file. Returns a Promise.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string), data (string), encoding? (string)
       {"fs.appendFile", nativeFsAppendFile},
+      //JS/ Appends data to a file. Synchronous.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), data (string), encoding? (string)
       {"fs.appendFileSync", nativeFsAppendFileSync},
+      //JS/ Lists the entries in a directory. Returns a Promise that resolves with an array of names.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string), encoding? (string)
       {"fs.readdir", nativeFsReaddir},
+      //JS/ Lists the entries in a directory. Synchronous. Returns an array of names.
+      //JS/ Returns: string[]
+      //JS/ Args: path (string), encoding? (string)
       {"fs.readdirSync", nativeFsReaddirSync},
+      //JS/ Checks whether a file exists at the given path.
+      //JS/ Returns: boolean
+      //JS/ Args: path (string)
       {"fs.existsSync", nativeFsExistsSync},
+      //JS/ Gets file stats (size, isFile, isDirectory). Returns a Promise.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string)
       {"fs.stat", nativeFsStat},
+      //JS/ Gets file stats (size, isFile, isDirectory). Synchronous.
+      //JS/ Returns: object - { size: number, isFile: boolean, isDirectory: boolean }
+      //JS/ Args: path (string)
       {"fs.statSync", nativeFsStatSync},
+      //JS/ Deletes a file. Returns a Promise.
+      //JS/ Returns: Promise
+      //JS/ Args: path (string)
       {"fs.unlink", nativeFsUnlink},
+      //JS/ Deletes a file. Synchronous.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string)
       {"fs.unlinkSync", nativeFsUnlinkSync},
+      //JS/ Configures a GPIO pin as input, input pull-up, or output.
+      //JS/ Returns: Permissions
+      //JS/ Args: pin (number), mode (number)
       {"gpio.mode", nativeGpioMode},
+      //JS/ Reads the current value of a GPIO pin. Returns an object with status and value.
+      //JS/ Returns: object - { status: number, value: number }
+      //JS/ Args: pin (number)
       {"gpio.read", nativeGpioRead},
+      //JS/ Sets the output value of a GPIO pin.
+      //JS/ Returns: Permissions
+      //JS/ Args: pin (number), value (boolean)
       {"gpio.write", nativeGpioWrite},
+      //JS/ Reads environment sensor values (temperature, humidity). Optionally forces a refresh.
+      //JS/ Returns: object - { temperatureValid: boolean, humidityValid: boolean, cpuTemperatureValid: boolean, temperatureC: number, humidityPct: number, cpuTemperatureC: number }
+      //JS/ Args: refresh? (boolean)
       {"sensors.read", nativeSensorsRead},
+      //JS/ Captures audio as a WAV file. Returns a Promise that resolves with the audio data.
+      //JS/ Returns: Promise
+      //JS/ Args: durationMs (number)
       {"audio.captureWav", nativeAudioCaptureWav},
+      //JS/ Captures audio as raw PCM16 data. Returns a Promise that resolves with the audio data.
+      //JS/ Returns: Promise
+      //JS/ Args: durationMs (number)
       {"audio.capturePcm16", nativeAudioCapturePcm16},
+      //JS/ Checks whether a given audio format string is supported.
+      //JS/ Returns: boolean
+      //JS/ Args: format (string)
       {"audio.supports", nativeAudioSupports},
+      //JS/ Loads an audio file from a path. Returns a numeric handle.
+      //JS/ Returns: number
+      //JS/ Args: path (string)
       {"audio.load", nativeAudioLoad},
+      //JS/ Loads audio from a binary data buffer with the given format. Returns a numeric handle.
+      //JS/ Returns: number
+      //JS/ Args: data (string), format (string)
       {"audio.loadBuffer", nativeAudioLoadBuffer},
+      //JS/ Starts playback of a previously loaded audio handle.
+      //JS/ Returns: stream.OK | stream.ERROR
+      //JS/ Args: handle (number)
       {"audio.play", nativeAudioPlay},
+      //JS/ Stops playback of a previously loaded audio handle.
+      //JS/ Returns: stream.OK | stream.ERROR
+      //JS/ Args: handle (number)
       {"audio.stop", nativeAudioStop},
+      //JS/ Updates audio playback state for a given handle.
+      //JS/ Returns: stream.END | stream.OK
+      //JS/ Args: handle (number)
       {"audio.update", nativeAudioUpdate},
+      //JS/ Releases resources for a previously loaded audio handle.
+      //JS/ Returns: void
+      //JS/ Args: handle (number)
       {"audio.release", nativeAudioRelease},
+      //JS/ Sets the current font by name string or numeric font ID.
+      //JS/ Returns: void
+      //JS/ Args: font (string|number)
       {"ui.setFont", nativeUiSetFont},
+      //JS/ Returns an array of objects describing available system fonts.
+      //JS/ Returns: object[] - { name: string, size: number }
       {"ui.fonts", nativeUiFonts},
+      //JS/ Sets the text size multiplier.
+      //JS/ Returns: void
+      //JS/ Args: size (number)
       {"ui.setTextSize", nativeUiSetTextSize},
+      //JS/ Sets the text color (0 = white, 1 = black).
+      //JS/ Returns: void
+      //JS/ Args: color (number)
       {"ui.setTextColor", nativeUiSetTextColor},
+      //JS/ Moves the text cursor to the given x, y position.
+      //JS/ Returns: void
+      //JS/ Args: x (number), y (number)
       {"ui.setCursor", nativeUiSetCursor},
+      //JS/ Prints text at the current cursor position.
+      //JS/ Returns: void
+      //JS/ Args: text (any)
       {"ui.print", nativeUiPrint},
+      //JS/ Draws a single pixel at (x, y) with the given color.
+      //JS/ Returns: void
+      //JS/ Args: x (number), y (number), color (number)
       {"ui.drawPixel", nativeUiDrawPixel},
+      //JS/ Draws a line from (x0, y0) to (x1, y1) with the given color.
+      //JS/ Returns: void
+      //JS/ Args: x0 (number), y0 (number), x1 (number), y1 (number), color (number)
       {"ui.drawLine", nativeUiDrawLine},
+      //JS/ Draws a rectangle outline at (x, y) with the given width, height, and color.
+      //JS/ Returns: void
+      //JS/ Args: x (number), y (number), w (number), h (number), color (number)
       {"ui.drawRect", nativeUiDrawRect},
+      //JS/ Draws a filled rectangle at (x, y) with the given width, height, and color.
+      //JS/ Returns: void
+      //JS/ Args: x (number), y (number), w (number), h (number), color (number)
       {"ui.fillRect", nativeUiFillRect},
+      //JS/ Fills the entire screen with the given color.
+      //JS/ Returns: void
+      //JS/ Args: color (number)
       {"ui.fillScreen", nativeUiFillScreen},
+      //JS/ Draws an image loaded from a file path with optional position and transform options.
+      //JS/ Returns: void
+      //JS/ Args: path (string), options? (object)
       {"ui.imagePath", nativeUiImagePath},
+      //JS/ Draws an image from a binary string buffer with the given format and optional options.
+      //JS/ Returns: void
+      //JS/ Args: data (string), format (string), options? (object)
       {"ui.imageBuffer", nativeUiImageBuffer},
+      //JS/ Draws a vector graphic (SVG) loaded from a file with optional position and transform.
+      //JS/ Returns: void
+      //JS/ Args: path (string), options? (object)
       {"ui.vectorPath", nativeUiVectorPath},
+      //JS/ Draws a vector graphic (SVG) from an inline string with optional position and transform.
+      //JS/ Returns: void
+      //JS/ Args: svg (string), options? (object)
       {"ui.vectorString", nativeUiVectorString},
+      //JS/ Draws a QR code from the given text at the specified position and size.
+      //JS/ Returns: void
+      //JS/ Args: text (string), x (number), y (number), size (number), color? (number)
       {"ui.qr", nativeUiQr},
+      //JS/ Draws a touch button at the given bounds with a text label.
+      //JS/ Returns: void
+      //JS/ Args: x (number), y (number), w (number), h (number), label (string), pressed? (boolean), textSize? (number)
       {"ui.button", nativeUiButton},
+      //JS/ Tests whether a touch point hits a button drawn at the given bounds.
+      //JS/ Returns: boolean
+      //JS/ Args: x (number), y (number), bx (number), by (number), bw (number), bh (number), padding? (number)
       {"ui.buttonContains", nativeUiButtonContains},
+      //JS/ Handles touch interaction for a scrollable list. Returns an object with action, index, and offset.
+      //JS/ Returns: object - { action: string, index: number, offset: number }
+      //JS/ Args: tx (number), ty (number), itemH (number), visible (number), x (number), y (number), w (number), h (number), mode (number), offset (number)
       {"ui.listTouch", nativeUiListTouch},
+      //JS/ Draws a set of selectable option buttons from an array of option objects.
+      //JS/ Returns: void
+      //JS/ Args: options (array), selected (number), textSize? (number)
       {"ui.selectDraw", nativeUiSelectDraw},
+      //JS/ Hits tests a set of selectable option buttons. Returns the value of the hit option or undefined.
+      //JS/ Returns: any | undefined
+      //JS/ Args: x (number), y (number), options (array), padding? (number)
       {"ui.selectHit", nativeUiSelectHit},
+      //JS/ Opens the system on-screen keyboard. Returns a Promise that resolves with the entered text.
+      //JS/ Returns: Promise
+      //JS/ Args: initialText (string), layout? (number), maxLength? (number)
       {"ui.getKeyboardInput", nativeGetKeyboardInput},
+      //JS/ Opens the system date picker. Returns a Promise that resolves with the selected date string.
+      //JS/ Returns: Promise
+      //JS/ Args: year (number), month (number), day (number)
       {"ui.getDateInput", nativeGetDateInput},
   };
   for (const auto &binding : bindings) {
@@ -3241,6 +3449,18 @@ bool PocketInkJSApp::installBindings() {
       return false;
     }
   }
+  //JS/ Alias: fs.promises.readFile - Async file read (Promise).
+  //JS/ Args: path (string), encoding? (string)
+  //JS/ Alias: fs.promises.writeFile - Async file write (Promise).
+  //JS/ Args: path (string), data (string), encoding? (string)
+  //JS/ Alias: fs.promises.appendFile - Async file append (Promise).
+  //JS/ Args: path (string), data (string), encoding? (string)
+  //JS/ Alias: fs.promises.readdir - Async directory listing (Promise).
+  //JS/ Args: path (string), encoding? (string)
+  //JS/ Alias: fs.promises.stat - Async file stat (Promise).
+  //JS/ Args: path (string)
+  //JS/ Alias: fs.promises.unlink - Async file delete (Promise).
+  //JS/ Args: path (string)
   if (!runtime->set("fs.promises.readFile", runtime->get("fs.readFile")) ||
       !runtime->set("fs.promises.writeFile", runtime->get("fs.writeFile")) ||
       !runtime->set("fs.promises.appendFile",
@@ -3250,9 +3470,37 @@ bool PocketInkJSApp::installBindings() {
       !runtime->set("fs.promises.unlink", runtime->get("fs.unlink"))) {
     return false;
   }
+  //JS/ Internal: extracts the response body as text from a fetch Response object.
+  //JS/ Internal: parses the response body as JSON from a fetch Response object.
   if (!runtime->bindMethod("__responseText", nativeResponseText) ||
       !runtime->bindMethod("__responseJson", nativeResponseJson))
     return false;
+  //JS/ Runtime value: screen.width (number) - Screen width in pixels.
+  //JS/ Runtime value: screen.height (number) - Screen height in pixels.
+  //JS/ Constant: ui.WHITE (0) - White color value.
+  //JS/ Constant: ui.BLACK (1) - Black color value.
+  //JS/ Constant: ui.FONT_DEFAULT (0) - Default system font.
+  //JS/ Constant: ui.FONT_ICON_8 (1) - 8-pixel icon font.
+  //JS/ Constant: ui.FONT_ICON_12 (2) - 12-pixel icon font.
+  //JS/ Constant: ui.LIST_SCROLL (0) - Scroll list navigation mode.
+  //JS/ Constant: ui.LIST_SELECT (1) - Select list navigation mode.
+  //JS/ Constant: ui.LIST_SPLIT (2) - Split list navigation mode.
+  //JS/ Constant: ui.KEYBOARD_TEXT (0) - Full text keyboard layout.
+  //JS/ Constant: ui.KEYBOARD_NUMBERS (1) - Numeric keypad layout.
+  //JS/ Constant: ui.KEYBOARD_NUMERIC (2) - Numeric input layout.
+  //JS/ Constant: permissions.ERROR (-1) - Operation failed.
+  //JS/ Constant: permissions.DENIED (-2) - Permission denied.
+  //JS/ Constant: permissions.UNSUPPORTED (-3) - Feature not supported.
+  //JS/ Constant: permissions.PENDING (0) - Operation pending.
+  //JS/ Constant: permissions.OK (1) - Operation succeeded.
+  //JS/ Constant: gpio.INPUT (0) - GPIO digital input mode.
+  //JS/ Constant: gpio.INPUT_PULLUP (1) - GPIO input with internal pull-up.
+  //JS/ Constant: gpio.OUTPUT (2) - GPIO digital output mode.
+  //JS/ Runtime value: app.id (string) - Current PocketInkJS app identifier string.
+  //JS/ Runtime value: app.path (string) - File system path of the currently running script.
+  //JS/ Constant: stream.END (2) - End of data reached.
+  //JS/ Constant: stream.OK (1) - Stream operation succeeded.
+  //JS/ Constant: stream.ERROR (-1) - Stream operation failed.
   return runtime->set("screen.width", runtime->number(EPD_WIDTH)) &&
          runtime->set("screen.height", runtime->number(EPD_HEIGHT)) &&
          runtime->set("ui.WHITE", runtime->number(0)) &&
@@ -3266,16 +3514,18 @@ bool PocketInkJSApp::installBindings() {
          runtime->set("ui.KEYBOARD_TEXT", runtime->number(0)) &&
          runtime->set("ui.KEYBOARD_NUMBERS", runtime->number(1)) &&
          runtime->set("ui.KEYBOARD_NUMERIC", runtime->number(2)) &&
-         runtime->set("api.ERROR", runtime->number(-1)) &&
-         runtime->set("api.DENIED", runtime->number(-2)) &&
-         runtime->set("api.UNSUPPORTED", runtime->number(-3)) &&
-         runtime->set("api.PENDING", runtime->number(0)) &&
-         runtime->set("api.OK", runtime->number(1)) &&
-         runtime->set("api.END", runtime->number(2)) &&
+          runtime->set("permissions.ERROR", runtime->number(-1)) &&
+          runtime->set("permissions.DENIED", runtime->number(-2)) &&
+          runtime->set("permissions.UNSUPPORTED", runtime->number(-3)) &&
+          runtime->set("permissions.PENDING", runtime->number(0)) &&
+          runtime->set("permissions.OK", runtime->number(1)) &&
          runtime->set("gpio.INPUT", runtime->number(0)) &&
          runtime->set("gpio.INPUT_PULLUP", runtime->number(1)) &&
          runtime->set("gpio.OUTPUT", runtime->number(2)) &&
-         runtime->set("app.id", runtime->makeString(appId)) &&
+           runtime->set("stream.END", runtime->number(2)) &&
+           runtime->set("stream.OK", runtime->number(1)) &&
+           runtime->set("stream.ERROR", runtime->number(-1)) &&
+          runtime->set("app.id", runtime->makeString(appId)) &&
          runtime->set("app.path", runtime->makeString(path));
 }
 
