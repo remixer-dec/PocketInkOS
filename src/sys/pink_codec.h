@@ -35,6 +35,8 @@ public:
             char *error, size_t errorSize);
   size_t readPcm16(int16_t *frames, size_t frameCapacity);
   bool seekPcmFrame(uint32_t targetFrame, uint32_t *actualFrame = nullptr);
+  /// Warms an optional codec seek cache without blocking on a full scan.
+  bool warmSeekCache(uint16_t frameBudget);
   void close();
   bool loaded() const { return decoder != nullptr; }
 

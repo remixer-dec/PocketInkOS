@@ -8,6 +8,14 @@
 #include <Arduino.h>
 #include <cstddef>
 #include <cstring>
+#include <esp_heap_caps.h>
+
+#if __has_include(<esp_dsp.h>)
+#include <esp_dsp.h>
+#define PINK_CODEC_HAS_ESP_DSP 1
+#else
+#define PINK_CODEC_HAS_ESP_DSP 0
+#endif
 
 namespace {
 
@@ -37,6 +45,9 @@ struct CodecHost {
   void *(*psramAlloc)(size_t);
   void (*psramFree)(void *);
   void (*log)(const char *);
+  void *(*internalAlloc)(size_t);
+  void (*internalFree)(void *);
+  bool (*complexFft)(float *, size_t, bool);
 };
 
 struct CodecInfo {
@@ -59,7 +70,10 @@ struct CodecApi {
   size_t (*readPcm16)(void *, int16_t *, size_t);
   bool (*seekPcmFrame)(void *, uint32_t, uint32_t *);
   void (*close)(void *);
+  bool (*warmSeekCache)(void *, uint16_t);
 };
+
+constexpr size_t kCodecApiV1Size = offsetof(CodecApi, warmSeekCache);
 
 using CodecEntryPoint = const CodecApi *(*)();
 
@@ -170,6 +184,49 @@ uint32_t sourceSize(void *user) {
 
 void *hostPsramAlloc(size_t bytes) { return psram::allocate(bytes); }
 void hostPsramFree(void *memory) { psram::release(memory); }
+void *hostInternalAlloc(size_t bytes) {
+  return heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+void hostInternalFree(void *memory) { heap_caps_free(memory); }
+
+bool hostComplexFft(float *realImag, size_t complexCount, bool inverse) {
+#if PINK_CODEC_HAS_ESP_DSP
+  if (realImag == nullptr || complexCount < 2U || complexCount > INT32_MAX ||
+      (complexCount & (complexCount - 1U)) != 0U) {
+    return false;
+  }
+  if (inverse) {
+    for (size_t i = 0; i < complexCount; i++) {
+      realImag[i * 2U + 1U] = -realImag[i * 2U + 1U];
+    }
+  }
+  // Initialization is idempotent for an already configured ESP-DSP table.
+  // The transform result remains guarded by the operation's return status.
+  (void)dsps_fft2r_init_fc32(nullptr, static_cast<int>(complexCount));
+  if (dsps_fft2r_fc32(realImag, static_cast<int>(complexCount)) != ESP_OK) {
+    if (inverse) {
+      for (size_t i = 0; i < complexCount; i++) {
+        realImag[i * 2U + 1U] = -realImag[i * 2U + 1U];
+      }
+    }
+    return false;
+  }
+  dsps_bit_rev_fc32(realImag, static_cast<int>(complexCount));
+  if (inverse) {
+    const float scale = 1.0f / static_cast<float>(complexCount);
+    for (size_t i = 0; i < complexCount; i++) {
+      realImag[i * 2U] *= scale;
+      realImag[i * 2U + 1U] = -realImag[i * 2U + 1U] * scale;
+    }
+  }
+  return true;
+#else
+  (void)realImag;
+  (void)complexCount;
+  (void)inverse;
+  return false;
+#endif
+}
 
 void hostLog(const char *message) {
   if (debugLoggingEnabled() && message != nullptr) {
@@ -180,7 +237,8 @@ void hostLog(const char *message) {
 
 CodecHost makeHost() {
   return {kCodecAbiVersion, 0, sizeof(CodecHost), hostPsramAlloc,
-          hostPsramFree, hostLog};
+          hostPsramFree, hostLog, hostInternalAlloc, hostInternalFree,
+          hostComplexFft};
 }
 
 } // namespace
@@ -241,7 +299,7 @@ bool PinkAudioCodec::open(File &file, const char *extension,
         reinterpret_cast<CodecEntryPoint>(library.entryPoint());
     const CodecApi *candidate = entry != nullptr ? entry() : nullptr;
     if (candidate == nullptr || candidate->abiVersion != kCodecAbiVersion ||
-        candidate->apiSize < sizeof(CodecApi) || candidate->open == nullptr ||
+        candidate->apiSize < kCodecApiV1Size || candidate->open == nullptr ||
         candidate->readPcm16 == nullptr || candidate->close == nullptr) {
       library.unload();
       setError(error, errorSize, "invalid codec API");
@@ -293,6 +351,17 @@ bool PinkAudioCodec::seekPcmFrame(uint32_t targetFrame,
   return codec != nullptr && decoder != nullptr &&
          codec->seekPcmFrame != nullptr &&
          codec->seekPcmFrame(decoder, targetFrame, actualFrame);
+}
+
+bool PinkAudioCodec::warmSeekCache(uint16_t frameBudget) {
+  const CodecApi *codec = static_cast<const CodecApi *>(api);
+  const bool hasCallback =
+      codec != nullptr &&
+      codec->apiSize >= offsetof(CodecApi, warmSeekCache) +
+                            sizeof(codec->warmSeekCache) &&
+      codec->warmSeekCache != nullptr;
+  return hasCallback && decoder != nullptr && frameBudget != 0U &&
+         codec->warmSeekCache(decoder, frameBudget);
 }
 
 void PinkAudioCodec::close() {

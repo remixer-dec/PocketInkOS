@@ -6,8 +6,8 @@ SRC="${1:-$ROOT/examples/pink/tetris/tetris.cpp}"
 OUT="${2:-$ROOT/build/pink/tetris.pink}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/pink/$(basename "${SRC%.*}")}"
 LINKER="${PINK_LINKER:-$ROOT/tools/pink_app.ld}"
-ABI_VERSION=12
-MAX_IMAGE_BYTES=$((64 * 1024))
+ABI_VERSION=13
+MAX_IMAGE_BYTES="${PINK_MAX_IMAGE_BYTES:-$((64 * 1024))}"
 
 usage() {
   cat <<EOF
@@ -21,6 +21,7 @@ Environment overrides:
   NM       path to matching nm
   READELF  path to matching readelf
   PINK_FQBN board FQBN used to query arduino-cli tool paths
+  PINK_OPTIMIZATION optimization level appended after native flags (default -Os)
 EOF
 }
 
@@ -94,22 +95,23 @@ for path in (
 PY
 }
 
-tool_from_arduino_properties() {
+arduino_properties() {
   local fqbn="$1"
-  local props compiler_path compiler_cmd probe_dir
+  local probe_dir
   if ! command -v arduino-cli >/dev/null 2>&1; then
     return 0
   fi
   probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/pink-tool-probe.XXXXXX")"
   mkdir -p "$probe_dir/PinkToolProbe"
   printf 'void setup() {}\nvoid loop() {}\n' > "$probe_dir/PinkToolProbe/PinkToolProbe.ino"
-  props="$(arduino-cli compile --fqbn "$fqbn" --show-properties=expanded "$probe_dir/PinkToolProbe" 2>/dev/null || true)"
+  arduino-cli compile --fqbn "$fqbn" --show-properties=expanded \
+    "$probe_dir/PinkToolProbe" 2>/dev/null || true
   rm -rf "$probe_dir"
-  compiler_path="$(printf '%s\n' "$props" | awk -F= '$1 == "compiler.path" { print $2; exit }')"
-  compiler_cmd="$(printf '%s\n' "$props" | awk -F= '$1 == "compiler.cpp.cmd" { print $2; exit }')"
-  if [[ -n "$compiler_path" && -n "$compiler_cmd" && -x "$compiler_path$compiler_cmd" ]]; then
-    printf '%s\n' "$compiler_path$compiler_cmd"
-  fi
+}
+
+arduino_property() {
+  local name="$1"
+  awk -F= -v name="$name" '$1 == name { sub(/^[^=]*=/, ""); print; exit }'
 }
 
 find_tool() {
@@ -140,9 +142,15 @@ find_tool() {
 }
 
 FQBN_FOR_TOOLS="$(default_fqbn)"
+ARDUINO_PROPERTIES="$(arduino_properties "$FQBN_FOR_TOOLS")"
 CXX_PATH="${CXX:-}"
 if [[ -z "$CXX_PATH" ]]; then
-  CXX_PATH="$(tool_from_arduino_properties "$FQBN_FOR_TOOLS" || true)"
+  COMPILER_PATH="$(printf '%s\n' "$ARDUINO_PROPERTIES" | arduino_property compiler.path)"
+  COMPILER_CMD="$(printf '%s\n' "$ARDUINO_PROPERTIES" | arduino_property compiler.cpp.cmd)"
+  if [[ -n "$COMPILER_PATH" && -n "$COMPILER_CMD" &&
+        -x "$COMPILER_PATH$COMPILER_CMD" ]]; then
+    CXX_PATH="$COMPILER_PATH$COMPILER_CMD"
+  fi
 fi
 if [[ -z "$CXX_PATH" ]]; then
   CXX_PATH="$(find_tool CXX xtensa-esp32s3-elf-g++ xtensa-esp-elf-g++ || true)"
@@ -189,9 +197,25 @@ RODATA_BIN="$BUILD_DIR/app.rodata.bin"
 MAP="$BUILD_DIR/app.map"
 RELOCS="$BUILD_DIR/app.relocs"
 
+NATIVE_CPP_FLAGS=()
+NATIVE_CPP_FLAGS_TEXT="$(printf '%s\n' "$ARDUINO_PROPERTIES" | arduino_property compiler.cpp.flags)"
+if [[ -n "$NATIVE_CPP_FLAGS_TEXT" ]]; then
+  while IFS= read -r -d '' flag; do
+    NATIVE_CPP_FLAGS+=("$flag")
+  done < <(python3 - "$NATIVE_CPP_FLAGS_TEXT" <<'PY'
+import shlex
+import sys
+
+for flag in shlex.split(sys.argv[1]):
+    sys.stdout.buffer.write(flag.encode() + b"\0")
+PY
+)
+fi
+
 CXXFLAGS=(
+  "${NATIVE_CPP_FLAGS[@]}"
   -std=gnu++20
-  -Os
+  "${PINK_OPTIMIZATION:--Os}"
   -ffunction-sections
   -fdata-sections
   -fno-exceptions
@@ -201,8 +225,10 @@ CXXFLAGS=(
   -fno-jump-tables
   -fno-tree-switch-conversion
   -fno-builtin
+  -fno-pie
   -nostdlib
   -I"$ROOT/examples/pink/include"
+  -I"$ROOT/src"
 )
 
 LDFLAGS=(
@@ -215,7 +241,10 @@ LDFLAGS=(
 
 "$CXX_PATH" "${CXXFLAGS[@]}" -c "$SRC" -o "$OBJ"
 "$CXX_PATH" "${CXXFLAGS[@]}" -c "$ROOT/examples/pink/include/pink_runtime.cpp" -o "$RUNTIME_OBJ"
-"$CXX_PATH" "${LDFLAGS[@]}" "$OBJ" "$RUNTIME_OBJ" -o "$ELF"
+# -nostdlib deliberately omits the compiler runtime too. Link libgcc
+# explicitly so generated helpers such as 64-bit shifts/division remain
+# available without pulling in a platform C or C++ runtime.
+"$CXX_PATH" "${LDFLAGS[@]}" "$OBJ" "$RUNTIME_OBJ" -lgcc -o "$ELF"
 
 UNDEFINED="$("$NM_PATH" -u "$ELF" || true)"
 if [[ -n "$UNDEFINED" ]]; then
@@ -302,6 +331,16 @@ if metadata_section is not None:
         raise SystemExit("periodic display mode must be NONE (0), PARTIAL (1), or FULL (2)")
     periodic_schedule = interval | (wake_level << 16) | (display_mode << 24)
 
+header_extension = b""
+library_section = sections.get(".pink_library")
+if library_section is not None:
+    elf_bytes = elf.read_bytes()
+    start = library_section["offset"]
+    end = start + library_section["size"]
+    if end > len(elf_bytes) or library_section["size"] != 88:
+        raise SystemExit("PinkLibraryManifest metadata must be exactly 88 bytes")
+    header_extension = elf_bytes[start:end]
+
 text = sections.get(".text")
 if text is None or text["size"] != len(code):
     raise SystemExit(".text section size mismatch")
@@ -325,7 +364,10 @@ if entry < text["addr"] or entry >= text["addr"] + text["size"]:
     raise SystemExit(f"entry outside .text: 0x{entry:x}")
 entry_offset = entry - text["addr"]
 
-for name in (".data", ".bss", ".sdata", ".sbss"):
+for name in (
+    ".data", ".bss", ".sdata", ".sbss", ".tdata", ".tbss",
+    ".init_array", ".fini_array", ".ctors", ".dtors",
+):
     section = sections.get(name)
     if section is not None and section["size"] != 0:
         raise SystemExit(f"unsupported writable section {name} size {section['size']}")
@@ -361,14 +403,22 @@ for line in reloc_output.splitlines():
     if not match:
         continue
     offset = int(match.group(1), 16)
-    if offset % 4 != 0:
-        raise SystemExit(f"unaligned relocation offset: 0x{offset:x}")
     storage = storage_for_section(current_reloc_section or "")
     if storage is None:
+        # Xtensa linker metadata and debug data are not copied into the Pink
+        # image, so their relocations have no runtime location to adjust.
+        if ((current_reloc_section or "").startswith(".rela.xt.") or
+                (current_reloc_section or "").startswith(".rela.debug")):
+            continue
         raise SystemExit(f"unsupported R_XTENSA_32 storage section: {current_reloc_section}")
+    if offset % 4 != 0:
+        raise SystemExit(f"unaligned relocation offset: 0x{offset:x}")
     storage_bytes = code if storage == "text" else rodata
-    if offset + 4 > len(storage_bytes):
+    storage_section = text if storage == "text" else rodata_section
+    if (offset < storage_section["addr"] or
+            offset + 4 > storage_section["addr"] + storage_section["size"]):
         raise SystemExit(f"relocation offset outside image: 0x{offset:x}")
+    offset -= storage_section["addr"]
     current = struct.unpack_from("<I", storage_bytes, offset)[0]
     target, _ = segment_for_address(current)
     if target is None:
@@ -379,15 +429,15 @@ for line in reloc_output.splitlines():
     relocations.append(location)
 
 relocations = sorted(set(relocations))
-header_size = 28
+header_size = 28 + len(header_extension)
 header = struct.pack(
     "<IHHIIIII", 0x4B4E4950, abi, header_size, len(code), len(rodata), entry_offset,
     len(relocations), periodic_schedule
 )
 reloc_table = b"".join(struct.pack("<I", location) for location in relocations)
-out_path.write_bytes(header + reloc_table + code + rodata)
+out_path.write_bytes(header + header_extension + reloc_table + code + rodata)
 print(
-    f"Wrote {out_path} ({len(header) + len(reloc_table) + len(code) + len(rodata)} bytes, "
+    f"Wrote {out_path} ({len(header) + len(header_extension) + len(reloc_table) + len(code) + len(rodata)} bytes, "
     f"entry=0x{entry_offset:x}, code={len(code)}, rodata={len(rodata)}, relocs={len(relocations)})"
 )
 PY
