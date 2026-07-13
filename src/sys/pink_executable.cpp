@@ -1,4 +1,5 @@
 #include "sys/pink_executable.h"
+#include "sys/pink_library.h"
 #include "sys/debug_logging.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
@@ -33,6 +34,11 @@ static const uint8_t kPinkLabelCapacity = 8;
 static const uint8_t kPinkIdCapacity = 16;
 static const size_t kPinkMemorySize = 4096;
 static const size_t kPinkMaxRelocations = 4096;
+static const size_t kPinkLibraryMaxCodeBytes = 64U * 1024U;
+static const size_t kPinkLibraryMaxRodataBytes = 512U * 1024U;
+static const size_t kPinkLibraryMaxImageBytes =
+    kPinkLibraryMaxCodeBytes + kPinkLibraryMaxRodataBytes;
+static const uint32_t kPinkLibraryMaxRelocations = 16384;
 
 bool hiddenByMenuButtonApp(const char *id) {
   return id != nullptr && strcmp(id, currentSystemConfig().home.sunBtnApp) == 0;
@@ -100,6 +106,53 @@ bool copyText(char *dest, size_t destSize, const char *source) {
   }
   dest[copyLength] = '\0';
   return length < destSize;
+}
+
+bool validPinkLibraryManifest(const PinkExecutableHeader &header,
+                              const PinkLibraryManifest &manifest,
+                              uint32_t expectedType = 0) {
+  return pinkExecutableHeaderSupported(header) &&
+         header.headerSize ==
+             sizeof(PinkExecutableHeader) + sizeof(PinkLibraryManifest) &&
+         manifest.magic == PINK_LIBRARY_MAGIC &&
+         manifest.version == PINK_LIBRARY_MANIFEST_VERSION &&
+         manifest.size == sizeof(PinkLibraryManifest) &&
+         (expectedType == 0 || manifest.type == expectedType) &&
+         manifest.id[0] != '\0' &&
+         memchr(manifest.id, '\0', sizeof(manifest.id)) != nullptr &&
+         manifest.extensions[0] != '\0' &&
+         memchr(manifest.extensions, '\0', sizeof(manifest.extensions)) !=
+             nullptr;
+}
+
+bool readPinkLibraryManifest(File &file, PinkExecutableHeader &header,
+                             PinkLibraryManifest &manifest,
+                             uint32_t expectedType = 0) {
+  return file.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) ==
+             sizeof(header) &&
+         file.read(reinterpret_cast<uint8_t *>(&manifest), sizeof(manifest)) ==
+             sizeof(manifest) &&
+         validPinkLibraryManifest(header, manifest, expectedType);
+}
+
+const char *pinkLibraryLoadError(PinkExecutableLoadResult result) {
+  switch (result) {
+  case PinkExecutableLoadResult::Loaded:
+    return "";
+  case PinkExecutableLoadResult::InvalidExecutable:
+    return "invalid library image";
+  case PinkExecutableLoadResult::InvalidRelocations:
+    return "invalid library relocations";
+  case PinkExecutableLoadResult::SeekFailed:
+    return "library seek failed";
+  case PinkExecutableLoadResult::NoExecutableMemory:
+    return "no executable memory";
+  case PinkExecutableLoadResult::NoDataMemory:
+    return "no library data memory";
+  case PinkExecutableLoadResult::ReadFailed:
+    return "library read failed";
+  }
+  return "library load failed";
 }
 
 void copyLabel(char *dest, size_t destSize, const char *filename) {
@@ -181,10 +234,8 @@ bool readPeriodicSchedule(const char *path, PeriodicTaskSchedule &schedule,
       file.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) ==
       sizeof(header);
   file.close();
-  if (!read || header.magic != PINK_EXECUTABLE_MAGIC ||
+  if (!read || !pinkExecutableHeaderSupported(header) ||
       header.abiVersion < 12 ||
-      header.abiVersion > PINK_EXECUTABLE_ABI_VERSION ||
-      header.headerSize < sizeof(PinkExecutableHeader) ||
       !decodePeriodicSchedule(header.periodicSchedule, schedule)) {
     return false;
   }
@@ -319,9 +370,8 @@ void drawMessage(Adafruit_GFX &gfx, const char *title, const char *detail) {
   gfx.print(detail);
 }
 
-uint8_t *allocateExecutableImage(size_t imageSize, size_t &allocatedSize,
-                                 bool &byteWritable) {
-  allocatedSize = align4(imageSize);
+uint8_t *allocateExecutableImage(size_t imageSize, bool &byteWritable) {
+  const size_t allocatedSize = align4(imageSize);
   byteWritable = true;
   uint8_t *buffer = static_cast<uint8_t *>(heap_caps_malloc(
       allocatedSize, MALLOC_CAP_EXEC | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -338,6 +388,14 @@ uint8_t *allocateExecutableImage(size_t imageSize, size_t &allocatedSize,
 
   return static_cast<uint8_t *>(
       heap_caps_malloc(allocatedSize, MALLOC_CAP_EXEC | MALLOC_CAP_INTERNAL));
+}
+
+uint8_t *allocateExecutableRodata(size_t size, bool inPsram) {
+  if (inPsram) {
+    return static_cast<uint8_t *>(psram::allocate(size));
+  }
+  return static_cast<uint8_t *>(
+      heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 }
 
 bool readExecutableImage(File &file, uint8_t *dest, size_t imageSize,
@@ -996,11 +1054,7 @@ private:
   char path[kPinkPathCapacity] = {};
   char appId[kPinkIdCapacity] = {};
   char status[32] = {};
-  uint8_t *code = nullptr;
-  uint8_t *rodata = nullptr;
-  size_t codeSize = 0;
-  size_t rodataSize = 0;
-  size_t codeAllocSize = 0;
+  PinkExecutableImage image;
   uint32_t loadedPeriodicSchedule = 0;
   PinkEntryPoint entry = nullptr;
   bool pendingDirty = false;
@@ -1026,17 +1080,7 @@ private:
     if (appApiSessionMatches(activeAppId)) {
       appApiEndSession();
     }
-    if (code != nullptr) {
-      heap_caps_free(code);
-      code = nullptr;
-    }
-    if (rodata != nullptr) {
-      heap_caps_free(rodata);
-      rodata = nullptr;
-    }
-    codeSize = 0;
-    rodataSize = 0;
-    codeAllocSize = 0;
+    pinkExecutableUnloadImage(image);
     loadedPeriodicSchedule = 0;
     entry = nullptr;
     status[0] = '\0';
@@ -1063,90 +1107,56 @@ private:
       copyText(status, sizeof(status), "BAD HEADER");
       return;
     }
-    const size_t totalImageSize =
-        static_cast<size_t>(header.codeSize) + header.rodataSize;
-    if (header.magic != PINK_EXECUTABLE_MAGIC ||
-        header.abiVersion < PINK_EXECUTABLE_MIN_ABI_VERSION ||
-        header.abiVersion > PINK_EXECUTABLE_ABI_VERSION ||
-        header.headerSize < sizeof(PinkExecutableHeader) || header.codeSize == 0 ||
-        header.codeSize > PINK_EXECUTABLE_MAX_IMAGE_BYTES ||
-        header.rodataSize > PINK_EXECUTABLE_MAX_IMAGE_BYTES ||
-        totalImageSize < header.codeSize ||
-        totalImageSize > PINK_EXECUTABLE_MAX_IMAGE_BYTES ||
-        header.entryOffset >= header.codeSize ||
-        header.relocationCount > kPinkMaxRelocations) {
+    if (header.headerSize >= sizeof(PinkExecutableHeader) + sizeof(uint32_t)) {
+      uint32_t extensionMagic = 0;
+      if (!readU32(file, extensionMagic)) {
+        copyText(status, sizeof(status), "BAD HEADER");
+        return;
+      }
+      if (extensionMagic == PINK_LIBRARY_MAGIC) {
+        copyText(status, sizeof(status), "IS LIBRARY");
+        return;
+      }
+    }
+    const PinkExecutableLoadPolicy policy = {
+        PINK_EXECUTABLE_MAX_IMAGE_BYTES,
+        PINK_EXECUTABLE_MAX_IMAGE_BYTES,
+        PINK_EXECUTABLE_MAX_IMAGE_BYTES,
+        kPinkMaxRelocations,
+        false,
+    };
+    const PinkExecutableLoadResult result =
+        pinkExecutableLoadImage(file, header, policy, image);
+    switch (result) {
+    case PinkExecutableLoadResult::Loaded:
+      break;
+    case PinkExecutableLoadResult::InvalidExecutable:
       copyText(status, sizeof(status), "BAD EXECUTABLE");
       return;
-    }
-
-    const size_t relocationBytes =
-        static_cast<size_t>(header.relocationCount) * sizeof(uint32_t);
-    if (relocationBytes / sizeof(uint32_t) != header.relocationCount) {
+    case PinkExecutableLoadResult::InvalidRelocations:
       copyText(status, sizeof(status), "BAD RELOCS");
       return;
-    }
-    const size_t codeOffset = static_cast<size_t>(header.headerSize) +
-                              relocationBytes;
-    if (codeOffset < header.headerSize || !file.seek(codeOffset)) {
+    case PinkExecutableLoadResult::SeekFailed:
       copyText(status, sizeof(status), "SEEK FAILED");
       return;
-    }
-
-    bool byteWritable = true;
-    code =
-        allocateExecutableImage(header.codeSize, codeAllocSize, byteWritable);
-    if (code == nullptr) {
+    case PinkExecutableLoadResult::NoExecutableMemory:
       copyText(status, sizeof(status), "NO EXEC MEM");
       return;
-    }
-    if (!readExecutableImage(file, code, header.codeSize, byteWritable)) {
-      copyText(status, sizeof(status), "READ FAILED");
-      heap_caps_free(code);
-      code = nullptr;
-      codeAllocSize = 0;
+    case PinkExecutableLoadResult::NoDataMemory:
+      copyText(status, sizeof(status), "NO DATA MEM");
       return;
-    }
-    if (header.rodataSize > 0) {
-      rodata = static_cast<uint8_t *>(
-          heap_caps_malloc(header.rodataSize,
-                           MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-      if (rodata == nullptr) {
-        copyText(status, sizeof(status), "NO DATA MEM");
-        heap_caps_free(code);
-        code = nullptr;
-        codeAllocSize = 0;
-        return;
-      }
-      if (file.read(rodata, header.rodataSize) != header.rodataSize) {
-        copyText(status, sizeof(status), "READ FAILED");
-        heap_caps_free(code);
-        heap_caps_free(rodata);
-        code = nullptr;
-        rodata = nullptr;
-        codeAllocSize = 0;
-        return;
-      }
-    }
-    if (!applyExecutableRelocations(file, header, code, rodata)) {
-      copyText(status, sizeof(status), "BAD RELOCS");
-      heap_caps_free(code);
-      if (rodata != nullptr) {
-        heap_caps_free(rodata);
-      }
-      code = nullptr;
-      rodata = nullptr;
-      codeAllocSize = 0;
+    case PinkExecutableLoadResult::ReadFailed:
+      copyText(status, sizeof(status), "READ FAILED");
       return;
     }
 
-    codeSize = header.codeSize;
-    rodataSize = header.rodataSize;
     loadedPeriodicSchedule = header.periodicSchedule;
-    entry = reinterpret_cast<PinkEntryPoint>(code + header.entryOffset);
+    entry = reinterpret_cast<PinkEntryPoint>(image.entryPoint);
     if (debugLoggingEnabled()) {
       Serial.printf("[pink] loaded %s code=%p codeSize=%lu rodata=%p rodataSize=%lu entry=%p relocs=%lu\n",
-                    path, code, static_cast<unsigned long>(codeSize), rodata,
-                    static_cast<unsigned long>(rodataSize),
+                    path, image.code,
+                    static_cast<unsigned long>(header.codeSize), image.rodata,
+                    static_cast<unsigned long>(header.rodataSize),
                     reinterpret_cast<void *>(entry),
                     static_cast<unsigned long>(header.relocationCount));
     }
@@ -1274,6 +1284,136 @@ bool populatePinkDefinition(const PinkExecutableEntry &entry, AppDefinition *out
 }
 
 } // namespace
+
+bool pinkExecutableHeaderSupported(const PinkExecutableHeader &header) {
+  return header.magic == PINK_EXECUTABLE_MAGIC &&
+         header.abiVersion >= PINK_EXECUTABLE_MIN_ABI_VERSION &&
+         header.abiVersion <= PINK_EXECUTABLE_ABI_VERSION &&
+         header.headerSize >= sizeof(PinkExecutableHeader);
+}
+
+PinkExecutableLoadResult pinkExecutableLoadImage(
+    File &file, const PinkExecutableHeader &header,
+    const PinkExecutableLoadPolicy &policy, PinkExecutableImage &image) {
+  pinkExecutableUnloadImage(image);
+
+  const size_t totalImageSize =
+      static_cast<size_t>(header.codeSize) + header.rodataSize;
+  if (!pinkExecutableHeaderSupported(header) || header.codeSize == 0 ||
+      header.codeSize > policy.maxCodeBytes ||
+      header.rodataSize > policy.maxRodataBytes ||
+      totalImageSize < header.codeSize ||
+      totalImageSize > policy.maxImageBytes ||
+      header.entryOffset >= header.codeSize ||
+      header.relocationCount > policy.maxRelocations) {
+    return PinkExecutableLoadResult::InvalidExecutable;
+  }
+
+  const size_t relocationBytes =
+      static_cast<size_t>(header.relocationCount) * sizeof(uint32_t);
+  if (relocationBytes / sizeof(uint32_t) != header.relocationCount) {
+    return PinkExecutableLoadResult::InvalidRelocations;
+  }
+  const size_t imageOffset =
+      static_cast<size_t>(header.headerSize) + relocationBytes;
+  if (imageOffset < header.headerSize || !file.seek(imageOffset)) {
+    return PinkExecutableLoadResult::SeekFailed;
+  }
+
+  bool byteWritable = true;
+  image.code = allocateExecutableImage(header.codeSize, byteWritable);
+  if (image.code == nullptr) {
+    return PinkExecutableLoadResult::NoExecutableMemory;
+  }
+  if (!readExecutableImage(file, image.code, header.codeSize, byteWritable)) {
+    pinkExecutableUnloadImage(image);
+    return PinkExecutableLoadResult::ReadFailed;
+  }
+
+  if (header.rodataSize > 0) {
+    image.rodata = allocateExecutableRodata(header.rodataSize,
+                                            policy.rodataInPsram);
+    if (image.rodata == nullptr) {
+      pinkExecutableUnloadImage(image);
+      return PinkExecutableLoadResult::NoDataMemory;
+    }
+    if (file.read(image.rodata, header.rodataSize) != header.rodataSize) {
+      pinkExecutableUnloadImage(image);
+      return PinkExecutableLoadResult::ReadFailed;
+    }
+  }
+
+  if (!applyExecutableRelocations(file, header, image.code, image.rodata)) {
+    pinkExecutableUnloadImage(image);
+    return PinkExecutableLoadResult::InvalidRelocations;
+  }
+  image.entryPoint = image.code + header.entryOffset;
+  return PinkExecutableLoadResult::Loaded;
+}
+
+void pinkExecutableUnloadImage(PinkExecutableImage &image) {
+  heap_caps_free(image.code);
+  heap_caps_free(image.rodata);
+  image = {};
+}
+
+bool pinkLibraryReadManifest(const char *path,
+                             PinkLibraryManifest &manifest) {
+  manifest = {};
+  File file = openProviderPath("sd", path);
+  if (!file) {
+    return false;
+  }
+  PinkExecutableHeader header = {};
+  const bool read = readPinkLibraryManifest(file, header, manifest);
+  file.close();
+  if (!read) {
+    manifest = {};
+  }
+  return read;
+}
+
+PinkLoadedLibrary::~PinkLoadedLibrary() { unload(); }
+
+bool PinkLoadedLibrary::load(const char *path, uint32_t expectedType,
+                             char *error, size_t errorSize) {
+  unload();
+  copyText(error, errorSize, "library open failed");
+  File file = openProviderPath("sd", path);
+  if (!file) {
+    return false;
+  }
+
+  PinkExecutableHeader header = {};
+  if (!readPinkLibraryManifest(file, header, manifest, expectedType)) {
+    copyText(error, errorSize, "invalid library manifest");
+    unload();
+    return false;
+  }
+
+  const PinkExecutableLoadPolicy policy = {
+      kPinkLibraryMaxCodeBytes,
+      kPinkLibraryMaxRodataBytes,
+      kPinkLibraryMaxImageBytes,
+      kPinkLibraryMaxRelocations,
+      true,
+  };
+  const PinkExecutableLoadResult result =
+      pinkExecutableLoadImage(file, header, policy, image);
+  if (result != PinkExecutableLoadResult::Loaded) {
+    copyText(error, errorSize, pinkLibraryLoadError(result));
+    unload();
+    return false;
+  }
+
+  copyText(error, errorSize, "");
+  return true;
+}
+
+void PinkLoadedLibrary::unload() {
+  pinkExecutableUnloadImage(image);
+  manifest = {};
+}
 
 ActiveApp *pinkExecutableRuntime() { return &pinkApp; }
 

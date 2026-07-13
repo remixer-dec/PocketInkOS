@@ -376,4 +376,6 @@ const FileViewerExtension MIDI_FILE_VIEWER = {
     touchMidiViewer,
     updateMidiViewer,
     midiVisibleBytes,
+    nullptr,
+    midiViewerClose,
 };

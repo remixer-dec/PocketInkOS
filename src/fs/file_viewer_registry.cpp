@@ -1,4 +1,5 @@
 #include "fs/file_viewer_registry.h"
+#include "fs/providers/pink_audio_file_viewer.h"
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
 #include "fs/providers/audio_file_viewer.h"
 #endif
@@ -71,6 +72,7 @@ bool extensionMatches(const FileViewerExtension &viewer, const char *extension,
 }
 
 const FileViewerExtension *const VIEWERS[] = {
+    &PINK_AUDIO_FILE_VIEWER,
 #if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
     &AUDIO_FILE_VIEWER,
 #endif
@@ -85,13 +87,23 @@ const FileViewerExtension *const VIEWERS[] = {
 
 const size_t VIEWER_COUNT = sizeof(VIEWERS) / sizeof(VIEWERS[0]);
 
+bool viewerMatches(const FileViewerExtension &viewer, const char *path,
+                   const char *extension, bool wildcard) {
+  if (!wildcard && viewer.matches != nullptr &&
+      viewer.matches(path, extension)) {
+    return true;
+  }
+  return extensionMatches(viewer, extension, wildcard);
+}
+
 } // namespace
 
 const FileViewerExtension *findFileViewerForPath(const char *path) {
   const char *extension = extensionForPath(path);
 
   for (size_t i = 0; i < VIEWER_COUNT; i++) {
-    if (VIEWERS[i] != nullptr && extensionMatches(*VIEWERS[i], extension, false)) {
+    if (VIEWERS[i] != nullptr &&
+        viewerMatches(*VIEWERS[i], path, extension, false)) {
       return VIEWERS[i];
     }
   }
@@ -117,21 +129,52 @@ FileViewerOpenResult openFileWithViewer(const char *providerId,
     return FileViewerOpenResult::Failed;
   }
 
-  const FileViewerExtension *matched = findFileViewerForPath(path);
+  const char *extension = extensionForPath(path);
+  const FileViewerExtension *firstMatched = nullptr;
+  FileViewerOpenResult best = FileViewerOpenResult::Unsupported;
+  for (uint8_t pass = 0; pass < 2; pass++) {
+    const bool wildcard = pass != 0;
+    for (size_t i = 0; i < VIEWER_COUNT; i++) {
+      const FileViewerExtension *candidate = VIEWERS[i];
+      if (candidate == nullptr ||
+          !viewerMatches(*candidate, path, extension, wildcard)) {
+        continue;
+      }
+      if (firstMatched == nullptr) {
+        firstMatched = candidate;
+      }
+      if (candidate->open == nullptr) {
+        if (best == FileViewerOpenResult::Unsupported) {
+          best = FileViewerOpenResult::NotImplemented;
+        }
+        continue;
+      }
+      FileViewerRequest request;
+      request.providerId = providerId;
+      request.path = path;
+      request.extension = extension;
+      request.activity = activity;
+      const FileViewerOpenResult result = candidate->open(request);
+      if (result == FileViewerOpenResult::Opened) {
+        if (viewer != nullptr) {
+          *viewer = candidate;
+        }
+        return result;
+      }
+      if (result == FileViewerOpenResult::Failed ||
+          (result == FileViewerOpenResult::NotImplemented &&
+           best == FileViewerOpenResult::Unsupported)) {
+        best = result;
+      }
+    }
+    // Wildcard viewers are a last resort only when no specific viewer claimed
+    // the extension. A failed codec should report failure, not open as hex.
+    if (!wildcard && firstMatched != nullptr) {
+      break;
+    }
+  }
   if (viewer != nullptr) {
-    *viewer = matched;
+    *viewer = firstMatched;
   }
-  if (matched == nullptr) {
-    return FileViewerOpenResult::Unsupported;
-  }
-  if (matched->open == nullptr) {
-    return FileViewerOpenResult::NotImplemented;
-  }
-
-  FileViewerRequest request;
-  request.providerId = providerId;
-  request.path = path;
-  request.extension = extensionForPath(path);
-  request.activity = activity;
-  return matched->open(request);
+  return best;
 }

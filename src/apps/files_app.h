@@ -126,7 +126,8 @@ private:
   bool activateStorage();
   bool requestPinkLaunch(const char *path);
   bool requestJsLaunch(const char *path);
-  bool openViewer(const char *path, const char *title, const char *viewerId);
+  bool openViewer(const char *path, const char *title,
+                  const FileViewerExtension *viewer);
   bool providerMounted() const;
   void closeViewer();
   FileViewerActivity viewerActivity() const;

@@ -575,13 +575,13 @@ void fitMiddleEllipsis(Adafruit_GFX &gfx, const char *source, int16_t maxWidth,
 } // namespace
 
 void FilesApp::reset() {
+  closeViewer();
   releaseDirectoryCache();
   copyText(currentPath, sizeof(currentPath), "/");
   scrollOffset = 0;
   selectedIndex = NO_SELECTION;
   statusUntil = 0;
   mode = Mode::Select;
-  activeViewer = nullptr;
   storageSelected = false;
   setStatus("");
   loaded = false;
@@ -1339,7 +1339,7 @@ bool FilesApp::activateIndex(uint16_t index) {
   if (result == FileViewerOpenResult::Opened) {
     char title[FILES_LABEL_CAPACITY];
     copyDisplayText(title, sizeof(title), name);
-    return openViewer(path, title, viewer != nullptr ? viewer->id : "");
+    return openViewer(path, title, viewer);
   }
 
   char status[sizeof(statusText)];
@@ -1409,7 +1409,7 @@ bool FilesApp::consumeJsLaunch(char *path, size_t pathSize) {
 }
 
 bool FilesApp::openViewer(const char *path, const char *title,
-                          const char *viewerId) {
+                          const FileViewerExtension *viewer) {
   const FileProvider *provider = fileProviderById(providerId);
   File file = openProviderPath(provider, path);
   if (!file || file.isDirectory()) {
@@ -1430,12 +1430,7 @@ bool FilesApp::openViewer(const char *path, const char *title,
   nextPdfProgressRedrawMs = 0;
 
   activeViewer = nullptr;
-  const FileViewerExtension *viewer = findFileViewerForPath(path);
   if (viewer == nullptr || viewer->draw == nullptr) {
-    setTransientStatus("NOT SUPPORTED");
-    return true;
-  }
-  if (!equalsIgnoreCase(viewerId, viewer->id)) {
     setTransientStatus("NOT SUPPORTED");
     return true;
   }
@@ -1459,9 +1454,8 @@ bool FilesApp::providerMounted() const {
 }
 
 void FilesApp::closeViewer() {
-  if (activeViewer != nullptr && activeViewer->id != nullptr &&
-      equalsIgnoreCase(activeViewer->id, "midi")) {
-    midiViewerClose();
+  if (activeViewer != nullptr && activeViewer->close != nullptr) {
+    activeViewer->close();
   }
   activeViewer = nullptr;
   viewerPath[0] = '\0';

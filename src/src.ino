@@ -16,6 +16,7 @@
 #include "sys/services/power_control.h"
 #include "sys/drivers/pcf85063_clock.h"
 #include "sys/pink_executable.h"
+#include "sys/pink_codec.h"
 #include "sys/periodic_tasks.h"
 #include "sys/sleep_clock_context.h"
 #include "sys/wake_trace.h"
@@ -388,6 +389,7 @@ void setup() {
 
   logSetupStage("environment");
   environmentMonitor.refresh();
+  pinkCodecRefresh();
   pinkExecutableRefreshApps();
   refreshAppCatalog();
   heapMark("after-app-catalog");
@@ -450,6 +452,7 @@ void loop() {
   if (sdStorageUpdate()) {
     configReload();
     shellLayoutConfigReload();
+    pinkCodecRefresh();
     pinkExecutableRefreshApps();
     refreshAppCatalog();
     shell.handleCatalogChanged();

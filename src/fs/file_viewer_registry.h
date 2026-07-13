@@ -87,6 +87,9 @@ typedef bool (*FileViewerTouchHandler)(FileViewerRuntime &runtime,
 typedef bool (*FileViewerUpdateHandler)(FileViewerRuntime &runtime);
 typedef uint32_t (*FileViewerVisibleBytesHandler)(
     const FileViewerRuntime &runtime);
+typedef bool (*FileViewerMatchHandler)(const char *path,
+                                       const char *extension);
+typedef void (*FileViewerCloseHandler)();
 
 struct FileViewerExtension {
   const char *id = nullptr;
@@ -99,6 +102,10 @@ struct FileViewerExtension {
   FileViewerTouchHandler touch = nullptr;
   FileViewerUpdateHandler update = nullptr;
   FileViewerVisibleBytesHandler visibleBytes = nullptr;
+  /// Optional dynamic matcher used by installed external viewer libraries.
+  FileViewerMatchHandler matches = nullptr;
+  /// Releases viewer-owned files, tasks, decoders, and loaded libraries.
+  FileViewerCloseHandler close = nullptr;
 };
 
 const FileViewerExtension *findFileViewerForPath(const char *path);

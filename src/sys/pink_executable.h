@@ -2,6 +2,7 @@
 #define PINK_EXECUTABLE_H
 
 #include "sys/app_runtime.h"
+#include <FS.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -43,6 +44,43 @@ struct PinkExecutableHeader {
 };
 static_assert(sizeof(PinkExecutableHeader) == PINK_EXECUTABLE_HEADER_SIZE,
               "Pink executable header layout changed");
+
+/// Reports whether the base header uses a supported .pink format and ABI.
+bool pinkExecutableHeaderSupported(const PinkExecutableHeader &header);
+
+/// Allocation and validation policy for one image using the .pink executable
+/// layout. Apps and libraries share the layout but have different memory caps.
+struct PinkExecutableLoadPolicy {
+  size_t maxCodeBytes = 0;
+  size_t maxRodataBytes = 0;
+  size_t maxImageBytes = 0;
+  uint32_t maxRelocations = 0;
+  bool rodataInPsram = false;
+};
+
+/// Memory owned by one successfully loaded .pink image.
+struct PinkExecutableImage {
+  uint8_t *code = nullptr;
+  uint8_t *rodata = nullptr;
+  void *entryPoint = nullptr;
+};
+
+enum class PinkExecutableLoadResult : uint8_t {
+  Loaded,
+  InvalidExecutable,
+  InvalidRelocations,
+  SeekFailed,
+  NoExecutableMemory,
+  NoDataMemory,
+  ReadFailed,
+};
+
+/// Loads code and rodata and applies relocations using the shared .pink layout.
+PinkExecutableLoadResult pinkExecutableLoadImage(
+    File &file, const PinkExecutableHeader &header,
+    const PinkExecutableLoadPolicy &policy, PinkExecutableImage &image);
+/// Releases all memory owned by image.
+void pinkExecutableUnloadImage(PinkExecutableImage &image);
 
 enum PinkEventType : uint8_t {
   PINK_EVENT_START = 1,
