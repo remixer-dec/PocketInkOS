@@ -10,8 +10,11 @@ class SystemStageService;
 
 /// App-level actions needed when a periodic wake reaches a terminal state.
 struct PeriodicWakeHooks {
+  /// Reports whether the current battery level requires an immediate shutdown.
   bool (*batteryCutoffReached)() = nullptr;
+  /// Displays the low-battery state and powers the device down.
   void (*shutdownForLowBattery)() = nullptr;
+  /// Saves app-owned state before shutdown or deep sleep.
   void (*prepareForPowerTransition)() = nullptr;
 };
 
@@ -19,6 +22,7 @@ struct PeriodicWakeHooks {
 /// Scheduling and retained-state rules remain in periodic_tasks.
 class PeriodicWakeService {
 public:
+  /// Binds the shared display, staged initializer, and app lifecycle hooks.
   PeriodicWakeService(AppDisplay &display, SystemStageService &systemStage,
                       const PeriodicWakeHooks &hooks);
 
@@ -29,6 +33,7 @@ public:
   /// Handles a sleep-clock timer wake. False continues into a normal boot.
   bool handleTimerWake();
 
+  /// Reports whether this wake initialized the display hardware.
   bool displayInitialized() const;
 
 private:

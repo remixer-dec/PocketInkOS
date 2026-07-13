@@ -102,8 +102,10 @@
             <h2>Configuration and State</h2>
             <p>Firmware defaults are compiled in first, then <code>configReload()</code> overlays <code>/cfg/system.cfg</code> from the SD card when the file exists.</p>
               <p>Per-app settings are stored under <code>/cfg/app-&lt;id&gt;.cfg</code>. Active apps can also serialize session state before deep sleep and restore it after wake.</p>
+              <p>Periodic-task policy is configured with <code>periodic.minIntervalMinutes</code>, <code>periodic.cpuMhz</code>, <code>periodic.wifiCpuMhz</code>, <code>periodic.disableOnLowBattery</code>, and <code>periodic.lowBatteryPercent</code>. Network time-sync cadence uses <code>time.syncIntervalHours</code>; zero disables the OS task and the default is 24 hours.</p>
             <div class="spec-list"><article><strong>System config</strong><p>The currently supported system keys cover Wi-Fi, CPU governor and frequency, time format and sync settings, <code>sensor.tempOffsetC</code>, and <code>home.sunBtnApp</code>.</p></article>
-                <article><strong>Sleep and restore</strong><p>The sleep clock keeps a small wake snapshot in RTC memory, and app runtimes can use save/restore hooks to preserve active session bytes across deep sleep.</p></article></div>
+                <article><strong>Sleep and restore</strong><p>The sleep clock keeps a small wake snapshot in RTC memory, and app runtimes can use save/restore hooks to preserve active session bytes across deep sleep. If the hardware RTC cannot be read, retained state supplies an estimated time and the lockscreen marks it with a line above the clock.</p></article>
+                <article><strong>Periodic wake policy</strong><p>App hooks request a cadence from one minute through one day. The OS clamps it globally, suppresses hooks under the configured low-battery policy, and keeps the sleep-clock update independent.</p></article></div>
           </section>
 
           <section id="internal-apps" class="doc-section">
@@ -114,7 +116,10 @@
             <div class="spec-list"><article><strong>Button routing</strong><p>Menu and power button single, double, and long presses are dispatched through <code>AppBehavior</code> and return <code>AppEventResult</code> values such as <code>Dirty</code>, <code>GoHome</code>, <code>GoMenu</code>, or <code>QuitRequested</code>.</p></article>
                 <article><strong>Touch routing</strong><p>Apps normally receive press coordinates through <code>ActiveApp::handleTouch()</code>. Apps that need down, move, and up events can attach <code>onRawTouch</code>; the shell then drains <code>TouchInput::readEvent()</code> directly for that app.</p></article>
                 <article><strong>Sleep persistence</strong><p>Before deep sleep, the shell stores the active app id, menu state, Wi-Fi state, local clock snapshot, and up to 4096 bytes from <code>onSaveContext()</code>. After wake, it relaunches the app and passes those bytes to <code>onRestoreContext()</code>.</p></article>
-                <article><strong>Per-app sleep timeout</strong><p>Each app can override the default inactivity deep-sleep timeout through <code>AppDefinition::inactivityDeepSleepMs</code>.</p></article></div>
+                <article><strong>Per-app sleep timeout</strong><p>Each app can override the default inactivity deep-sleep timeout through <code>AppDefinition::inactivityDeepSleepMs</code>.</p></article>
+                <article><strong>Periodic hooks</strong><p>Register one hook with <code>BehaviorBuilder::withPeriodic()</code>. <code>PeriodicTaskContext</code> reports Basic, System, or Network capability; the hook may complete, escalate once, wake the device, or wake its app. Display initialization is selected separately as none, partial, or full.</p></article>
+                <article><strong>System periodic tasks</strong><p>OS services use <code>periodicSystemTaskRegister()</code> and the same scheduler. Time synchronization is registered at the Network tier using the configurable 0, 1, 3, 6, 12, or 24 hour interval; 0 means never and 24 hours is the default.</p></article>
+                <article><strong>Periodic profiling</strong><p>A bounded RTC table keeps 6-byte aggregates: task hash, cumulative 10 ms duration units, and run count. Callback profiling does not initialize USB or resample battery hardware.</p></article></div>
           </section>
 
           <section id="hardware" class="doc-section">
@@ -136,9 +141,10 @@
             <h2>External Apps</h2>
             <p>External <code>.pink</code> apps are scanned from <code>/bin/games</code>, <code>/bin/apps</code>, and <code>/bin/network</code> when the network category is compiled in.</p>
             <div class="command-list"><article><strong>Build the Tetris demo</strong><div class="command-row"><code class="command-value">tools/build-pink-app.sh examples/pink/tetris/tetris.cpp build/pink/tetris.pink</code></div><p>Builds the sample external app.</p></article></div>
-            <div class="spec-list"><article><strong>ABI compatibility</strong><p>The runtime accepts <code>.pink</code> ABI versions 7 through 11. <code>tools/build-pink-app.sh</code> emits ABI version 11; rebuild external apps to use SVG vector drawing through <code>drawVectorPath</code> and <code>drawVectorString</code>.</p></article>
+            <div class="spec-list"><article><strong>ABI compatibility</strong><p>The runtime accepts <code>.pink</code> ABI versions 7 through 12. <code>tools/build-pink-app.sh</code> emits ABI version 12; rebuild external apps to use <code>PINK_PERIODIC_TASK(...)</code> and <code>PINK_EVENT_PERIODIC</code>.</p></article>
                 <article><strong>Writable state</strong><p>Writable data and BSS are not relocated in the current <code>.pink</code> format. Keep mutable app state in the runtime memory block instead of global or static writable objects.</p></article>
-                <article><strong>API surface</strong><p>External apps include <code>examples/pink/include/pink_app_api.h</code> and use the helpers in <code>examples/pink/include/pink_runtime.cpp</code>.</p></article></div>
+                <article><strong>API surface</strong><p>External apps include <code>examples/pink/include/pink_app_api.h</code> and use the helpers in <code>examples/pink/include/pink_runtime.cpp</code>.</p></article>
+                <article><strong>Pink periodic hooks</strong><p>A <code>.pink</code> app may declare one System- or Network-tier hook from one minute through one day with <code>PINK_PERIODIC_TASK(...)</code>. The schedule is packed into the executable, so SD removal, deletion, and rebuilds cannot leave stale registrations; periodic events may request a normal device or foreground-app wake.</p></article></div>
           </section>
 
           <section id="pocketinkjs-apps" class="doc-section">

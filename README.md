@@ -3,7 +3,7 @@
 PocketInkOS is an e-ink-first operating system currently avaiable for the
 [Waveshare ESP32-S3-ePaper-1.54 with touch](https://www.waveshare.com/esp32-s3-epaper-1.54.htm).
 The firmware includes its own shell, apps, file viewers, extension runtimes,
-power management, and hardware drivers.
+power management, and hardware drivers. The project is in pre-release stage and some APIs may change.
 
 ## Firmware features
 

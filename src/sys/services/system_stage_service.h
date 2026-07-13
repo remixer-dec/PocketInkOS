@@ -5,6 +5,7 @@
 /// Audio GPIOs become available in a powered-off state; playback activates them.
 class SystemStageService {
 public:
+  /// Initializes the shared services once; later calls have no effect.
   void initialize();
 
 private:
