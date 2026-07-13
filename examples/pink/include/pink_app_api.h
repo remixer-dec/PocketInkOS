@@ -7,7 +7,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL;
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 12;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 13;
 /// Oldest .pink ABI version the current firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
@@ -220,6 +220,15 @@ struct PinkHost {
   int8_t (*drawVectorString)(const char *svg, size_t size, int16_t x,
                              int16_t y, int16_t w, int16_t h,
                              const PinkImageTransform *transform);
+  /// ABI 13: cacheEntries is an LRU capacity; zero streams without caching.
+  int8_t (*drawImagePathCached)(
+      const char *path, int16_t x, int16_t y, int16_t w, int16_t h,
+      uint8_t dither, bool scaleToFit, uint8_t cacheEntries,
+      const PinkImageTransform *transform);
+  int8_t (*drawImageBufferCached)(
+      const uint8_t *data, size_t size, const char *format, int16_t x,
+      int16_t y, int16_t w, int16_t h, uint8_t dither, bool scaleToFit,
+      uint8_t cacheEntries, const PinkImageTransform *transform);
 };
 
 #endif

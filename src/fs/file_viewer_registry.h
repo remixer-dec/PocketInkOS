@@ -38,6 +38,7 @@ struct FileViewerRuntime {
   bool fullscreen = false;
   uint8_t imageDither = 1;
   bool imageScaleToFit = true;
+  uint8_t imageCacheEntries = 0;
   FileViewerActivity *activity = nullptr;
 };
 

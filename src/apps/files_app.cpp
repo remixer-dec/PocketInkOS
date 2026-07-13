@@ -1487,6 +1487,7 @@ FilesApp::makeViewerRuntime(bool fullscreen, FileViewerActivity *activity) const
   runtime.fullscreen = fullscreen;
   runtime.imageDither = viewerDither;
   runtime.imageScaleToFit = viewerScaleToFit;
+  runtime.imageCacheEntries = 1;
   runtime.activity = activity;
   return runtime;
 }

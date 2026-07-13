@@ -44,6 +44,8 @@ static const uint32_t kMaxPngRowBytes = 8192;
 static const size_t kMaxWebpBytes = 4UL * 1024UL * 1024UL;
 static const uint32_t kMaxWebpVp8lPixels = 2UL * 1024UL * 1024UL;
 
+ImageRenderCachePool imageViewerCache;
+
 enum class RasterKind : uint8_t {
   Png,
   Jpeg,
@@ -65,6 +67,7 @@ struct RasterMemoryReader {
 struct RasterDrawTarget {
   Adafruit_GFX *gfx;
   const ImageTransform *transform = nullptr;
+  ImageRenderCache *cache = nullptr;
 };
 
 int readRasterByte(void *user) {
@@ -85,6 +88,10 @@ int readMemoryRasterByte(void *user) {
 void drawRasterPixel(void *user, int16_t x, int16_t y) {
   RasterDrawTarget *target = static_cast<RasterDrawTarget *>(user);
   if (target != nullptr && target->gfx != nullptr) {
+    if (target->cache != nullptr) {
+      target->cache->setBlackPixel(x, y);
+      return;
+    }
     if (target->transform == nullptr) {
       target->gfx->drawPixel(x, y, 1);
       return;
@@ -157,6 +164,100 @@ RasterKind rasterKindForExtension(const char *extension) {
   }
   return equalsIgnoreCase(extension, "png") ? RasterKind::Png
                                              : RasterKind::Unknown;
+}
+
+uint64_t mixCacheKey(uint64_t key, uint64_t value) {
+  key ^= value + 0x9e3779b97f4a7c15ULL + (key << 6U) + (key >> 2U);
+  return key;
+}
+
+uint64_t textCacheKey(uint64_t key, const char *text) {
+  if (text == nullptr) {
+    return mixCacheKey(key, 0);
+  }
+  while (*text != '\0') {
+    key = mixCacheKey(key, static_cast<uint8_t>(*text++));
+  }
+  return mixCacheKey(key, 0xffU);
+}
+
+uint64_t pathSourceKey(const char *providerId, const char *path,
+                       size_t fileSize) {
+  uint64_t key = textCacheKey(0x70617468ULL, providerId);
+  key = textCacheKey(key, path);
+  return mixCacheKey(key, fileSize);
+}
+
+uint64_t bufferSourceKey(const uint8_t *data, size_t size) {
+  uint64_t key = mixCacheKey(0x62756666ULL,
+                             reinterpret_cast<uintptr_t>(data));
+  key = mixCacheKey(key, size);
+  // Encoded buffers are expected to remain immutable while their cache is in
+  // use. A few spread samples cheaply guard against accidental pointer reuse.
+  const size_t samples = size < 16U ? size : 16U;
+  for (size_t i = 0; i < samples; i++) {
+    const size_t offset = samples == 1U ? 0U : (i * (size - 1U)) / (samples - 1U);
+    key = mixCacheKey(key, data[offset]);
+  }
+  return key;
+}
+
+uint64_t renderCacheKey(uint64_t source, RasterKind kind, int16_t width,
+                        int16_t height, uint8_t dither, bool scaleToFit) {
+  uint64_t key = mixCacheKey(source, static_cast<uint8_t>(kind));
+  key = mixCacheKey(key, static_cast<uint16_t>(width));
+  key = mixCacheKey(key, static_cast<uint16_t>(height));
+  key = mixCacheKey(key, dither);
+  return mixCacheKey(key, scaleToFit ? 1U : 0U);
+}
+
+enum class RasterCacheState : uint8_t {
+  Direct,
+  Building,
+  Hit,
+};
+
+RasterCacheState prepareRasterCache(Adafruit_GFX &gfx,
+                                    RasterDrawTarget &target,
+                                    ImageRenderCachePool *cache, uint64_t key,
+                                    int16_t imageX, int16_t imageY,
+                                    int16_t imageW, int16_t imageH,
+                                    const ImageTransform &transform) {
+  if (cache == nullptr) {
+    return RasterCacheState::Direct;
+  }
+  const uint16_t width = static_cast<uint16_t>(imageW);
+  const uint16_t height = static_cast<uint16_t>(imageH);
+  ImageRenderCache *entry = cache->find(width, height, key);
+  if (entry != nullptr) {
+    if (entry->draw(gfx, imageX, imageY, transform)) {
+      return RasterCacheState::Hit;
+    }
+    entry->clear();
+  }
+  entry = cache->acquire();
+  if (entry == nullptr || !entry->begin(width, height, key)) {
+    return RasterCacheState::Direct;
+  }
+  target.cache = entry;
+  return RasterCacheState::Building;
+}
+
+bool finishRasterCache(RasterCacheState state, bool decoded,
+                       ImageRenderCache *cache, Adafruit_GFX &gfx,
+                       int16_t imageX, int16_t imageY,
+                       const ImageTransform &transform) {
+  if (state != RasterCacheState::Building) {
+    return decoded;
+  }
+  if (!decoded || cache == nullptr || !cache->finish() ||
+      !cache->draw(gfx, imageX, imageY, transform)) {
+    if (cache != nullptr) {
+      cache->clear();
+    }
+    return false;
+  }
+  return true;
 }
 
 bool validTransform(const ImageTransform &transform) {
@@ -271,7 +372,7 @@ FileViewerOpenResult openImageViewer(const FileViewerRequest &request) {
   return openRasterPng(file);
 }
 
-void drawRasterPng(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
+bool drawRasterPng(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
                    RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                    int16_t imageW, int16_t imageH,
                    const FileViewerRuntime &runtime) {
@@ -282,24 +383,24 @@ void drawRasterPng(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
     drawCenteredStatus(gfx, infoResult == IPNG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                                : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   const uint32_t rowBytes = pngRowBytes(info);
   if (rowBytes == 0 || rowBytes > kMaxPngRowBytes) {
     drawCenteredStatus(gfx, "TOO LARGE", imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   if (!file.seek(0)) {
     drawCenteredStatus(gfx, "OPEN FAILED", imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
 
   ipng_reader reader = {&source, readRasterByte};
   ipng_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = runtime.imageDither;
@@ -307,7 +408,7 @@ void drawRasterPng(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
 
   const ipng_result result = ipng_decode(&reader, &render, &info);
   if (result == IPNG_OK) {
-    return;
+    return true;
   }
 
   if (result == IPNG_ERR_MEMORY) {
@@ -317,6 +418,7 @@ void drawRasterPng(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
   } else {
     drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
   }
+  return false;
 }
 
 FileViewerOpenResult openRasterWbmp(File &file) {
@@ -330,7 +432,7 @@ FileViewerOpenResult openRasterWbmp(File &file) {
                                    : FileViewerOpenResult::Failed);
 }
 
-void drawRasterJpeg(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
+bool drawRasterJpeg(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
                     RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                     int16_t imageW, int16_t imageH,
                     const FileViewerRuntime &runtime) {
@@ -341,19 +443,19 @@ void drawRasterJpeg(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
     drawCenteredStatus(gfx, infoResult == IJPG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                                : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   if (!file.seek(0)) {
     drawCenteredStatus(gfx, "OPEN FAILED", imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
 
   ijpg_reader reader = {&source, readRasterByte};
   ijpg_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = runtime.imageDither;
@@ -361,7 +463,7 @@ void drawRasterJpeg(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
 
   const ijpg_result result = ijpg_decode(&reader, &render, &info);
   if (result == IJPG_OK) {
-    return;
+    return true;
   }
 
   if (result == IJPG_ERR_MEMORY) {
@@ -371,9 +473,10 @@ void drawRasterJpeg(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
   } else {
     drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
   }
+  return false;
 }
 
-void drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
+bool drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
                     int16_t imageX, int16_t imageY, int16_t imageW,
                     int16_t imageH, const FileViewerRuntime &runtime) {
   size_t size = 0;
@@ -382,7 +485,7 @@ void drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
     drawCenteredStatus(gfx, file.size() > kMaxWebpBytes ? "TOO LARGE"
                                                         : "OPEN FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
 
   iwebp_info info;
@@ -394,14 +497,14 @@ void drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
                                 ? "UNSUPPORTED"
                                 : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
 
   iwebp_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = runtime.imageDither;
@@ -413,7 +516,7 @@ void drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
   const iwebp_result result = iwebp_decode(data, size, &render, &info);
   imageViewerFree(data);
   if (result == IWEBP_OK) {
-    return;
+    return true;
   }
 
   if (result == IWEBP_ERR_MEMORY) {
@@ -424,9 +527,10 @@ void drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
   } else {
     drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
   }
+  return false;
 }
 
-void drawRasterWbmp(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
+bool drawRasterWbmp(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
                     RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                     int16_t imageW, int16_t imageH,
                     const FileViewerRuntime &runtime) {
@@ -438,26 +542,26 @@ void drawRasterWbmp(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
                        infoResult == IWBMP_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                            : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   if (!file.seek(0)) {
     drawCenteredStatus(gfx, "OPEN FAILED", imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
 
   iwbmp_reader reader = {&source, readRasterByte};
   iwbmp_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.scale = runtime.imageScaleToFit ? IWBMP_SCALE_FIT : IWBMP_SCALE_NONE;
 
   const iwbmp_result result = iwbmp_decode(&reader, &render, &info);
   if (result == IWBMP_OK) {
-    return;
+    return true;
   }
 
   if (result == IWBMP_ERR_MEMORY) {
@@ -467,9 +571,10 @@ void drawRasterWbmp(Adafruit_GFX &gfx, File &file, RasterFileReader &source,
   } else {
     drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
   }
+  return false;
 }
 
-void drawMemoryPng(Adafruit_GFX &gfx, RasterMemoryReader &source,
+bool drawMemoryPng(Adafruit_GFX &gfx, RasterMemoryReader &source,
                    RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                    int16_t imageW, int16_t imageH, uint8_t dither,
                    bool scaleToFit) {
@@ -480,27 +585,27 @@ void drawMemoryPng(Adafruit_GFX &gfx, RasterMemoryReader &source,
     drawCenteredStatus(gfx, infoResult == IPNG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                                : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   const uint32_t rowBytes = pngRowBytes(info);
   if (rowBytes == 0 || rowBytes > kMaxPngRowBytes) {
     drawCenteredStatus(gfx, "TOO LARGE", imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   source.offset = 0;
   ipng_reader reader = {&source, readMemoryRasterByte};
   ipng_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = dither;
   render.scale = scaleToFit ? IPNG_SCALE_FIT : IPNG_SCALE_NONE;
   const ipng_result result = ipng_decode(&reader, &render, &info);
   if (result == IPNG_OK) {
-    return;
+    return true;
   }
   drawCenteredStatus(gfx,
                      result == IPNG_ERR_MEMORY
@@ -508,9 +613,10 @@ void drawMemoryPng(Adafruit_GFX &gfx, RasterMemoryReader &source,
                          : (result == IPNG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                            : "DECODE FAILED"),
                      imageX, imageY, imageW, imageH);
+  return false;
 }
 
-void drawMemoryJpeg(Adafruit_GFX &gfx, RasterMemoryReader &source,
+bool drawMemoryJpeg(Adafruit_GFX &gfx, RasterMemoryReader &source,
                     RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                     int16_t imageW, int16_t imageH, uint8_t dither,
                     bool scaleToFit) {
@@ -521,22 +627,22 @@ void drawMemoryJpeg(Adafruit_GFX &gfx, RasterMemoryReader &source,
     drawCenteredStatus(gfx, infoResult == IJPG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                                : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   source.offset = 0;
   ijpg_reader reader = {&source, readMemoryRasterByte};
   ijpg_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = dither;
   render.scale = scaleToFit ? IJPG_SCALE_FIT : IJPG_SCALE_NONE;
   const ijpg_result result = ijpg_decode(&reader, &render, &info);
   if (result == IJPG_OK) {
-    return;
+    return true;
   }
   drawCenteredStatus(gfx,
                      result == IJPG_ERR_MEMORY
@@ -544,9 +650,10 @@ void drawMemoryJpeg(Adafruit_GFX &gfx, RasterMemoryReader &source,
                          : (result == IJPG_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                            : "DECODE FAILED"),
                      imageX, imageY, imageW, imageH);
+  return false;
 }
 
-void drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
+bool drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                     RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                     int16_t imageW, int16_t imageH, uint8_t dither,
                     bool scaleToFit) {
@@ -558,13 +665,13 @@ void drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                                 ? "UNSUPPORTED"
                                 : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   iwebp_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.dither = dither;
@@ -574,7 +681,7 @@ void drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
   render.max_vp8l_pixels = kMaxWebpVp8lPixels;
   const iwebp_result result = iwebp_decode(data, size, &render, &info);
   if (result == IWEBP_OK) {
-    return;
+    return true;
   }
   drawCenteredStatus(gfx,
                      result == IWEBP_ERR_MEMORY
@@ -584,9 +691,10 @@ void drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                                 ? "UNSUPPORTED"
                                 : "DECODE FAILED"),
                      imageX, imageY, imageW, imageH);
+  return false;
 }
 
-void drawMemoryWbmp(Adafruit_GFX &gfx, RasterMemoryReader &source,
+bool drawMemoryWbmp(Adafruit_GFX &gfx, RasterMemoryReader &source,
                     RasterDrawTarget &target, int16_t imageX, int16_t imageY,
                     int16_t imageW, int16_t imageH, bool scaleToFit) {
   iwbmp_reader infoReader = {&source, readMemoryRasterByte};
@@ -597,21 +705,21 @@ void drawMemoryWbmp(Adafruit_GFX &gfx, RasterMemoryReader &source,
                        infoResult == IWBMP_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                            : "DECODE FAILED",
                        imageX, imageY, imageW, imageH);
-    return;
+    return false;
   }
   source.offset = 0;
   iwbmp_reader reader = {&source, readMemoryRasterByte};
   iwbmp_render render = {};
   render.user = &target;
   render.pixel = drawRasterPixel;
-  render.x = imageX;
-  render.y = imageY;
+  render.x = target.cache != nullptr ? 0 : imageX;
+  render.y = target.cache != nullptr ? 0 : imageY;
   render.width = imageW;
   render.height = imageH;
   render.scale = scaleToFit ? IWBMP_SCALE_FIT : IWBMP_SCALE_NONE;
   const iwbmp_result result = iwbmp_decode(&reader, &render, &info);
   if (result == IWBMP_OK) {
-    return;
+    return true;
   }
   drawCenteredStatus(gfx,
                      result == IWBMP_ERR_MEMORY
@@ -619,6 +727,7 @@ void drawMemoryWbmp(Adafruit_GFX &gfx, RasterMemoryReader &source,
                          : (result == IWBMP_ERR_UNSUPPORTED ? "UNSUPPORTED"
                                                             : "DECODE FAILED"),
                      imageX, imageY, imageW, imageH);
+  return false;
 }
 
 void drawImageViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
@@ -637,20 +746,40 @@ void drawImageViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
   RasterFileReader source = {&file};
   RasterDrawTarget target = {&gfx};
   const RasterKind kind = rasterKindForFile(file, extensionForPath(runtime.path));
-  if (kind == RasterKind::Jpeg) {
-    drawRasterJpeg(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                   runtime);
-  } else if (kind == RasterKind::Png) {
-    drawRasterPng(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                  runtime);
-  } else if (kind == RasterKind::Webp) {
-    drawRasterWebp(gfx, file, target, imageX, imageY, imageW, imageH, runtime);
-  } else if (kind == RasterKind::Wbmp) {
-    drawRasterWbmp(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                   runtime);
-  } else {
+  if (kind == RasterKind::Unknown) {
     drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
+    return;
   }
+  const ImageTransform transform;
+  ImageRenderCachePool *cache =
+      runtime.imageCacheEntries != 0U ? &imageViewerCache : nullptr;
+  if (cache != nullptr && !cache->setCapacity(runtime.imageCacheEntries)) {
+    cache = nullptr;
+  }
+  const uint64_t key = renderCacheKey(
+      pathSourceKey(runtime.providerId, runtime.path, file.size()), kind, imageW,
+      imageH, runtime.imageDither, runtime.imageScaleToFit);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY, imageW, imageH, transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return;
+  }
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawRasterJpeg(gfx, file, source, target, imageX, imageY, imageW,
+                             imageH, runtime);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawRasterPng(gfx, file, source, target, imageX, imageY, imageW,
+                            imageH, runtime);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawRasterWebp(gfx, file, target, imageX, imageY, imageW, imageH,
+                             runtime);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawRasterWbmp(gfx, file, source, target, imageX, imageY, imageW,
+                             imageH, runtime);
+  }
+  (void)finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                          imageY, transform);
 }
 
 void scrollImageViewer(FileViewerRuntime &, int8_t) {}
@@ -658,6 +787,8 @@ void scrollImageViewer(FileViewerRuntime &, int8_t) {}
 uint32_t imageVisibleBytes(const FileViewerRuntime &runtime) {
   return runtime.size;
 }
+
+void closeImageViewer() { imageViewerCache.clear(); }
 
 const char *const IMAGE_VIEWER_EXTENSIONS[] = {"png", "jpg", "jpeg", "jfif",
                                                "webp", "wbmp"};
@@ -683,31 +814,44 @@ bool imageTransformPoint(const ImageTransform &transform, int16_t x,
 void drawImageBuffer(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                      const char *extension, int16_t imageX, int16_t imageY,
                      int16_t imageW, int16_t imageH, uint8_t dither,
-                     bool scaleToFit) {
-  if (data == nullptr || size == 0) {
+                     bool scaleToFit, ImageRenderCachePool *cache) {
+  if (data == nullptr || size == 0 || imageW <= 0 || imageH <= 0) {
     drawCenteredStatus(gfx, "OPEN FAILED", imageX, imageY, imageW, imageH);
+    return;
+  }
+  const RasterKind kind = rasterKindForExtension(extension);
+  if (kind == RasterKind::Unknown) {
+    drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
     return;
   }
   RasterMemoryReader source;
   source.data = data;
   source.size = size;
   RasterDrawTarget target = {&gfx};
-  const RasterKind kind = rasterKindForExtension(extension);
-  if (kind == RasterKind::Jpeg) {
-    drawMemoryJpeg(gfx, source, target, imageX, imageY, imageW, imageH, dither,
-                   scaleToFit);
-  } else if (kind == RasterKind::Png) {
-    drawMemoryPng(gfx, source, target, imageX, imageY, imageW, imageH, dither,
-                  scaleToFit);
-  } else if (kind == RasterKind::Webp) {
-    drawMemoryWebp(gfx, data, size, target, imageX, imageY, imageW, imageH,
-                   dither, scaleToFit);
-  } else if (kind == RasterKind::Wbmp) {
-    drawMemoryWbmp(gfx, source, target, imageX, imageY, imageW, imageH,
-                   scaleToFit);
-  } else {
-    drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
+  const ImageTransform transform;
+  const uint64_t key = renderCacheKey(bufferSourceKey(data, size), kind, imageW,
+                                      imageH, dither, scaleToFit);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY, imageW, imageH, transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return;
   }
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawMemoryJpeg(gfx, source, target, imageX, imageY, imageW,
+                             imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawMemoryPng(gfx, source, target, imageX, imageY, imageW,
+                            imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawMemoryWebp(gfx, data, size, target, imageX, imageY, imageW,
+                             imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawMemoryWbmp(gfx, source, target, imageX, imageY, imageW,
+                             imageH, scaleToFit);
+  }
+  (void)finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                          imageY, transform);
 }
 
 bool drawImageBufferTransformed(Adafruit_GFX &gfx, const uint8_t *data,
@@ -715,7 +859,8 @@ bool drawImageBufferTransformed(Adafruit_GFX &gfx, const uint8_t *data,
                                 int16_t imageX, int16_t imageY, int16_t imageW,
                                 int16_t imageH, uint8_t dither,
                                 bool scaleToFit,
-                                const ImageTransform &transform) {
+                                const ImageTransform &transform,
+                                ImageRenderCachePool *cache) {
   if (data == nullptr || size == 0 || extension == nullptr ||
       extension[0] == '\0' || imageW <= 0 || imageH <= 0 ||
       !validTransform(transform)) {
@@ -726,29 +871,40 @@ bool drawImageBufferTransformed(Adafruit_GFX &gfx, const uint8_t *data,
   source.size = size;
   RasterDrawTarget target = {&gfx, &transform};
   const RasterKind kind = rasterKindForExtension(extension);
-  if (kind == RasterKind::Jpeg) {
-    drawMemoryJpeg(gfx, source, target, imageX, imageY, imageW, imageH, dither,
-                   scaleToFit);
-  } else if (kind == RasterKind::Png) {
-    drawMemoryPng(gfx, source, target, imageX, imageY, imageW, imageH, dither,
-                  scaleToFit);
-  } else if (kind == RasterKind::Webp) {
-    drawMemoryWebp(gfx, data, size, target, imageX, imageY, imageW, imageH,
-                   dither, scaleToFit);
-  } else if (kind == RasterKind::Wbmp) {
-    drawMemoryWbmp(gfx, source, target, imageX, imageY, imageW, imageH,
-                   scaleToFit);
-  } else {
+  if (kind == RasterKind::Unknown) {
     return false;
   }
-  return true;
+  const uint64_t key = renderCacheKey(bufferSourceKey(data, size), kind, imageW,
+                                      imageH, dither, scaleToFit);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY, imageW, imageH, transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return true;
+  }
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawMemoryJpeg(gfx, source, target, imageX, imageY, imageW,
+                             imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawMemoryPng(gfx, source, target, imageX, imageY, imageW,
+                            imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawMemoryWebp(gfx, data, size, target, imageX, imageY, imageW,
+                             imageH, dither, scaleToFit);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawMemoryWbmp(gfx, source, target, imageX, imageY, imageW,
+                             imageH, scaleToFit);
+  }
+  return finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                           imageY, transform);
 }
 
 bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
                               const char *path, int16_t imageX,
                               int16_t imageY, int16_t imageW, int16_t imageH,
                               uint8_t dither, bool scaleToFit,
-                              const ImageTransform &transform) {
+                              const ImageTransform &transform,
+                              ImageRenderCachePool *cache) {
   if (path == nullptr || path[0] == '\0' || imageW <= 0 || imageH <= 0 ||
       !validTransform(transform)) {
     return false;
@@ -760,24 +916,36 @@ bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
   RasterFileReader source = {&file};
   RasterDrawTarget target = {&gfx, &transform};
   const RasterKind kind = rasterKindForFile(file, extensionForPath(path));
+  if (kind == RasterKind::Unknown) {
+    return false;
+  }
   FileViewerRuntime runtime;
   runtime.imageDither = dither;
   runtime.imageScaleToFit = scaleToFit;
-  if (kind == RasterKind::Jpeg) {
-    drawRasterJpeg(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                   runtime);
-  } else if (kind == RasterKind::Png) {
-    drawRasterPng(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                  runtime);
-  } else if (kind == RasterKind::Webp) {
-    drawRasterWebp(gfx, file, target, imageX, imageY, imageW, imageH, runtime);
-  } else if (kind == RasterKind::Wbmp) {
-    drawRasterWbmp(gfx, file, source, target, imageX, imageY, imageW, imageH,
-                   runtime);
-  } else {
-    return false;
+  const uint64_t key = renderCacheKey(
+      pathSourceKey(providerId, path, file.size()), kind, imageW, imageH,
+      dither, scaleToFit);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY, imageW, imageH, transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return true;
   }
-  return true;
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawRasterJpeg(gfx, file, source, target, imageX, imageY, imageW,
+                             imageH, runtime);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawRasterPng(gfx, file, source, target, imageX, imageY, imageW,
+                            imageH, runtime);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawRasterWebp(gfx, file, target, imageX, imageY, imageW, imageH,
+                             runtime);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawRasterWbmp(gfx, file, source, target, imageX, imageY, imageW,
+                             imageH, runtime);
+  }
+  return finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                           imageY, transform);
 }
 
 const FileViewerExtension IMAGE_FILE_VIEWER = {
@@ -792,4 +960,6 @@ const FileViewerExtension IMAGE_FILE_VIEWER = {
     nullptr,
     nullptr,
     imageVisibleBytes,
+    nullptr,
+    closeImageViewer,
 };

@@ -63,6 +63,7 @@ PinkExecutableEntry *pinkApps = nullptr;
 size_t pinkAppCount = 0;
 size_t pinkAppCapacity = 0;
 Adafruit_GFX *pinkDrawTarget = nullptr;
+ImageRenderCachePool pinkImageRenderCache;
 char activeAppId[kPinkIdCapacity] = {};
 char activeAppPath[kPinkPathCapacity] = {};
 uint8_t *activeMemory = nullptr;
@@ -653,6 +654,46 @@ int8_t hostDrawImageBuffer(const uint8_t *data, size_t size,
              : PINK_API_ERROR;
 }
 
+ImageRenderCachePool *pinkImageCache(uint8_t cacheEntries) {
+  return cacheEntries != 0U && pinkImageRenderCache.setCapacity(cacheEntries)
+             ? &pinkImageRenderCache
+             : nullptr;
+}
+
+int8_t hostDrawImagePathCached(const char *path, int16_t x, int16_t y,
+                               int16_t w, int16_t h, uint8_t dither,
+                               bool scaleToFit, uint8_t cacheEntries,
+                               const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr) {
+    return PINK_API_ERROR;
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return PINK_API_ERROR;
+  }
+  return drawImagePathTransformed(
+             *pinkDrawTarget, "sd", path, x, y, w, h, dither, scaleToFit,
+             imageTransform(transform), pinkImageCache(cacheEntries))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostDrawImageBufferCached(const uint8_t *data, size_t size,
+                                 const char *format, int16_t x, int16_t y,
+                                 int16_t w, int16_t h, uint8_t dither,
+                                 bool scaleToFit, uint8_t cacheEntries,
+                                 const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr) {
+    return PINK_API_ERROR;
+  }
+  return drawImageBufferTransformed(
+             *pinkDrawTarget, data, size, format, x, y, w, h, dither,
+             scaleToFit, imageTransform(transform),
+             pinkImageCache(cacheEntries))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
 int8_t hostDrawVectorPath(const char *path, int16_t x, int16_t y, int16_t w,
                           int16_t h, const PinkImageTransform *transform) {
   if (pinkDrawTarget == nullptr || path == nullptr) {
@@ -911,6 +952,8 @@ PinkHost makeHost() {
   host.audioCapturePcm16 = hostCapturePcm16;
   host.drawVectorPath = hostDrawVectorPath;
   host.drawVectorString = hostDrawVectorString;
+  host.drawImagePathCached = hostDrawImagePathCached;
+  host.drawImageBufferCached = hostDrawImageBufferCached;
   return host;
 }
 
@@ -1077,6 +1120,7 @@ private:
       sendSimpleEvent(PINK_EVENT_STOP);
     }
     releasePinkSleepGuards();
+    pinkImageRenderCache.clear();
     if (appApiSessionMatches(activeAppId)) {
       appApiEndSession();
     }

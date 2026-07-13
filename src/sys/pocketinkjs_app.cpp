@@ -69,6 +69,8 @@ constexpr BaseType_t kPocketInkJSExecutorCore = 1;
 constexpr size_t kIdCapacity = 20;
 constexpr size_t kStatusCapacity = 96;
 
+ImageRenderCachePool PocketInkJSImageCache;
+
 class PocketInkJSApp;
 
 using PocketInkJSExecutorOperation = void (*)(PocketInkJSApp &, void *);
@@ -759,7 +761,8 @@ double imageOptionNumber(PocketInkJS::Runtime &runtime, PocketInkJS::Value optio
 
 bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int16_t &x,
                   int16_t &y, int16_t &w, int16_t &h, uint8_t &dither,
-                  bool &fit, ImageTransform &transform) {
+                  bool &fit, ImageTransform &transform,
+                  uint8_t *cacheEntries = nullptr) {
   if (runtime.typeOf(options) != PocketInkJS::ValueType::Undefined &&
       runtime.typeOf(options) != PocketInkJS::ValueType::Object) {
     return false;
@@ -769,11 +772,28 @@ bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int
   w = toI16(imageOptionNumber(runtime, options, "width", EPD_WIDTH));
   h = toI16(imageOptionNumber(runtime, options, "height", EPD_HEIGHT));
   dither = toU8(imageOptionNumber(runtime, options, "dither", 1));
+  if (cacheEntries != nullptr) {
+    *cacheEntries = 0;
+  }
   if (runtime.typeOf(options) == PocketInkJS::ValueType::Object) {
     const PocketInkJS::Value fitValue = runtime.objectGet(options, "scaleToFit");
     fit = runtime.typeOf(fitValue) == PocketInkJS::ValueType::Undefined
               ? true
               : runtime.toBoolean(fitValue);
+    if (cacheEntries != nullptr) {
+      const PocketInkJS::Value cacheValue = runtime.objectGet(options, "cache");
+      const PocketInkJS::ValueType cacheType = runtime.typeOf(cacheValue);
+      if (cacheType == PocketInkJS::ValueType::Boolean) {
+        *cacheEntries = runtime.toBoolean(cacheValue) ? 1U : 0U;
+      } else if (cacheType != PocketInkJS::ValueType::Undefined) {
+        const double count = runtime.toNumber(cacheValue);
+        if (!runtime.isNumber(cacheValue) || !std::isfinite(count) ||
+            count < 0 || count > 32 || std::floor(count) != count) {
+          return false;
+        }
+        *cacheEntries = static_cast<uint8_t>(count);
+      }
+    }
     const PocketInkJS::Value matrix = runtime.objectGet(options, "matrix");
     if (runtime.typeOf(matrix) == PocketInkJS::ValueType::Array) {
       if (runtime.arrayLength(matrix) != 6) {
@@ -831,14 +851,21 @@ PocketInkJS::Value nativeUiImagePath(PocketInkJS::Runtime &runtime,
   int16_t w = 0;
   int16_t h = 0;
   uint8_t dither = 1;
+  uint8_t cacheEntries = 0;
   bool fit = true;
   ImageTransform transform;
   if (!imageOptions(runtime, argc == 2 ? args[1] : runtime.undefined(), x, y,
-                    w, h, dither, fit, transform)) {
+                    w, h, dither, fit, transform, &cacheEntries)) {
     return runtime.fail("invalid image options");
   }
+  ImageRenderCachePool *cache = nullptr;
+  if (cacheEntries != 0U &&
+      PocketInkJSImageCache.setCapacity(cacheEntries)) {
+    cache = &PocketInkJSImageCache;
+  }
   return runtime.boolean(drawImagePathTransformed(
-      *PocketInkJSDrawTarget, "sd", path, x, y, w, h, dither, fit, transform));
+      *PocketInkJSDrawTarget, "sd", path, x, y, w, h, dither, fit, transform,
+      cache));
 }
 
 PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
@@ -861,16 +888,22 @@ PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
   int16_t w = 0;
   int16_t h = 0;
   uint8_t dither = 1;
+  uint8_t cacheEntries = 0;
   bool fit = true;
   ImageTransform transform;
   if (!imageOptions(runtime, argc == 3 ? args[2] : runtime.undefined(), x, y,
-                    w, h, dither, fit, transform)) {
+                    w, h, dither, fit, transform, &cacheEntries)) {
     return runtime.fail("invalid image options");
   }
   const PocketInkJS::StringView data = runtime.stringView(args[0]);
+  ImageRenderCachePool *cache = nullptr;
+  if (cacheEntries != 0U &&
+      PocketInkJSImageCache.setCapacity(cacheEntries)) {
+    cache = &PocketInkJSImageCache;
+  }
   return runtime.boolean(drawImageBufferTransformed(
       *PocketInkJSDrawTarget, reinterpret_cast<const uint8_t *>(data.data),
-      data.size, format, x, y, w, h, dither, fit, transform));
+      data.size, format, x, y, w, h, dither, fit, transform, cache));
 }
 
 PocketInkJS::Value nativeUiVectorPath(PocketInkJS::Runtime &runtime,
@@ -2279,6 +2312,7 @@ private:
     systemModalPromise = PocketInkJS::kInvalidRoot;
     stopAsyncWorker();
     releaseSleepGuards();
+    PocketInkJSImageCache.clear();
     if (appApiSessionMatches(appId)) {
       appApiEndSession();
     }
