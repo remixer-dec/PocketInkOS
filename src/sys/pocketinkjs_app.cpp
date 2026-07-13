@@ -1,4 +1,5 @@
 #include "sys/pocketinkjs_app.h"
+#include "sys/debug_logging.h"
 
 #include "fs/file_provider.h"
 #include "fs/providers/image_file_viewer.h"
@@ -156,6 +157,9 @@ UBaseType_t PocketInkJSLowestStackHwm = UINT_MAX;
 char *PocketInkJSLogBuffer = nullptr;
 
 void PocketInkJSLogWrite(const char *text) {
+  if (!debugLoggingEnabled()) {
+    return;
+  }
 #if POCKETINKJS_HAS_ROM_PRINTF
   esp_rom_printf("%s", text != nullptr ? text : "");
 #else
@@ -164,6 +168,9 @@ void PocketInkJSLogWrite(const char *text) {
 }
 
 void PocketInkJSLogPrintf(const char *format, ...) {
+  if (!debugLoggingEnabled()) {
+    return;
+  }
   va_list args;
   va_start(args, format);
 #if POCKETINKJS_HAS_ROM_PRINTF

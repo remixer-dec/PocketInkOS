@@ -488,6 +488,18 @@ bool ShellController::launchAppById(const char *id) {
   return true;
 }
 
+bool ShellController::wakeAppById(const char *id) {
+  if (id == nullptr || id[0] == '\0') {
+    return false;
+  }
+  if (activeDefinition != nullptr && activeDefinition->id != nullptr &&
+      strcmp(activeDefinition->id, id) == 0) {
+    dirty = true;
+    return true;
+  }
+  return launchAppById(id);
+}
+
 void ShellController::launchMenuButtonApp() {
   const char *target = currentSystemConfig().home.sunBtnApp;
   if (target != nullptr && target[0] != '\0') {

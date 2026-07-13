@@ -6,7 +6,7 @@ SRC="${1:-$ROOT/examples/pink/tetris/tetris.cpp}"
 OUT="${2:-$ROOT/build/pink/tetris.pink}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/pink/$(basename "${SRC%.*}")}"
 LINKER="${PINK_LINKER:-$ROOT/tools/pink_app.ld}"
-ABI_VERSION=10
+ABI_VERSION=12
 MAX_IMAGE_BYTES=$((64 * 1024))
 
 usage() {
@@ -285,6 +285,23 @@ for line in section_output.splitlines():
         "size": int(match.group(4), 16),
     }
 
+periodic_schedule = 0
+metadata_section = sections.get(".pink_metadata")
+if metadata_section is not None:
+    elf_bytes = elf.read_bytes()
+    start = metadata_section["offset"]
+    end = start + metadata_section["size"]
+    if end > len(elf_bytes) or metadata_section["size"] != 4:
+        raise SystemExit("PINK_PERIODIC_TASK metadata must be exactly 4 bytes")
+    interval, wake_level, display_mode = struct.unpack("<HBB", elf_bytes[start:end])
+    if not 1 <= interval <= 24 * 60:
+        raise SystemExit("periodic interval must be between 1 and 1440 minutes")
+    if wake_level not in (2, 3):
+        raise SystemExit("periodic wake level must be SYSTEM (2) or NETWORK (3)")
+    if display_mode not in (0, 1, 2):
+        raise SystemExit("periodic display mode must be NONE (0), PARTIAL (1), or FULL (2)")
+    periodic_schedule = interval | (wake_level << 16) | (display_mode << 24)
+
 text = sections.get(".text")
 if text is None or text["size"] != len(code):
     raise SystemExit(".text section size mismatch")
@@ -365,7 +382,7 @@ relocations = sorted(set(relocations))
 header_size = 28
 header = struct.pack(
     "<IHHIIIII", 0x4B4E4950, abi, header_size, len(code), len(rodata), entry_offset,
-    len(relocations), 0
+    len(relocations), periodic_schedule
 )
 reloc_table = b"".join(struct.pack("<I", location) for location in relocations)
 out_path.write_bytes(header + reloc_table + code + rodata)

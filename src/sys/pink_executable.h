@@ -8,7 +8,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL; // "PINK"
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 11;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 12;
 /// Oldest .pink ABI version this firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 /// Size in bytes of PinkExecutableHeader.
@@ -38,9 +38,11 @@ struct PinkExecutableHeader {
   uint32_t entryOffset;
   /// Number of relocation records following the image.
   uint32_t relocationCount;
-  /// Reserved for future header fields.
-  uint32_t reserved;
+  /// Packed static periodic schedule; zero means no periodic hook.
+  uint32_t periodicSchedule;
 };
+static_assert(sizeof(PinkExecutableHeader) == PINK_EXECUTABLE_HEADER_SIZE,
+              "Pink executable header layout changed");
 
 enum PinkEventType : uint8_t {
   PINK_EVENT_START = 1,
@@ -59,6 +61,7 @@ enum PinkEventType : uint8_t {
   PINK_EVENT_POWER_LONG = 14,
   PINK_EVENT_SAVE_STATE = 15,
   PINK_EVENT_RESTORE_STATE = 16,
+  PINK_EVENT_PERIODIC = 17,
 };
 
 enum PinkFont : uint8_t {
@@ -122,6 +125,13 @@ struct PinkEvent {
   size_t dataCapacity = 0;
   size_t eventSize = 0;
   uint32_t featureFlags = 0;
+  /// Periodic-event metadata appended in ABI 12.
+  int64_t periodicLocalUnix = 0;
+  uint16_t periodicIntervalMinutes = 0;
+  uint8_t periodicWakeLevel = 0;
+  uint8_t periodicDisplayMode = 0;
+  uint8_t periodicAction = 0;
+  uint8_t periodicReserved[3] = {};
 };
 
 struct PinkHost {
@@ -213,6 +223,14 @@ struct PinkHost {
                              const PinkImageTransform *transform);
 };
 
+/// Copyable description of one installed executable's static periodic hook.
+struct PinkExecutablePeriodicTask {
+  char id[24] = {};
+  char path[192] = {};
+  PeriodicTaskSchedule schedule;
+  uint32_t packedSchedule = 0;
+};
+
 typedef void (*PinkEntryPoint)(const PinkHost *host, PinkEvent *event);
 
 /// Returns the runtime adapter used when a .pink app is active.
@@ -247,5 +265,14 @@ bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
                               char *icon, size_t iconSize);
 /// Stops the active .pink app and releases its loaded image.
 void pinkExecutableStop();
+/// Counts installed executables with valid static periodic metadata.
+size_t pinkExecutablePeriodicTaskCount();
+/// Copies one installed static periodic task by periodic-task index.
+bool pinkExecutablePeriodicTaskAt(size_t index,
+                                  PinkExecutablePeriodicTask &out);
+/// Loads, validates, invokes, and releases one executable periodic hook.
+PeriodicTaskAction pinkExecutableRunPeriodic(
+    const PinkExecutablePeriodicTask &task, int64_t localUnix,
+    uint16_t effectiveIntervalMinutes, Adafruit_GFX *display, bool &dirty);
 
 #endif

@@ -14,6 +14,22 @@
 #include <cstring>
 #include <new>
 
+#if __has_include(<esp_attr.h>)
+#include <esp_attr.h>
+#endif
+
+#ifndef RTC_DATA_ATTR
+#define RTC_DATA_ATTR
+#endif
+
+#ifndef RTC_NOINIT_ATTR
+#define RTC_NOINIT_ATTR RTC_DATA_ATTR
+#endif
+
+#ifndef RTC_FAST_ATTR
+#define RTC_FAST_ATTR RTC_NOINIT_ATTR
+#endif
+
 namespace {
 
 constexpr uint32_t kSampleRate = 16000;
@@ -22,6 +38,56 @@ constexpr uint8_t kTabAlarm = 1;
 constexpr uint16_t kTimerMinimumMinutes = 1;
 constexpr uint16_t kTimerMaximumMinutes = 240;
 constexpr unsigned long kTimerRedrawMs = 1000;
+constexpr uint16_t kAlarmPeriodicMagic = 0x414cU; // AL
+
+struct StoredAlarmPeriodicState {
+  uint16_t magic;
+  uint16_t checksum;
+  int64_t lastAlarmMinute;
+  uint8_t alarmHour;
+  uint8_t alarmMinute;
+  uint8_t alarmArmed;
+  uint8_t triggerPending;
+};
+
+RTC_FAST_ATTR StoredAlarmPeriodicState retainedAlarmState;
+
+uint16_t alarmStateChecksum(const StoredAlarmPeriodicState &state) {
+  const uint8_t *data =
+      reinterpret_cast<const uint8_t *>(&state.lastAlarmMinute);
+  const size_t length = sizeof(state) -
+                        offsetof(StoredAlarmPeriodicState, lastAlarmMinute);
+  uint32_t hash = 2166136261UL;
+  for (size_t i = 0; i < length; i++) {
+    hash ^= data[i];
+    hash *= 16777619UL;
+  }
+  return static_cast<uint16_t>((hash >> 16) ^ (hash & 0xffffU));
+}
+
+bool loadAlarmPeriodicState(StoredAlarmPeriodicState &out) {
+  if (retainedAlarmState.magic != kAlarmPeriodicMagic ||
+      retainedAlarmState.checksum != alarmStateChecksum(retainedAlarmState) ||
+      retainedAlarmState.alarmHour >= 24 ||
+      retainedAlarmState.alarmMinute >= 60) {
+    return false;
+  }
+  out = retainedAlarmState;
+  return true;
+}
+
+void storeAlarmPeriodicState(uint8_t hour, uint8_t minute, bool armed,
+                             bool triggerPending, int64_t lastAlarmMinute) {
+  StoredAlarmPeriodicState next = {};
+  next.magic = kAlarmPeriodicMagic;
+  next.lastAlarmMinute = lastAlarmMinute;
+  next.alarmHour = hour;
+  next.alarmMinute = minute;
+  next.alarmArmed = armed ? 1U : 0U;
+  next.triggerPending = triggerPending ? 1U : 0U;
+  next.checksum = alarmStateChecksum(next);
+  retainedAlarmState = next;
+}
 
 enum ControlId : int8_t {
   CONTROL_TAB_TIMER = 0,
@@ -116,6 +182,7 @@ struct AlarmApp::State {
   uint8_t alarmMinute = 0;
   int64_t lastAlarmMinute = -1;
   bool alarmArmed = false;
+  bool triggerPending = false;
   bool ringing = false;
   bool audioFailed = false;
   UiPressFeedback press;
@@ -145,12 +212,20 @@ void AlarmApp::releaseState() {
 void AlarmApp::reset() {
   stopRinging();
   releaseState();
-  ensureState();
+  if (ensureState()) {
+    restorePeriodicState();
+  }
 }
 
 void AlarmApp::onEnter() {
   if (ensureState()) {
-    ensureAudio();
+    if (state->triggerPending) {
+      state->triggerPending = false;
+      savePeriodicState();
+      startChime();
+    } else {
+      ensureAudio();
+    }
   }
 }
 
@@ -158,6 +233,8 @@ void AlarmApp::release() {
   if (state != nullptr) {
     state->timerRunning = false;
     state->alarmArmed = false;
+    state->triggerPending = false;
+    savePeriodicState();
   }
   stopRinging();
   releaseAudio();
@@ -265,6 +342,7 @@ void AlarmApp::adjustAlarmHour(int8_t delta) {
   }
   state->alarmHour = static_cast<uint8_t>(next);
   state->lastAlarmMinute = -1;
+  savePeriodicState();
 }
 
 void AlarmApp::adjustAlarmMinute(int8_t delta) {
@@ -277,6 +355,60 @@ void AlarmApp::adjustAlarmMinute(int8_t delta) {
   }
   state->alarmMinute = static_cast<uint8_t>(next);
   state->lastAlarmMinute = -1;
+  savePeriodicState();
+}
+
+void AlarmApp::restorePeriodicState() {
+  if (state == nullptr) {
+    return;
+  }
+  StoredAlarmPeriodicState saved;
+  if (!loadAlarmPeriodicState(saved)) {
+    savePeriodicState();
+    return;
+  }
+  state->alarmHour = saved.alarmHour;
+  state->alarmMinute = saved.alarmMinute;
+  state->alarmArmed = saved.alarmArmed != 0;
+  state->triggerPending = saved.triggerPending != 0;
+  state->lastAlarmMinute = saved.lastAlarmMinute;
+}
+
+void AlarmApp::savePeriodicState() const {
+  if (state == nullptr) {
+    return;
+  }
+  storeAlarmPeriodicState(state->alarmHour, state->alarmMinute,
+                          state->alarmArmed, state->triggerPending,
+                          state->lastAlarmMinute);
+}
+
+PeriodicTaskAction
+AlarmApp::onPeriodic(const PeriodicTaskContext &context) {
+  StoredAlarmPeriodicState saved;
+  if (!context.clockSet || !loadAlarmPeriodicState(saved) ||
+      saved.alarmArmed == 0) {
+    return PeriodicTaskAction::Complete;
+  }
+  if (saved.triggerPending != 0) {
+    return PeriodicTaskAction::WakeApp;
+  }
+
+  int64_t daySeconds = context.localUnix % 86400;
+  if (daySeconds < 0) {
+    daySeconds += 86400;
+  }
+  const uint8_t hour = static_cast<uint8_t>(daySeconds / 3600);
+  const uint8_t minute = static_cast<uint8_t>((daySeconds / 60) % 60);
+  const int64_t minuteIndex = context.localUnix / 60;
+  if (hour != saved.alarmHour || minute != saved.alarmMinute ||
+      minuteIndex == saved.lastAlarmMinute) {
+    return PeriodicTaskAction::Complete;
+  }
+
+  storeAlarmPeriodicState(saved.alarmHour, saved.alarmMinute, true, true,
+                          minuteIndex);
+  return PeriodicTaskAction::WakeApp;
 }
 
 void AlarmApp::startTimer() {
@@ -475,6 +607,8 @@ bool AlarmApp::handleTouch(const TouchPoint &point) {
     } else {
       state->alarmArmed = !state->alarmArmed;
       state->lastAlarmMinute = -1;
+      state->triggerPending = false;
+      savePeriodicState();
     }
     return true;
   }
@@ -533,6 +667,8 @@ bool AlarmApp::update() {
       if (hour == state->alarmHour && minute == state->alarmMinute &&
           minuteIndex != state->lastAlarmMinute) {
         state->lastAlarmMinute = minuteIndex;
+        state->triggerPending = false;
+        savePeriodicState();
         startChime();
         changed = true;
       }

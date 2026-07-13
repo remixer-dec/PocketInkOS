@@ -135,6 +135,39 @@ bool parseInactivityMinutes(const char *value, uint8_t &out) {
   return true;
 }
 
+bool parseUnsignedRange(const char *value, uint16_t minimum, uint16_t maximum,
+                        uint16_t &out) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  uint32_t parsed = 0;
+  for (const char *cursor = value; *cursor != '\0'; cursor++) {
+    if (*cursor < '0' || *cursor > '9') {
+      return false;
+    }
+    parsed = parsed * 10U + static_cast<uint32_t>(*cursor - '0');
+    if (parsed > maximum) {
+      return false;
+    }
+  }
+  if (parsed < minimum) {
+    return false;
+  }
+  out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+bool parseSyncIntervalHours(const char *value, uint8_t &out) {
+  uint16_t hours = 0;
+  if (!parseUnsignedRange(value, 0, 24, hours) ||
+      (hours != 0 && hours != 1 && hours != 3 && hours != 6 && hours != 12 &&
+       hours != 24)) {
+    return false;
+  }
+  out = static_cast<uint8_t>(hours);
+  return true;
+}
+
 bool parseStoredUtcOffset(const char *value, int32_t &out) {
   if (value == nullptr || value[0] == '\0') {
     return false;
@@ -157,9 +190,35 @@ bool validSystemValue(const char *key, const char *value) {
     uint8_t minutes = 0;
     return parseInactivityMinutes(value, minutes);
   }
+  if (strcmp(key, "wifi.autoOffMinutes") == 0) {
+    uint8_t minutes = 0;
+    return parseInactivityMinutes(value, minutes);
+  }
   if (strcmp(key, "time.lastUtcOffsetSeconds") == 0) {
     int32_t offset = 0;
     return parseStoredUtcOffset(value, offset);
+  }
+  if (strcmp(key, "time.syncIntervalHours") == 0) {
+    uint8_t hours = 0;
+    return parseSyncIntervalHours(value, hours);
+  }
+  if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
+    uint16_t minutes = 0;
+    return parseUnsignedRange(value, 0,
+                              CONFIG_PERIODIC_INTERVAL_MAX_MINUTES, minutes);
+  }
+  if (strcmp(key, "periodic.disableOnLowBattery") == 0) {
+    bool enabled = false;
+    return parseBool(value, enabled);
+  }
+  if (strcmp(key, "cpu.mhz") == 0) {
+    uint16_t mhz = 0;
+    return parseUnsignedRange(value, 80, 240, mhz) &&
+           (mhz == 80 || mhz == 160 || mhz == 240);
+  }
+  if (strcmp(key, "cpu.governor") == 0) {
+    return asciiEqualIgnoreCase(value, "fixed") ||
+           asciiEqualIgnoreCase(value, "balanced");
   }
   return true;
 }
@@ -186,6 +245,7 @@ void resetSystemDefaults() {
   copyValue(currentConfig.wifi.displayName,
             sizeof(currentConfig.wifi.displayName), SECRET_WIFI_DISPLAY_NAME);
   currentConfig.wifi.autoConnect = false;
+  currentConfig.wifi.autoOffMinutes = 0;
   copyValue(currentConfig.home.sunBtnApp, sizeof(currentConfig.home.sunBtnApp),
             "contact_links");
   copyValue(currentConfig.home.widgets, sizeof(currentConfig.home.widgets),
@@ -200,12 +260,15 @@ void resetSystemDefaults() {
   currentConfig.time.timeFormat = CONFIG_TIME_24H;
   currentConfig.time.dateFormat = CONFIG_DATE_ISO;
   currentConfig.time.syncProtocol = CONFIG_TIME_SYNC_HTTPS;
+  currentConfig.time.syncIntervalHours = 24;
   copyValue(currentConfig.time.timezone, sizeof(currentConfig.time.timezone),
             "auto");
   copyValue(currentConfig.time.syncServer, sizeof(currentConfig.time.syncServer),
             kDefaultTimeSyncServer);
   currentConfig.sensors.temperatureOffsetC = 0.0f;
   copyValue(currentConfig.sensors.unit, sizeof(currentConfig.sensors.unit), "c");
+  currentConfig.periodic.minIntervalMinutes = 1;
+  currentConfig.periodic.disableOnLowBattery = true;
 }
 
 struct StringConfigField {
@@ -252,6 +315,8 @@ const BoolConfigField *boolConfigField(const char *key) {
   static const BoolConfigField fields[] = {
       {"wifi.autoConnect", &currentConfig.wifi.autoConnect},
       {"lockscreen.date", &currentConfig.lockscreen.showDate},
+      {"periodic.disableOnLowBattery",
+       &currentConfig.periodic.disableOnLowBattery},
   };
   for (const BoolConfigField &field : fields) {
     if (strcmp(key, field.key) == 0) {
@@ -281,6 +346,11 @@ void applySystemKey(const char *key, const char *value) {
     uint8_t minutes = 0;
     if (parseInactivityMinutes(value, minutes)) {
       currentConfig.lockscreen.inactivityMinutes = minutes;
+    }
+  } else if (strcmp(key, "wifi.autoOffMinutes") == 0) {
+    uint8_t minutes = 0;
+    if (parseInactivityMinutes(value, minutes)) {
+      currentConfig.wifi.autoOffMinutes = minutes;
     }
   } else if (strcmp(key, "cpu.mhz") == 0) {
     currentConfig.cpu.mhz = cpuMhzFromValue(value, currentConfig.cpu.mhz);
@@ -312,9 +382,20 @@ void applySystemKey(const char *key, const char *value) {
     currentConfig.time.syncProtocol = asciiEqualIgnoreCase(value, "ntp")
                                           ? CONFIG_TIME_SYNC_NTP
                                           : CONFIG_TIME_SYNC_HTTPS;
+  } else if (strcmp(key, "time.syncIntervalHours") == 0) {
+    uint8_t hours = 0;
+    if (parseSyncIntervalHours(value, hours)) {
+      currentConfig.time.syncIntervalHours = hours;
+    }
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     currentConfig.sensors.temperatureOffsetC =
         static_cast<float>(atof(value != nullptr ? value : "0"));
+  } else if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
+    uint16_t minutes = 0;
+    if (parseUnsignedRange(value, 0,
+                           CONFIG_PERIODIC_INTERVAL_MAX_MINUTES, minutes)) {
+      currentConfig.periodic.minIntervalMinutes = minutes;
+    }
   }
 }
 
@@ -425,6 +506,9 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
   } else if (strcmp(key, "lockscreen.inactivityMinutes") == 0) {
     snprintf(out, outSize, "%u",
              static_cast<unsigned>(currentConfig.lockscreen.inactivityMinutes));
+  } else if (strcmp(key, "wifi.autoOffMinutes") == 0) {
+    snprintf(out, outSize, "%u",
+             static_cast<unsigned>(currentConfig.wifi.autoOffMinutes));
   } else if (strcmp(key, "cpu.mhz") == 0) {
     snprintf(out, outSize, "%u", static_cast<unsigned>(currentConfig.cpu.mhz));
   } else if (strcmp(key, "cpu.governor") == 0) {
@@ -453,8 +537,14 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
     copyValue(out, outSize,
               currentConfig.time.syncProtocol == CONFIG_TIME_SYNC_NTP ? "ntp"
                                                                       : "https");
+  } else if (strcmp(key, "time.syncIntervalHours") == 0) {
+    snprintf(out, outSize, "%u", static_cast<unsigned>(
+                                      currentConfig.time.syncIntervalHours));
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     snprintf(out, outSize, "%.2f", currentConfig.sensors.temperatureOffsetC);
+  } else if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
+    snprintf(out, outSize, "%u", static_cast<unsigned>(
+                                      currentConfig.periodic.minIntervalMinutes));
   } else {
     return false;
   }

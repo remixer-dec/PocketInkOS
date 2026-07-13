@@ -1,4 +1,5 @@
 #include "sys/pink_executable.h"
+#include "sys/debug_logging.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
 #include "sys/ext_app_api/app_api.h"
@@ -42,6 +43,8 @@ struct PinkExecutableEntry {
   char *path = nullptr;
   char *label = nullptr;
   MenuCategory category = MENU_APPS;
+  PeriodicTaskSchedule periodic;
+  uint32_t packedPeriodicSchedule = 0;
 };
 
 struct PinkScanContext {
@@ -144,6 +147,51 @@ bool joinPath(char *dest, size_t destSize, const char *directory,
   return written >= 0 && static_cast<size_t>(written) < destSize;
 }
 
+bool decodePeriodicSchedule(uint32_t packed, PeriodicTaskSchedule &out) {
+  out = PeriodicTaskSchedule{};
+  if (packed == 0) {
+    return false;
+  }
+  const uint16_t interval = static_cast<uint16_t>(packed & 0xffffU);
+  const uint8_t wakeLevel = static_cast<uint8_t>((packed >> 16U) & 0xffU);
+  const uint8_t displayMode = static_cast<uint8_t>((packed >> 24U) & 0xffU);
+  if (interval < CONFIG_PERIODIC_INTERVAL_MIN_MINUTES ||
+      interval > CONFIG_PERIODIC_INTERVAL_MAX_MINUTES ||
+      (wakeLevel != static_cast<uint8_t>(PeriodicWakeLevel::System) &&
+       wakeLevel != static_cast<uint8_t>(PeriodicWakeLevel::Network)) ||
+      displayMode > static_cast<uint8_t>(PeriodicDisplayMode::Full)) {
+    return false;
+  }
+  out.intervalMinutes = interval;
+  out.wakeLevel = static_cast<PeriodicWakeLevel>(wakeLevel);
+  out.displayMode = static_cast<PeriodicDisplayMode>(displayMode);
+  return true;
+}
+
+bool readPeriodicSchedule(const char *path, PeriodicTaskSchedule &schedule,
+                          uint32_t &packed) {
+  schedule = PeriodicTaskSchedule{};
+  packed = 0;
+  File file = openProviderPath("sd", path);
+  if (!file) {
+    return false;
+  }
+  PinkExecutableHeader header;
+  const bool read =
+      file.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) ==
+      sizeof(header);
+  file.close();
+  if (!read || header.magic != PINK_EXECUTABLE_MAGIC ||
+      header.abiVersion < 12 ||
+      header.abiVersion > PINK_EXECUTABLE_ABI_VERSION ||
+      header.headerSize < sizeof(PinkExecutableHeader) ||
+      !decodePeriodicSchedule(header.periodicSchedule, schedule)) {
+    return false;
+  }
+  packed = header.periodicSchedule;
+  return true;
+}
+
 void clearPinkEntries() {
   for (size_t i = 0; i < pinkAppCount; i++) {
     free(pinkApps[i].id);
@@ -242,6 +290,7 @@ bool scanPinkEntry(const FileProviderEntry &entry, void *context) {
     return false;
   }
   app.category = scan->category;
+  readPeriodicSchedule(path, app.periodic, app.packedPeriodicSchedule);
   scan->next++;
   pinkAppCount = scan->next;
   return true;
@@ -380,7 +429,7 @@ uint32_t hostMillis() { return millis(); }
 void hostDelay(uint32_t ms) { delay(ms); }
 
 void hostLog(const char *message) {
-  if (message == nullptr) {
+  if (message == nullptr || !debugLoggingEnabled()) {
     return;
   }
   Serial.print("[pink] ");
@@ -809,7 +858,8 @@ PinkHost makeHost() {
 
 class PinkExecutableApp : public ActiveApp {
 public:
-  void launch(const PinkExecutableEntry &entry) {
+  bool launch(const PinkExecutableEntry &entry,
+              uint32_t expectedPeriodicSchedule = 0) {
     unload();
     copyText(path, sizeof(path), entry.path);
     copyText(appId, sizeof(appId), entry.id);
@@ -822,11 +872,56 @@ public:
     activeMemorySize = sizeof(memory);
     appApiBeginSession(activeAppId);
     load();
+    if (expectedPeriodicSchedule != 0 &&
+        loadedPeriodicSchedule != expectedPeriodicSchedule) {
+      unload();
+      return false;
+    }
     activePinkApp = this;
     sendSimpleEvent(PINK_EVENT_START);
+    return this->entry != nullptr;
   }
 
   void stop() { unload(); }
+
+  PeriodicTaskAction runPeriodic(const PinkExecutablePeriodicTask &task,
+                                 int64_t localUnix,
+                                 uint16_t effectiveIntervalMinutes,
+                                 Adafruit_GFX *gfx, bool &dirty) {
+    PinkExecutableEntry executable;
+    executable.id = const_cast<char *>(task.id);
+    executable.path = const_cast<char *>(task.path);
+    executable.label = const_cast<char *>("periodic");
+    executable.periodic = task.schedule;
+    executable.packedPeriodicSchedule = task.packedSchedule;
+    dirty = false;
+    if (!launch(executable, task.packedSchedule)) {
+      return PeriodicTaskAction::Complete;
+    }
+
+    PinkEvent event;
+    event.type = PINK_EVENT_PERIODIC;
+    event.periodicLocalUnix = localUnix;
+    event.periodicIntervalMinutes = effectiveIntervalMinutes;
+    event.periodicWakeLevel = static_cast<uint8_t>(task.schedule.wakeLevel);
+    event.periodicDisplayMode =
+        static_cast<uint8_t>(task.schedule.displayMode);
+    event.periodicAction =
+        static_cast<uint8_t>(PeriodicTaskAction::Complete);
+    callEvent(event, gfx);
+    dirty = event.dirty != 0;
+
+    PeriodicTaskAction action = PeriodicTaskAction::Complete;
+    if (event.periodicAction ==
+        static_cast<uint8_t>(PeriodicTaskAction::WakeDevice)) {
+      action = PeriodicTaskAction::WakeDevice;
+    } else if (event.periodicAction ==
+               static_cast<uint8_t>(PeriodicTaskAction::WakeApp)) {
+      action = PeriodicTaskAction::WakeApp;
+    }
+    stop();
+    return action;
+  }
 
   void draw(Adafruit_GFX &gfx) override {
     if (status[0] != '\0') {
@@ -906,6 +1001,7 @@ private:
   size_t codeSize = 0;
   size_t rodataSize = 0;
   size_t codeAllocSize = 0;
+  uint32_t loadedPeriodicSchedule = 0;
   PinkEntryPoint entry = nullptr;
   bool pendingDirty = false;
   uint8_t memory[kPinkMemorySize] = {};
@@ -941,6 +1037,7 @@ private:
     codeSize = 0;
     rodataSize = 0;
     codeAllocSize = 0;
+    loadedPeriodicSchedule = 0;
     entry = nullptr;
     status[0] = '\0';
     activeAppId[0] = '\0';
@@ -1044,11 +1141,15 @@ private:
 
     codeSize = header.codeSize;
     rodataSize = header.rodataSize;
+    loadedPeriodicSchedule = header.periodicSchedule;
     entry = reinterpret_cast<PinkEntryPoint>(code + header.entryOffset);
-    Serial.printf("[pink] loaded %s code=%p codeSize=%lu rodata=%p rodataSize=%lu entry=%p relocs=%lu\n",
-                  path, code, static_cast<unsigned long>(codeSize), rodata,
-                  static_cast<unsigned long>(rodataSize), reinterpret_cast<void *>(entry),
-                  static_cast<unsigned long>(header.relocationCount));
+    if (debugLoggingEnabled()) {
+      Serial.printf("[pink] loaded %s code=%p codeSize=%lu rodata=%p rodataSize=%lu entry=%p relocs=%lu\n",
+                    path, code, static_cast<unsigned long>(codeSize), rodata,
+                    static_cast<unsigned long>(rodataSize),
+                    reinterpret_cast<void *>(entry),
+                    static_cast<unsigned long>(header.relocationCount));
+    }
     status[0] = '\0';
   }
 
@@ -1069,8 +1170,9 @@ private:
     if (entry == nullptr) {
       return;
     }
-    if (event.type == PINK_EVENT_START || event.type == PINK_EVENT_DRAW ||
-        event.type == PINK_EVENT_STOP) {
+    if (debugLoggingEnabled() &&
+        (event.type == PINK_EVENT_START || event.type == PINK_EVENT_DRAW ||
+         event.type == PINK_EVENT_STOP)) {
       Serial.printf("[pink] event %u entry=%p\n",
                     static_cast<unsigned>(event.type),
                     reinterpret_cast<void *>(entry));
@@ -1307,3 +1409,42 @@ bool pinkExecutableLaunchById(const char *id) {
 }
 
 void pinkExecutableStop() { pinkApp.stop(); }
+
+size_t pinkExecutablePeriodicTaskCount() {
+  size_t count = 0;
+  for (size_t i = 0; i < pinkAppCount; i++) {
+    if (pinkApps[i].packedPeriodicSchedule != 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+bool pinkExecutablePeriodicTaskAt(size_t index,
+                                  PinkExecutablePeriodicTask &out) {
+  for (size_t i = 0; i < pinkAppCount; i++) {
+    const PinkExecutableEntry &entry = pinkApps[i];
+    if (entry.packedPeriodicSchedule == 0) {
+      continue;
+    }
+    if (index-- != 0) {
+      continue;
+    }
+    out = PinkExecutablePeriodicTask{};
+    if (!copyText(out.id, sizeof(out.id), entry.id) ||
+        !copyText(out.path, sizeof(out.path), entry.path)) {
+      return false;
+    }
+    out.schedule = entry.periodic;
+    out.packedSchedule = entry.packedPeriodicSchedule;
+    return true;
+  }
+  return false;
+}
+
+PeriodicTaskAction pinkExecutableRunPeriodic(
+    const PinkExecutablePeriodicTask &task, int64_t localUnix,
+    uint16_t effectiveIntervalMinutes, Adafruit_GFX *display, bool &dirty) {
+  return pinkApp.runPeriodic(task, localUnix, effectiveIntervalMinutes,
+                             display, dirty);
+}

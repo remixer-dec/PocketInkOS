@@ -143,6 +143,7 @@ FILES=( \
   "$ROOT/src/games/chess_app.cpp" \
   "$ROOT/src/apps/contact_links_app.cpp" \
   "$ROOT/src/sys/config.cpp" \
+  "$ROOT/src/sys/debug_logging.cpp" \
   "$ROOT/src/apps/deghost_app.cpp" \
   "$ROOT/src/fs/file_provider.cpp" \
   "$ROOT/src/fs/file_viewer_registry.cpp" \
@@ -163,8 +164,12 @@ FILES=( \
   "$ROOT/src/sys/services/lockscreen_guard.cpp" \
   "$ROOT/src/sys/drivers/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
+  "$ROOT/src/sys/pink_periodic_tasks.cpp" \
   "$ROOT/src/sys/pocketinkjs_app.cpp" \
   "$ROOT/src/sys/services/power_control.cpp" \
+  "$ROOT/src/sys/periodic_tasks.cpp" \
+  "$ROOT/src/sys/services/periodic_wake_service.cpp" \
+  "$ROOT/src/sys/services/system_stage_service.cpp" \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/services/sd_storage.cpp" \
   "$ROOT/src/sys/system_fonts.cpp" \

@@ -5,28 +5,28 @@
 #endif
 #include "sys/system_config.h"
 #include "shell/shell_buttons.h"
-#include "sys/audio/audio_power.h"
 #include "sys/services/device_clock.h"
 #include "sys/services/battery_monitor.h"
 #include "sys/services/device_controls.h"
 #include "sys/services/environment_monitor.h"
 #include "sys/global.h"
+#include "sys/debug_logging.h"
 #include "sys/heap_debug.h"
 #include "sys/services/lockscreen_guard.h"
 #include "sys/services/power_control.h"
 #include "sys/drivers/pcf85063_clock.h"
-#include "sys/drivers/shared_i2c_bus.h"
 #include "sys/pink_executable.h"
+#include "sys/periodic_tasks.h"
 #include "sys/sleep_clock_context.h"
 #include "sys/services/sd_storage.h"
 #include "sys/drivers/usb_status.h"
 #include "sys/services/connectivity_service.h"
+#include "sys/services/periodic_wake_service.h"
+#include "sys/services/system_stage_service.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
-#include "shell/shell_lockscreen_layout.h"
 #include "shell/shell_controller.h"
 #include <Arduino.h>
-#include <cstring>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -46,9 +46,7 @@ ShellController shell(display, touch, textInput);
 
 static const unsigned long BATTERY_REFRESH_INTERVAL_MS = 30000;
 static const uint32_t INACTIVITY_SLEEP_GUARD_GRACE_MS = 3000;
-static const uint16_t SLEEP_CLOCK_WAKE_CPU_MHZ = 80;
-static const bool SLEEP_CLOCK_RETAIN_EPD_POWER = false;
-
+static const uint16_t LOW_POWER_WAKE_CPU_MHZ = 80;
 bool batteryShutdownStarted = false;
 bool inactivitySleepStarted = false;
 bool lowPowerSleepClockWake = false;
@@ -56,23 +54,20 @@ bool usbConnectionKnown = false;
 bool lastUsbConnected = false;
 unsigned long lastBatteryRefreshAt = 0;
 unsigned long lastUserActivityAt = 0;
+unsigned long lastUserInteractionAt = 0;
 
 bool batteryCutoffReached();
 void checkInactivitySleep();
 void enterInactivityDeepSleep();
 unsigned long inactivityDeepSleepMs();
 void noteUserActivity();
+void noteUserInteraction();
 void refreshBatteryAndCheckCutoff();
 void shutdownForLowBattery();
 void renderLowBatteryScreen();
 void renderPowerOffScreen();
-void renderSleepClockScreen(bool partialUpdate = false);
 void refreshUsbConnectionState();
-void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock);
-uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix);
-uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds);
-bool syncDeviceClockFromRtc(int32_t utcOffsetSeconds);
-bool waitForRtcMinuteChangeIfNeeded();
+void checkWifiAutoOff();
 void refreshHomeShell(void *context);
 void noteUserActivityShell(void *context);
 void prepareForPowerTransitionShell(void *context);
@@ -88,14 +83,31 @@ void handlePowerSingleButton();
 void handlePowerDoubleButton();
 void handlePowerLongButton();
 
-void noteUserActivity() { lastUserActivityAt = millis(); }
+SystemStageService systemStageService;
+PeriodicWakeService periodicWakeService(
+    display, systemStageService,
+    {batteryCutoffReached, shutdownForLowBattery,
+     prepareForPowerTransition});
+
+void noteUserActivity() {
+  lastUserActivityAt = millis();
+}
+
+void noteUserInteraction() {
+  const unsigned long now = millis();
+  lastUserActivityAt = now;
+  lastUserInteractionAt = now;
+  deviceControlsNoteUserActivity();
+}
 
 void refreshHomeShell(void *) {
   refreshBatteryAndCheckCutoff();
   environmentMonitor.refresh();
 }
 
-void noteUserActivityShell(void *) { noteUserActivity(); }
+void noteUserActivityShell(void *) {
+  noteUserInteraction();
+}
 
 void prepareForPowerTransitionShell(void *) { prepareForPowerTransition(); }
 
@@ -152,6 +164,20 @@ void refreshUsbConnectionState() {
   if (connected) {
     noteUserActivity();
   }
+  shell.markDirty();
+}
+
+void checkWifiAutoOff() {
+  const uint8_t minutes = currentSystemConfig().wifi.autoOffMinutes;
+  if (minutes == 0 || !wifiIsOn()) {
+    return;
+  }
+  const unsigned long timeoutMs =
+      static_cast<unsigned long>(minutes) * 60UL * 1000UL;
+  if (millis() - lastUserInteractionAt < timeoutMs) {
+    return;
+  }
+  wifiTurnOff();
   shell.markDirty();
 }
 
@@ -217,186 +243,18 @@ void renderLowBatteryScreen() {
   display.unlock();
 }
 
-void formatLockscreenTime(char *out, size_t outSize, ConfigTimeFormat format) {
-  deviceClock.formatTime(out, outSize, format);
-  if (format != CONFIG_TIME_12H) {
-    return;
-  }
-  char *space = strchr(out, ' ');
-  if (space != nullptr) {
-    memmove(space, space + 1, strlen(space));
-  }
-}
-
-void renderSleepClockScreen(bool partialUpdate,
-                            ConfigTimeFormat timeFormat =
-                                currentSystemConfig().time.timeFormat) {
-  char timeText[16];
-  char dateText[16];
-  formatLockscreenTime(timeText, sizeof(timeText), timeFormat);
-  deviceClock.formatDate(dateText, sizeof(dateText));
-
-  display.lock();
-  display.clear();
-  drawLockscreenClockScreen(display, timeText, dateText);
-  if (partialUpdate) {
-    display.flushPartial();
-  } else {
-    display.flush();
-  }
-  display.unlock();
-}
-
 void prepareForPowerTransition() {
   wifiTurnOff();
   disableWirelessForSleep();
   sdStorageEnd();
 }
 
-uint16_t sleepClockWakeIntervalSeconds(bool clockSet, int64_t localUnix) {
-  if (!clockSet) {
-    return 60;
-  }
-
-  const int second = static_cast<int>((localUnix % 60 + 60) % 60);
-  return second == 0 ? 60 : static_cast<uint16_t>(60 - second);
-}
-
-uint64_t sleepClockWakeIntervalUs(uint16_t wakeIntervalSeconds) {
-  return static_cast<uint64_t>(wakeIntervalSeconds) * 1000ULL * 1000ULL;
-}
-
-bool syncDeviceClockFromRtc(int32_t utcOffsetSeconds) {
-#if ENABLE_RTC_CLOCK
-  // The RTC shares the touch I2C bus; release touch reset after deep sleep so
-  // it cannot hold the shared lines in an undefined state.
-  pinMode(EPD_TP_RST_PIN, OUTPUT);
-  digitalWrite(EPD_TP_RST_PIN, HIGH);
-  delay(5);
-  sharedI2cBegin();
-  rtcClock.begin();
-  int64_t localUnix = 0;
-  const bool updated = rtcClock.readLocalUnix(localUnix);
-  if (updated) {
-    deviceClock.restoreLocalUnix(localUnix, utcOffsetSeconds);
-  }
-  digitalWrite(EPD_TP_RST_PIN, LOW);
-  return updated;
-#else
-  return false;
-#endif
-}
-
-bool waitForRtcMinuteChangeIfNeeded() {
-  int64_t localUnix = 0;
-  uint16_t millisIntoSecond = 0;
-  if (!deviceClock.snapshotLocalUnixMillis(localUnix, millisIntoSecond)) {
-    return false;
-  }
-
-  const int second = static_cast<int>((localUnix % 60 + 60) % 60);
-  (void)millisIntoSecond;
-  const bool atLastRtcSecondOfMinute = second == 59;
-  if (!atLastRtcSecondOfMinute) {
-    return false;
-  }
-
-  const int64_t previousMinute = localUnix / 60;
-  const unsigned long startedAt = millis();
-  while (millis() - startedAt < 1500) {
-    delay(25);
-    if (!syncDeviceClockFromRtc(deviceClock.utcOffsetSeconds())) {
-      continue;
-    }
-    int64_t refreshedUnix = 0;
-    if (deviceClock.snapshotLocalUnix(refreshedUnix) &&
-        refreshedUnix / 60 != previousMinute) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void enterSleepClockDeepSleep() {
-  int64_t localUnix = 0;
-  const bool clockSet = deviceClock.snapshotLocalUnix(localUnix);
-  const uint16_t wakeIntervalSeconds =
-      sleepClockWakeIntervalSeconds(clockSet, localUnix);
-  const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
-  sleepClockContextStart(clockSet, localUnix, deviceClock.utcOffsetSeconds(),
-                         wakeIntervalSeconds, timeFormat);
-  renderSleepClockScreen(false, timeFormat);
-  prepareForPowerTransition();
-  enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
-                 SLEEP_CLOCK_RETAIN_EPD_POWER);
-  rebootDevice();
-}
-
-void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock) {
-  if (sleepClock.clockSet) {
-    deviceClock.restoreLocalUnix(sleepClock.localUnix,
-                                 sleepClock.utcOffsetSeconds);
-  }
-
-  display.lock();
-  display.clear();
-  char timeText[16];
-  char dateText[16];
-  formatLockscreenTime(timeText, sizeof(timeText), sleepClock.timeFormat);
-  deviceClock.formatDate(dateText, sizeof(dateText));
-  drawLockscreenClockScreen(display, timeText, dateText);
-  display.seedPartialBothImages();
-  display.unlock();
+  periodicWakeService.enterSleepClockDeepSleep();
 }
 
 bool handleSleepClockTimerWake() {
-  SleepClockSnapshot sleepClock;
-  if (!deepSleepWokeFromTimer() || !sleepClockContextLoad(sleepClock)) {
-    return false;
-  }
-
-  setCpuFrequencyMhz(SLEEP_CLOCK_WAKE_CPU_MHZ);
-  disableWirelessForSleep();
-
-  if (SLEEP_CLOCK_RETAIN_EPD_POWER) {
-    display.beginRetainedPartial();
-  } else {
-    display.beginColdPartial();
-    seedSleepClockPreviousFrame(sleepClock);
-  }
-
-  bool clockSet = syncDeviceClockFromRtc(sleepClock.utcOffsetSeconds);
-  if (!clockSet && sleepClock.clockSet) {
-    deviceClock.restoreLocalUnix(sleepClock.localUnix +
-                                     sleepClock.wakeIntervalSeconds,
-                                 sleepClock.utcOffsetSeconds);
-    clockSet = true;
-  }
-  if (waitForRtcMinuteChangeIfNeeded()) {
-    clockSet = true;
-  }
-
-  refreshBatteryAndCheckCutoff();
-  if (batteryShutdownStarted) {
-    return true;
-  }
-
-  renderSleepClockScreen(true, sleepClock.timeFormat);
-
-  int64_t localUnix = 0;
-  if (!deviceClock.snapshotLocalUnix(localUnix)) {
-    clockSet = false;
-  }
-  const uint16_t wakeIntervalSeconds =
-      sleepClockWakeIntervalSeconds(clockSet, localUnix);
-  sleepClockContextUpdate(clockSet, localUnix,
-                          deviceClock.utcOffsetSeconds(), wakeIntervalSeconds,
-                          sleepClock.timeFormat);
-  prepareForPowerTransition();
-  enterDeepSleep(sleepClockWakeIntervalUs(wakeIntervalSeconds),
-                 SLEEP_CLOCK_RETAIN_EPD_POWER);
-  rebootDevice();
-  return true;
+  return periodicWakeService.handleTimerWake();
 }
 
 void waitForSerialDebugWindow() {
@@ -416,9 +274,11 @@ void logSetupStage(const char *stage) {
 }
 
 void setup() {
+  periodicWakeService.registerSystemTasks();
   lowPowerSleepClockWake = deepSleepWokeFromTimer();
+  debugLoggingSetEnabled(!lowPowerSleepClockWake);
   if (lowPowerSleepClockWake) {
-    setCpuFrequencyMhz(SLEEP_CLOCK_WAKE_CPU_MHZ);
+    setCpuFrequencyMhz(LOW_POWER_WAKE_CPU_MHZ);
     keepPowerLatchOn();
     releasePowerHolds();
     prepareWakePowerDefaults();
@@ -427,6 +287,7 @@ void setup() {
     if (handleSleepClockTimerWake()) {
       return;
     }
+    debugLoggingSetEnabled(true);
   }
 
   Serial.begin(115200);
@@ -434,44 +295,39 @@ void setup() {
   logSetupStage("start");
   heapMark("boot-start");
 
-  logSetupStage("power latch");
-  keepPowerLatchOn();
-  releasePowerHolds();
-  prepareWakePowerDefaults();
-  keepPowerLatchOn();
-  heapMark("after-power-latch");
+  if (!lowPowerSleepClockWake) {
+    logSetupStage("power latch");
+    keepPowerLatchOn();
+    releasePowerHolds();
+    prepareWakePowerDefaults();
+    keepPowerLatchOn();
+    heapMark("after-power-latch");
 
-  logSetupStage("config defaults");
-  configLoadDefaults();
-  heapMark("after-config-defaults");
+    logSetupStage("config defaults");
+    configLoadDefaults();
+    heapMark("after-config-defaults");
 
-  logSetupStage("check sleep-clock wake");
-  if (handleSleepClockTimerWake()) {
-    return;
+    logSetupStage("check sleep-clock wake");
+    if (handleSleepClockTimerWake()) {
+      return;
+    }
   }
   logSetupStage("normal boot");
   sleepClockContextClear();
   heapMark("after-sleep-clock-check");
 
-  logSetupStage("sd");
-  sdStorageBegin();
-  heapMark("after-sd");
-
-  logSetupStage("config");
-  configBegin();
-  shellLayoutConfigReload();
-  heapMark("after-config");
-
-  logSetupStage("audio");
-  audioPowerBegin();
-  heapMark("after-audio");
+  logSetupStage("system services");
+  systemStageService.initialize();
+  heapMark("after-system-services");
 
   logSetupStage("device controls");
   deviceControlsBegin();
   heapMark("after-device-controls");
 
   logSetupStage("display");
-  display.begin();
+  if (!periodicWakeService.displayInitialized()) {
+    display.begin();
+  }
   heapMark("after-display");
 
   logSetupStage("touch");
@@ -511,7 +367,7 @@ void setup() {
   shellButtonsBegin({handleMenuButton, handleMenuDoubleButton,
                      handleMenuLongButton, handlePowerSingleButton,
                      handlePowerDoubleButton, handlePowerLongButton});
-  noteUserActivity();
+  noteUserInteraction();
   heapMark("after-buttons");
 
   logSetupStage("apps");
@@ -519,7 +375,13 @@ void setup() {
   heapMark("after-apps-reset");
 
   logSetupStage("restore context");
+  char retainedPeriodicWakeAppId[24] = {};
+  const bool hasPeriodicWakeApp = periodicRetainedTakeWakeApp(
+      retainedPeriodicWakeAppId, sizeof(retainedPeriodicWakeAppId));
   shell.restoreRetainedContextAfterSleep();
+  if (hasPeriodicWakeApp) {
+    shell.wakeAppById(retainedPeriodicWakeAppId);
+  }
   shell.markDirty();
   logSetupStage("ready");
   heapMark("after-ready");
@@ -532,7 +394,7 @@ void setup() {
 
 void loop() {
   if (shellButtonsDispatch()) {
-    noteUserActivity();
+    noteUserInteraction();
   }
 
   if (shell.dispatchTouch()) {
@@ -541,6 +403,9 @@ void loop() {
   }
 
   refreshUsbConnectionState();
+
+  deviceControlsUpdate(wifiIsOn());
+  checkWifiAutoOff();
 
   checkInactivitySleep();
   if (inactivitySleepStarted) {

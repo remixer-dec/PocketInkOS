@@ -21,7 +21,7 @@
 
 namespace {
 
-static const uint16_t SLEEP_CLOCK_MAGIC = 0x5343U; // SC
+static const uint16_t SLEEP_CLOCK_MAGIC = 0x5344U; // SD, schema 2
 
 struct StoredSleepClockContext {
   uint16_t magic;
@@ -29,6 +29,7 @@ struct StoredSleepClockContext {
   uint8_t active;
   uint8_t clockSet;
   uint8_t timeFormat;
+  uint8_t previousFrameValid;
   uint16_t wakeIntervalSeconds;
   int32_t utcOffsetSeconds;
   int64_t localUnix;
@@ -52,11 +53,13 @@ uint16_t contextChecksum(const StoredSleepClockContext &context) {
 
 void store(bool active, bool clockSet, int64_t localUnix,
            int32_t utcOffsetSeconds,
-           uint16_t wakeIntervalSeconds, ConfigTimeFormat timeFormat) {
+           uint16_t wakeIntervalSeconds, ConfigTimeFormat timeFormat,
+           bool previousFrameValid) {
   sleepClockContext.magic = SLEEP_CLOCK_MAGIC;
   sleepClockContext.active = active ? 1 : 0;
   sleepClockContext.clockSet = clockSet ? 1 : 0;
   sleepClockContext.timeFormat = static_cast<uint8_t>(timeFormat);
+  sleepClockContext.previousFrameValid = previousFrameValid ? 1U : 0U;
   sleepClockContext.wakeIntervalSeconds = wakeIntervalSeconds;
   sleepClockContext.utcOffsetSeconds = utcOffsetSeconds;
   sleepClockContext.localUnix = localUnix;
@@ -70,7 +73,7 @@ void sleepClockContextStart(bool clockSet, int64_t localUnix,
                             uint16_t wakeIntervalSeconds,
                             ConfigTimeFormat timeFormat) {
   store(true, clockSet, localUnix, utcOffsetSeconds, wakeIntervalSeconds,
-        timeFormat);
+        timeFormat, true);
 }
 
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
@@ -84,6 +87,7 @@ bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
   snapshot.localUnix = sleepClockContext.localUnix;
   snapshot.utcOffsetSeconds = sleepClockContext.utcOffsetSeconds;
   snapshot.wakeIntervalSeconds = sleepClockContext.wakeIntervalSeconds;
+  snapshot.previousFrameValid = sleepClockContext.previousFrameValid != 0;
   snapshot.timeFormat = sleepClockContext.timeFormat == CONFIG_TIME_12H
                             ? CONFIG_TIME_12H
                             : CONFIG_TIME_24H;
@@ -93,9 +97,10 @@ bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
 void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
                              int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
-                             ConfigTimeFormat timeFormat) {
+                             ConfigTimeFormat timeFormat,
+                             bool previousFrameValid) {
   store(true, clockSet, localUnix, utcOffsetSeconds, wakeIntervalSeconds,
-        timeFormat);
+        timeFormat, previousFrameValid);
 }
 
 void sleepClockContextClear() {

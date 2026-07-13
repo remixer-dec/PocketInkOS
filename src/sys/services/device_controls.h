@@ -17,6 +17,14 @@ struct DeviceControlSnapshot {
 
 /// Initializes device-control state from persisted config and hardware defaults.
 void deviceControlsBegin();
+/// Applies persisted governor changes without replacing a quick-settings override.
+void deviceControlsApplyConfig();
+/// Raises balanced mode for a fresh touch or physical-button interaction.
+void deviceControlsNoteUserActivity();
+/// Lowers balanced mode after inactivity; Wi-Fi keeps a 160 MHz floor.
+void deviceControlsUpdate(bool wifiOn);
+/// Selected interactive maximum, including a temporary quick-settings override.
+uint16_t deviceControlsSelectedCpuMhz();
 /// Returns the latest device-control state for display.
 DeviceControlSnapshot deviceControlsSnapshot();
 /// Restores runtime audio controls from retained RTC state.
@@ -24,7 +32,7 @@ void deviceControlsRestoreAudio(uint8_t volume, bool muteState);
 
 /// Toggles the Bluetooth preference and hardware state when supported.
 void toggleBluetooth();
-/// Advances to the next supported CPU frequency profile.
+/// Advances the runtime CPU maximum without persisting the selection.
 void cycleCpuFrequency();
 /// Returns source volume scaled by the current output volume and mute state.
 uint8_t deviceEffectiveOutputVolumePercent(uint8_t sourceVolumePercent);

@@ -10,6 +10,9 @@ namespace {
 
 static const uint16_t CPU_STEPS[] = {80, 160, 240};
 static const uint8_t CPU_STEP_COUNT = sizeof(CPU_STEPS) / sizeof(CPU_STEPS[0]);
+static const uint16_t BALANCED_IDLE_CPU_MHZ = 80;
+static const uint16_t BALANCED_WIFI_IDLE_CPU_MHZ = 160;
+static const unsigned long BALANCED_ACTIVITY_HOLD_MS = 2000;
 static const uint8_t VOLUME_STEP = 10;
 static const uint8_t DEFAULT_VOLUME = 40;
 static const uint8_t DEFAULT_OUTPUT_VOLUME = 10;
@@ -18,6 +21,11 @@ static const float VOLUME_CURVE_EXPONENT = 2.5129f;
 
 bool bluetoothEnabled = false;
 uint8_t cpuStep = 2;
+bool controlsInitialized = false;
+bool cpuRuntimeOverride = false;
+ConfigCpuGovernor cpuGovernor = CONFIG_CPU_FIXED;
+uint16_t appliedCpuMhz = 0;
+unsigned long lastCpuActivityAt = 0;
 std::atomic<uint8_t> volumeLevel{DEFAULT_VOLUME};
 std::atomic<uint8_t> outputVolumeLevel{DEFAULT_OUTPUT_VOLUME};
 std::atomic<bool> muted{false};
@@ -45,6 +53,17 @@ void applyCpuFrequency() {
 #if defined(ARDUINO_ARCH_ESP32)
   setCpuFrequencyMhz(CPU_STEPS[cpuStep]);
 #endif
+  appliedCpuMhz = CPU_STEPS[cpuStep];
+}
+
+void applyCpuFrequency(uint16_t mhz) {
+  if (appliedCpuMhz == mhz) {
+    return;
+  }
+#if defined(ARDUINO_ARCH_ESP32)
+  setCpuFrequencyMhz(mhz);
+#endif
+  appliedCpuMhz = mhz;
 }
 
 uint8_t clampPercent(uint8_t percent) {
@@ -74,28 +93,58 @@ void setVolumeLevel(uint8_t uiVolume) {
                           std::memory_order_relaxed);
 }
 
-uint16_t currentCpuMhz() {
-#if defined(ARDUINO_ARCH_ESP32)
-  return static_cast<uint16_t>(getCpuFrequencyMhz());
-#else
-  return CPU_STEPS[cpuStep];
-#endif
-}
-
 } // namespace
 
 void deviceControlsBegin() {
   cpuStep = cpuStepIndexForMhz(currentSystemConfig().cpu.mhz);
+  cpuGovernor = currentSystemConfig().cpu.governor;
+  cpuRuntimeOverride = false;
+  controlsInitialized = true;
+  lastCpuActivityAt = millis();
   setVolumeLevel(DEFAULT_VOLUME);
   muted.store(false, std::memory_order_relaxed);
   applyBluetoothState();
   applyCpuFrequency();
 }
 
+void deviceControlsApplyConfig() {
+  cpuGovernor = currentSystemConfig().cpu.governor;
+  if (!cpuRuntimeOverride) {
+    cpuStep = cpuStepIndexForMhz(currentSystemConfig().cpu.mhz);
+  }
+  lastCpuActivityAt = millis();
+  applyCpuFrequency();
+}
+
+void deviceControlsNoteUserActivity() {
+  if (!controlsInitialized) {
+    return;
+  }
+  lastCpuActivityAt = millis();
+  if (cpuGovernor == CONFIG_CPU_BALANCED) {
+    applyCpuFrequency();
+  }
+}
+
+void deviceControlsUpdate(bool wifiOn) {
+  if (!controlsInitialized || cpuGovernor != CONFIG_CPU_BALANCED ||
+      millis() - lastCpuActivityAt < BALANCED_ACTIVITY_HOLD_MS) {
+    return;
+  }
+  uint16_t idleMhz = wifiOn ? BALANCED_WIFI_IDLE_CPU_MHZ
+                            : BALANCED_IDLE_CPU_MHZ;
+  if (idleMhz > CPU_STEPS[cpuStep]) {
+    idleMhz = CPU_STEPS[cpuStep];
+  }
+  applyCpuFrequency(idleMhz);
+}
+
+uint16_t deviceControlsSelectedCpuMhz() { return CPU_STEPS[cpuStep]; }
+
 DeviceControlSnapshot deviceControlsSnapshot() {
   DeviceControlSnapshot snapshot;
   snapshot.bluetoothOn = bluetoothEnabled;
-  snapshot.cpuMhz = currentCpuMhz();
+  snapshot.cpuMhz = deviceControlsSelectedCpuMhz();
   snapshot.volume = volumeLevel.load(std::memory_order_relaxed);
   snapshot.muted = muted.load(std::memory_order_relaxed);
   return snapshot;
@@ -113,10 +162,8 @@ void toggleBluetooth() {
 
 void cycleCpuFrequency() {
   cpuStep = (cpuStep + 1) % CPU_STEP_COUNT;
-  char mhzText[8];
-  snprintf(mhzText, sizeof(mhzText), "%u",
-           static_cast<unsigned>(CPU_STEPS[cpuStep]));
-  configSet("cpu.mhz", mhzText);
+  cpuRuntimeOverride = true;
+  lastCpuActivityAt = millis();
   applyCpuFrequency();
 }
 

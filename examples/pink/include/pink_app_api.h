@@ -7,7 +7,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL;
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 11;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 12;
 /// Oldest .pink ABI version the current firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
@@ -31,6 +31,7 @@ enum PinkEventType : uint8_t {
   PINK_EVENT_POWER_LONG = 14,
   PINK_EVENT_SAVE_STATE = 15,
   PINK_EVENT_RESTORE_STATE = 16,
+  PINK_EVENT_PERIODIC = 17,
 };
 
 /// Fonts exposed by the firmware drawing host.
@@ -58,6 +59,33 @@ enum PinkFeature : uint32_t {
   PINK_FEATURE_SENSORS = 1U << 5U,
   PINK_FEATURE_WIFI_SCAN = 1U << 6U,
 };
+
+enum PinkPeriodicWakeLevel : uint8_t {
+  PINK_PERIODIC_SYSTEM = 2,
+  PINK_PERIODIC_NETWORK = 3,
+};
+
+enum PinkPeriodicDisplayMode : uint8_t {
+  PINK_PERIODIC_DISPLAY_NONE = 0,
+  PINK_PERIODIC_DISPLAY_PARTIAL = 1,
+  PINK_PERIODIC_DISPLAY_FULL = 2,
+};
+
+enum PinkPeriodicAction : uint8_t {
+  PINK_PERIODIC_COMPLETE = 0,
+  PINK_PERIODIC_WAKE_DEVICE = 3,
+  PINK_PERIODIC_WAKE_APP = 4,
+};
+
+/// Declares the app's single static periodic hook at global scope.
+/// The build tool stores these four bytes in the executable header; they are
+/// not loaded into app memory. Omit the declaration for an app with no hook.
+#define PINK_PERIODIC_TASK(intervalMinutes, wakeLevel, displayMode)            \
+  extern "C" __attribute__((section(".pink_metadata"), used)) const uint8_t  \
+      pinkPeriodicTaskMetadata[4] = {                                         \
+          static_cast<uint8_t>((intervalMinutes) & 0xffU),                    \
+          static_cast<uint8_t>(((intervalMinutes) >> 8U) & 0xffU),            \
+          static_cast<uint8_t>(wakeLevel), static_cast<uint8_t>(displayMode)}
 
 struct PinkImageTransform {
   float a = 1.0f;
@@ -96,6 +124,12 @@ struct PinkEvent {
   size_t dataCapacity = 0;
   size_t eventSize = 0;
   uint32_t featureFlags = 0;
+  int64_t periodicLocalUnix = 0;
+  uint16_t periodicIntervalMinutes = 0;
+  uint8_t periodicWakeLevel = 0;
+  uint8_t periodicDisplayMode = 0;
+  uint8_t periodicAction = 0;
+  uint8_t periodicReserved[3] = {};
 };
 
 /// Function table and runtime context passed to a .pink app instance.

@@ -39,6 +39,14 @@ bool wifiIsConnected() {
 #endif
 }
 
+bool wifiConnectionInProgress() {
+#if ENABLE_NETWORK_APPS
+  return wifiManager.isConnecting();
+#else
+  return false;
+#endif
+}
+
 void wifiTurnOn() {
 #if ENABLE_NETWORK_APPS
   wifiManager.connect();

@@ -10,6 +10,15 @@ static const uint16_t CONFIG_VALUE_MAX = 96;
 static const uint8_t CONFIG_WIFI_SAVED_MAX = 3;
 /// Largest supported inactivity timeout for the uint8_t setting, in minutes.
 static const uint8_t CONFIG_LOCKSCREEN_INACTIVITY_MAX_MINUTES = UINT8_MAX;
+/// Supported periodic-task interval range in whole minutes.
+static const uint16_t CONFIG_PERIODIC_INTERVAL_MIN_MINUTES = 1;
+static const uint16_t CONFIG_PERIODIC_INTERVAL_MAX_MINUTES = 24U * 60U;
+/// Fixed hardware policy for low-power periodic wakes.
+static const uint16_t PERIODIC_TASK_CPU_MHZ = 80;
+static const uint16_t PERIODIC_WIFI_CPU_MHZ = 160;
+static const uint8_t PERIODIC_LOW_BATTERY_PERCENT = 15;
+static_assert(PERIODIC_LOW_BATTERY_PERCENT < 20,
+              "Periodic low-battery threshold must stay below 20%");
 
 /// CPU frequency policy stored in system config.
 enum ConfigCpuGovernor : uint8_t {
@@ -66,6 +75,8 @@ struct SystemConfig {
     char password[64];
     char displayName[24];
     bool autoConnect;
+    /// Zero keeps Wi-Fi on; otherwise turn it off after user inactivity.
+    uint8_t autoOffMinutes;
     ConfigWifiSavedNetwork saved[CONFIG_WIFI_SAVED_MAX];
   } wifi;
 
@@ -91,6 +102,7 @@ struct SystemConfig {
     ConfigTimeFormat timeFormat;
     ConfigDateFormat dateFormat;
     ConfigTimeSyncProtocol syncProtocol;
+    uint8_t syncIntervalHours;
     int32_t lastUtcOffsetSeconds;
     char timezone[32];
     char syncServer[96];
@@ -100,6 +112,13 @@ struct SystemConfig {
     float temperatureOffsetC;
     char unit[2];
   } sensors;
+
+  struct {
+    /// Fastest cadence apps are allowed to request; zero disables all hooks.
+    uint16_t minIntervalMinutes;
+    /// Suppresses app hooks, but not the sleep clock, on low battery.
+    bool disableOnLowBattery;
+  } periodic;
 
 };
 

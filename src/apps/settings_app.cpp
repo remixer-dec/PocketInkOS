@@ -5,6 +5,7 @@
 #include "sys/app_config.h"
 #include "sys/builtin_apps.h"
 #include "sys/global.h"
+#include "sys/services/device_controls.h"
 #include "sys/system_config.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
@@ -36,6 +37,7 @@ enum Group : uint8_t {
   GROUP_TIME,
   GROUP_CALIBRATION,
   GROUP_WIFI,
+  GROUP_POWER,
   GROUP_GENERAL,
   GROUP_HOME,
   GROUP_LOCKSCREEN,
@@ -45,6 +47,7 @@ enum RootItem : uint8_t {
   ROOT_TIME,
   ROOT_CALIBRATION,
   ROOT_WIFI,
+  ROOT_POWER,
   ROOT_INTERFACE,
   ROOT_APPS,
   ROOT_ABOUT,
@@ -54,6 +57,7 @@ enum SettingId : uint8_t {
   SETTING_TIME_FORMAT,
   SETTING_DATE_FORMAT,
   SETTING_SYNC_PROTOCOL,
+  SETTING_SYNC_INTERVAL,
   SETTING_SYNC_SERVER,
   SETTING_TIMEZONE,
   SETTING_BATTERY_CALIBRATION,
@@ -62,6 +66,12 @@ enum SettingId : uint8_t {
   SETTING_WIFI_PASSWORD,
   SETTING_WIFI_DISPLAY_NAME,
   SETTING_WIFI_AUTO_CONNECT,
+  SETTING_WIFI_AUTO_OFF,
+  SETTING_CPU_GOVERNOR,
+  SETTING_CPU_MHZ,
+  SETTING_PERIODIC_MIN_INTERVAL,
+  SETTING_PERIODIC_DISABLE_LOW_BATTERY,
+  SETTING_PERIODIC_LOW_BATTERY_PERCENT,
   SETTING_HOME_LAYOUT,
   SETTING_HOME_SUN_BUTTON,
   SETTING_HOME_WIDGETS,
@@ -77,6 +87,7 @@ enum class SettingKind : uint8_t {
   MultiSelect,
   IconPicker,
   AppPicker,
+  ReadOnly,
   Reserved,
 };
 
@@ -100,8 +111,9 @@ struct SettingDefinition {
   uint8_t inputCapacity;
 };
 
-const char *const kRootLabels[] = {"Date & time", "Calibration", "Wi-Fi",
-                                   "Interface", "Apps", "About"};
+const char *const kRootLabels[] = {
+    "Date & time", "Calibration", "Wi-Fi", "Power management",
+    "Interface", "Apps", "About"};
 const char *const kInterfaceLabels[] = {"General", "Home", "Lockscreen"};
 
 const SettingOption kTimeFormatOptions[] = {
@@ -119,6 +131,12 @@ const SettingOption kSyncProtocolOptions[] = {
     {"HTTPS", "https"},
     {"NTP", "ntp"},
 };
+const SettingOption kSyncIntervalOptions[] = {
+    {"Never", "0"},        {"Every hour", "1"},
+    {"Every 3 hours", "3"},
+    {"Every 6 hours", "6"}, {"Every 12 hours", "12"},
+    {"Every day", "24"},
+};
 const SettingOption kSyncServerOptions[] = {
     {"HTTPS default", "https://time.now/developer/api/ip"},
     {"NTP pool", "pool.ntp.org"},
@@ -134,6 +152,31 @@ const SettingOption kTimezoneOptions[] = {
 const SettingOption kBoolOptions[] = {
     {"OFF", "false"},
     {"ON", "true"},
+};
+const SettingOption kRunPeriodicLowBatteryOptions[] = {
+    {"OFF", "true"},
+    {"ON", "false"},
+};
+const SettingOption kCpuGovernorOptions[] = {
+    {"Fixed", "fixed"},
+    {"Balanced", "balanced"},
+};
+const SettingOption kCpuMhzOptions[] = {
+    {"80 MHz", "80"},
+    {"160 MHz", "160"},
+    {"240 MHz", "240"},
+};
+const SettingOption kPeriodicFloorOptions[] = {
+    {"Tasks disabled", "0"}, {"1 minute", "1"},
+    {"5 minutes", "5"},     {"10 minutes", "10"},
+    {"15 minutes", "15"},   {"30 minutes", "30"},
+    {"1 hour", "60"},       {"3 hours", "180"},
+    {"6 hours", "360"},     {"12 hours", "720"},
+    {"1 day", "1440"},
+};
+const SettingOption kWifiAutoOffOptions[] = {
+    {"Never", "0"},   {"1 minute", "1"}, {"2 minutes", "2"},
+    {"5 minutes", "5"}, {"10 minutes", "10"}, {"30 minutes", "30"},
 };
 const SettingOption kLayoutOptions[] = {
     {"Default", "default"},
@@ -160,6 +203,11 @@ const SettingDefinition kTimeSettings[] = {
      static_cast<uint8_t>(sizeof(kSyncProtocolOptions) /
                           sizeof(kSyncProtocolOptions[0])),
      0},
+    {SETTING_SYNC_INTERVAL, "Sync interval", "time.syncIntervalHours",
+     SettingKind::Options, kSyncIntervalOptions,
+     static_cast<uint8_t>(sizeof(kSyncIntervalOptions) /
+                          sizeof(kSyncIntervalOptions[0])),
+     0},
     {SETTING_SYNC_SERVER, "Sync server", "time.syncServer", SettingKind::Options,
      kSyncServerOptions,
      static_cast<uint8_t>(sizeof(kSyncServerOptions) / sizeof(kSyncServerOptions[0])),
@@ -184,9 +232,44 @@ const SettingDefinition kWifiSettings[] = {
      nullptr, 0, 64},
     {SETTING_WIFI_DISPLAY_NAME, "Display name", "wifi.displayName",
      SettingKind::Text, nullptr, 0, 24},
-    {SETTING_WIFI_AUTO_CONNECT, "Auto connect", "wifi.autoConnect",
+    {SETTING_WIFI_AUTO_CONNECT, "Wi-Fi autoconnect", "wifi.autoConnect",
      SettingKind::Options, kBoolOptions,
      static_cast<uint8_t>(sizeof(kBoolOptions) / sizeof(kBoolOptions[0])), 0},
+};
+
+const SettingDefinition kPowerSettings[] = {
+    {SETTING_CPU_GOVERNOR, "CPU governor", "cpu.governor",
+     SettingKind::Options, kCpuGovernorOptions,
+     static_cast<uint8_t>(sizeof(kCpuGovernorOptions) /
+                          sizeof(kCpuGovernorOptions[0])),
+     0},
+    {SETTING_CPU_MHZ, "CPU maximum", "cpu.mhz", SettingKind::Options,
+     kCpuMhzOptions,
+     static_cast<uint8_t>(sizeof(kCpuMhzOptions) /
+                          sizeof(kCpuMhzOptions[0])),
+     0},
+    {SETTING_PERIODIC_MIN_INTERVAL, "Periodic task floor",
+     "periodic.minIntervalMinutes", SettingKind::Options,
+     kPeriodicFloorOptions,
+     static_cast<uint8_t>(sizeof(kPeriodicFloorOptions) /
+                          sizeof(kPeriodicFloorOptions[0])),
+     0},
+    {SETTING_PERIODIC_DISABLE_LOW_BATTERY, "Periodic on low battery",
+     "periodic.disableOnLowBattery", SettingKind::Options,
+     kRunPeriodicLowBatteryOptions,
+     static_cast<uint8_t>(sizeof(kRunPeriodicLowBatteryOptions) /
+                          sizeof(kRunPeriodicLowBatteryOptions[0])),
+     0},
+    {SETTING_PERIODIC_LOW_BATTERY_PERCENT, "Low battery limit", nullptr,
+     SettingKind::ReadOnly, nullptr, 0, 0},
+    {SETTING_WIFI_AUTO_CONNECT, "Wi-Fi autoconnect", "wifi.autoConnect",
+     SettingKind::Options, kBoolOptions,
+     static_cast<uint8_t>(sizeof(kBoolOptions) / sizeof(kBoolOptions[0])), 0},
+    {SETTING_WIFI_AUTO_OFF, "Auto Wi-Fi off", "wifi.autoOffMinutes",
+     SettingKind::Options, kWifiAutoOffOptions,
+     static_cast<uint8_t>(sizeof(kWifiAutoOffOptions) /
+                          sizeof(kWifiAutoOffOptions[0])),
+     0},
 };
 
 const SettingDefinition kGeneralSettings[] = {
@@ -230,6 +313,9 @@ const SettingGroupDefinition kSettingGroups[] = {
                           sizeof(kCalibrationSettings[0]))},
     {"WI-FI", kWifiSettings,
      static_cast<uint8_t>(sizeof(kWifiSettings) / sizeof(kWifiSettings[0]))},
+    {"POWER MANAGEMENT", kPowerSettings,
+     static_cast<uint8_t>(sizeof(kPowerSettings) /
+                          sizeof(kPowerSettings[0]))},
     {"GENERAL", kGeneralSettings,
      static_cast<uint8_t>(sizeof(kGeneralSettings) /
                           sizeof(kGeneralSettings[0]))},
@@ -336,7 +422,8 @@ uint8_t optionCountFor(const SettingDefinition &setting) {
   if (setting.id == SETTING_LOCKSCREEN_INACTIVITY) {
     return setting.optionCount + 1;
   }
-  if (setting.id != SETTING_SYNC_SERVER) {
+  if (setting.id != SETTING_SYNC_SERVER &&
+      setting.id != SETTING_PERIODIC_MIN_INTERVAL) {
     return setting.optionCount;
   }
   char current[CONFIG_VALUE_MAX] = {};
@@ -379,12 +466,20 @@ bool optionForIndex(const SettingDefinition &setting, uint16_t index,
     value = setting.options[index].value;
     return true;
   }
-  if (setting.id != SETTING_SYNC_SERVER || index != setting.optionCount) {
+  if (index != setting.optionCount ||
+      (setting.id != SETTING_SYNC_SERVER &&
+       setting.id != SETTING_PERIODIC_MIN_INTERVAL)) {
     return false;
   }
   configGet(setting.key, customValue, customValueSize);
   if (hasStaticOption(setting, customValue)) {
     return false;
+  }
+  if (setting.id == SETTING_PERIODIC_MIN_INTERVAL) {
+    snprintf(customLabel, customLabelSize, "Current: %s min", customValue);
+    label = customLabel;
+    value = customValue;
+    return true;
   }
   snprintf(customLabel, customLabelSize, "Current: %s", customValue);
   label = customLabel;
@@ -440,6 +535,19 @@ const char *optionLabel(const SettingDefinition &setting, const char *value) {
     }
   }
   return value;
+}
+
+bool settingCurrentValue(const SettingDefinition &setting, char *out,
+                         size_t outSize) {
+  if (out == nullptr || outSize == 0) {
+    return false;
+  }
+  if (setting.id == SETTING_CPU_MHZ) {
+    snprintf(out, outSize, "%u",
+             static_cast<unsigned>(deviceControlsSelectedCpuMhz()));
+    return true;
+  }
+  return setting.key != nullptr && configGet(setting.key, out, outSize);
 }
 
 const char *appOptionLabel(const AppConfigSetting &setting, const char *value) {
@@ -517,7 +625,7 @@ void SettingsApp::openInput(uint8_t setting) {
   if (!allocateInput(capacity)) {
     return;
   }
-  configGet(definition->key, input, inputCapacity);
+  settingCurrentValue(*definition, input, inputCapacity);
   input[inputCapacity - 1] = '\0';
   inputKeyboard.setLayout(definition->kind == SettingKind::Numeric
                                   || definition->id == SETTING_LOCKSCREEN_INACTIVITY
@@ -727,8 +835,12 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
       label = setting.label;
       if (setting.kind == SettingKind::Reserved) {
         value = "reserved";
+      } else if (setting.kind == SettingKind::ReadOnly) {
+        snprintf(pickerLabel, sizeof(pickerLabel), "%u%%",
+                 static_cast<unsigned>(PERIODIC_LOW_BATTERY_PERCENT));
+        value = pickerLabel;
       } else {
-        configGet(setting.key, currentValue, sizeof(currentValue));
+        settingCurrentValue(setting, currentValue, sizeof(currentValue));
         value = setting.kind == SettingKind::Options
                     ? optionLabel(setting, currentValue)
                     : currentValue;
@@ -743,6 +855,13 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
                        static_cast<unsigned>(minutes));
               value = pickerLabel;
             }
+          }
+        }
+        if (setting.id == SETTING_PERIODIC_MIN_INTERVAL) {
+          if (!hasStaticOption(setting, currentValue)) {
+            snprintf(pickerLabel, sizeof(pickerLabel), "%s min",
+                     currentValue);
+            value = pickerLabel;
           }
         }
         valueUsesIconFont = setting.kind == SettingKind::IconPicker;
@@ -763,7 +882,7 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
         continue;
       }
       char current[CONFIG_VALUE_MAX] = {};
-      configGet(editing->key, current, sizeof(current));
+      settingCurrentValue(*editing, current, sizeof(current));
       if (editing->id == SETTING_LOCKSCREEN_INACTIVITY) {
         uint8_t minutes = 0;
         const bool valid =
@@ -947,6 +1066,8 @@ void SettingsApp::activateListIndex(uint16_t index) {
   if (page == Page::Root) {
     if (index == ROOT_APPS) {
       openAppList();
+    } else if (index == ROOT_POWER) {
+      openGroup(GROUP_POWER);
     } else if (index == ROOT_INTERFACE) {
       openInterface();
     } else if (index == ROOT_ABOUT) {
@@ -977,6 +1098,8 @@ void SettingsApp::activateListIndex(uint16_t index) {
     const SettingDefinition &setting = settings[index];
     if (setting.kind == SettingKind::Reserved) {
       showPopup("RESERVED");
+    } else if (setting.kind == SettingKind::ReadOnly) {
+      showPopup("FIXED AT 15%");
     } else if (setting.kind == SettingKind::Options) {
       openOptions(setting.id);
     } else if (setting.kind == SettingKind::IconPicker) {
@@ -1149,6 +1272,10 @@ void SettingsApp::saveSetting(const char *value) {
   }
   if (saved) {
     shellLayoutConfigReload();
+    if (setting->id == SETTING_CPU_GOVERNOR ||
+        setting->id == SETTING_CPU_MHZ) {
+      deviceControlsApplyConfig();
+    }
   }
   releaseInput();
   page = Page::Group;

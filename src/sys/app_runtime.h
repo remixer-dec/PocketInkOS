@@ -44,6 +44,60 @@ enum class AppEventResult : uint8_t {
   Reboot,
 };
 
+/// Initialization tier available to a periodic hook during a deep-sleep wake.
+enum class PeriodicWakeLevel : uint8_t {
+  /// RTC date/time and battery policy only.
+  Basic = 1,
+  /// Core OS services and SD storage, with radios kept off.
+  System = 2,
+  /// System services plus the previously enabled Wi-Fi connection.
+  Network = 3,
+};
+
+/// E-paper initialization requested independently from a periodic wake tier.
+enum class PeriodicDisplayMode : uint8_t {
+  None = 0,
+  /// Reuse the cold-partial sleep-clock path without a full-screen flash.
+  Partial = 1,
+  /// Allow a normal full display initialization and refresh.
+  Full = 2,
+};
+
+/// Result returned by one invocation of an app's periodic hook.
+enum class PeriodicTaskAction : uint8_t {
+  Complete = 0,
+  /// Invoke the same hook again after initializing core OS services.
+  RequestSystem = 1,
+  /// Invoke the same hook again after the permitted Wi-Fi attempt completes.
+  RequestNetwork = 2,
+  /// Continue into the normal interactive boot path.
+  WakeDevice = 3,
+  /// Continue normal boot and bring this app to the foreground.
+  WakeApp = 4,
+};
+
+/// Read-only capabilities and clock state supplied to a periodic hook.
+struct PeriodicTaskContext {
+  int64_t localUnix = 0;
+  uint16_t intervalMinutes = 0;
+  PeriodicWakeLevel wakeLevel = PeriodicWakeLevel::Basic;
+  PeriodicDisplayMode displayMode = PeriodicDisplayMode::None;
+  bool clockSet = false;
+  bool wifiPreferred = false;
+  bool wifiConnected = false;
+  bool lowBattery = false;
+  /// Non-null only when the app registered a display mode for this hook.
+  Adafruit_GFX *display = nullptr;
+};
+
+/// Static schedule for the single periodic hook an app may register.
+struct PeriodicTaskSchedule {
+  /// Requested cadence in whole minutes; zero means no registered hook.
+  uint16_t intervalMinutes = 0;
+  PeriodicWakeLevel wakeLevel = PeriodicWakeLevel::Basic;
+  PeriodicDisplayMode displayMode = PeriodicDisplayMode::None;
+};
+
 /// Common runtime interface used to draw apps and dispatch touch input.
 class ActiveApp {
 public:
@@ -123,6 +177,9 @@ typedef void (*AppRawTouchHandler)(const TouchEvent &event);
 typedef size_t (*AppSaveContextHandler)(uint8_t *buffer, size_t capacity);
 /// Restores app-owned state from a previously saved buffer.
 typedef void (*AppRestoreContextHandler)(const uint8_t *buffer, size_t length);
+/// Runs one periodic app hook at the currently initialized wake tier.
+typedef PeriodicTaskAction (*AppPeriodicHandler)(
+    const PeriodicTaskContext &context);
 
 /// Bundles runtime callbacks for one app, including lifecycle hooks like onEnter,
 /// onExit, and onRelease, button handlers such as onMenu and onPowerLong, raw touch
@@ -139,6 +196,8 @@ struct AppBehavior {
   AppRawTouchHandler onRawTouch = nullptr;
   AppSaveContextHandler onSaveContext = nullptr;
   AppRestoreContextHandler onRestoreContext = nullptr;
+  AppPeriodicHandler onPeriodic = nullptr;
+  PeriodicTaskSchedule periodic = {};
   AppCallback onRelease = nullptr;
 };
 

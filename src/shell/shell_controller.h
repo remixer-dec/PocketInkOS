@@ -72,6 +72,8 @@ public:
   bool updateActiveApp();
   /// Bridges file-manager .pink and .js launch requests into app activation.
   bool handlePendingFilesPinkLaunch();
+  /// Brings a periodic wake target forward without resetting it when already active.
+  bool wakeAppById(const char *id);
   /// Revalidates active/menu state after built-in or .pink catalog changes.
   void handleCatalogChanged();
   /// Updates the home clock without forcing redraws every loop iteration.

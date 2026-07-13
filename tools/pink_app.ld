@@ -17,6 +17,13 @@ SECTIONS
     *(.rodata .rodata.*)
   }
 
+  /* Build-only metadata. The packer reads this section but does not copy it
+     into the runtime image. Keep it after rodata so .text remains based at 0. */
+  .pink_metadata : ALIGN(4)
+  {
+    KEEP(*(.pink_metadata))
+  }
+
   .data : ALIGN(4)
   {
     *(.data .data.*)

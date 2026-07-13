@@ -1,6 +1,7 @@
 #ifndef ALARM_APP_H
 #define ALARM_APP_H
 
+#include "sys/app_runtime.h"
 #include "sys/services/touch_input.h"
 #include "ui/ui_helpers.h"
 
@@ -19,6 +20,8 @@ public:
   bool handlePowerButton();
   bool update();
   bool hasActiveSession() const;
+  /// Level-1 periodic hook that decides whether the interactive alarm must wake.
+  static PeriodicTaskAction onPeriodic(const PeriodicTaskContext &context);
 
 private:
   struct AudioState;
@@ -38,6 +41,8 @@ private:
   void adjustTimer(int16_t delta);
   void adjustAlarmHour(int8_t delta);
   void adjustAlarmMinute(int8_t delta);
+  void restorePeriodicState();
+  void savePeriodicState() const;
   void startTimer();
   void stopTimer();
   void drawTimer(Adafruit_GFX &gfx);

@@ -97,6 +97,19 @@ struct BehaviorBuilder {
     return next;
   }
 
+  /// Sets the app's single periodic wake callback and static schedule.
+  BehaviorBuilder withPeriodic(
+      AppPeriodicHandler handler, uint16_t intervalMinutes,
+      PeriodicWakeLevel wakeLevel = PeriodicWakeLevel::Basic,
+      PeriodicDisplayMode displayMode = PeriodicDisplayMode::None) const {
+    BehaviorBuilder next = *this;
+    next.behavior.onPeriodic = handler;
+    next.behavior.periodic.intervalMinutes = intervalMinutes;
+    next.behavior.periodic.wakeLevel = wakeLevel;
+    next.behavior.periodic.displayMode = displayMode;
+    return next;
+  }
+
   /// Sets the release callback used when app-owned resources should be dropped.
   BehaviorBuilder withRelease(AppCallback handler) const {
     BehaviorBuilder next = *this;
@@ -132,6 +145,10 @@ bool tryGetAppAtIndex(size_t index, AppCatalogEntry &out);
 /// Looks up an app by stable id across built-in and external app catalogs, even
 /// when the app is hidden from the launcher because it is the quick-access app.
 bool findAppById(const char *id, AppCatalogEntry &out);
+/// Counts built-in definitions without touching the SD-backed external catalog.
+size_t builtInAppDefinitionCount();
+/// Returns one immutable built-in definition, or nullptr when out of range.
+const AppDefinition *builtInAppDefinitionAt(size_t index);
 /// Rebuilds cached catalog state after config, storage, or external apps change.
 void refreshAppCatalog();
 /// Takes the pending .pink executable launch path from the files app.

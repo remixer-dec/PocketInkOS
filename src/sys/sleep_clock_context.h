@@ -17,6 +17,8 @@ struct SleepClockSnapshot {
   int32_t utcOffsetSeconds;
   /// Requested wake interval in seconds.
   uint16_t wakeIntervalSeconds;
+  /// Whether the retained timestamp reconstructs the physical panel frame.
+  bool previousFrameValid;
   /// Clock presentation used for the previous e-paper frame.
   ConfigTimeFormat timeFormat;
 };
@@ -32,7 +34,8 @@ bool sleepClockContextLoad(SleepClockSnapshot &snapshot);
 void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
                              int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
-                             ConfigTimeFormat timeFormat);
+                             ConfigTimeFormat timeFormat,
+                             bool previousFrameValid = true);
 /// Clears periodic sleep clock state.
 void sleepClockContextClear();
 

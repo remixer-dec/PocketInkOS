@@ -10,6 +10,8 @@ char wifiStatusIcon();
 bool wifiIsOn();
 /// Reports whether the shared Wi-Fi client currently has a network connection.
 bool wifiIsConnected();
+/// Reports whether a station association attempt is still in progress.
+bool wifiConnectionInProgress();
 /// Enables Wi-Fi from shell UI such as quick settings.
 void wifiTurnOn();
 /// Disables Wi-Fi and lets shell UI reflect the power-saving state.

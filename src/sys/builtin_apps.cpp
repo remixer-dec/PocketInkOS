@@ -255,6 +255,9 @@ const AppDefinition builtInApps[] = {
                                                &AlarmApp::handleMenuButton>)
             .withPowerBtn(dirtyIfHandledMethod<AlarmApp, alarmApp,
                                                 &AlarmApp::handlePowerButton>)
+            .withPeriodic(AlarmApp::onPeriodic, 1,
+                          PeriodicWakeLevel::Basic,
+                          PeriodicDisplayMode::None)
             .withRelease([]() { alarmApp.release(); })
             .build(),
         true),
@@ -489,6 +492,12 @@ bool findAppById(const char *id, AppCatalogEntry &out) {
                                       sizeof(out.id), out.label,
                                       sizeof(out.label), out.icon,
                                       sizeof(out.icon));
+}
+
+size_t builtInAppDefinitionCount() { return builtInAppCount; }
+
+const AppDefinition *builtInAppDefinitionAt(size_t index) {
+  return index < builtInAppCount ? &builtInApps[index] : nullptr;
 }
 
 void refreshAppCatalog() {}

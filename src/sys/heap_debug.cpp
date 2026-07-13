@@ -1,9 +1,13 @@
 #include "heap_debug.h"
+#include "sys/debug_logging.h"
 
 #include "esp_heap_caps.h"
 #include "esp_rom_sys.h"
 
 void heapMark(const char *tag) {
+  if (!debugLoggingEnabled()) {
+    return;
+  }
   multi_heap_info_t info;
   heap_caps_get_info(&info, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
