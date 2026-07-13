@@ -16,6 +16,7 @@
 #include "sys/services/system_stage_service.h"
 #include "sys/services/time_sync.h"
 #include "sys/system_config.h"
+#include "sys/wake_trace.h"
 
 #include <Arduino.h>
 #include <cstring>
@@ -105,6 +106,7 @@ uint64_t PeriodicWakeService::wakeIntervalUs(uint16_t intervalSeconds) {
 }
 
 bool PeriodicWakeService::syncClockFromRtc(int32_t utcOffsetSeconds) {
+  wakeTraceSetRtcReadStarted();
 #if ENABLE_RTC_CLOCK
   // Touch and RTC share I2C. Release touch reset while reading, then isolate it.
   pinMode(EPD_TP_RST_PIN, OUTPUT);
@@ -114,6 +116,7 @@ bool PeriodicWakeService::syncClockFromRtc(int32_t utcOffsetSeconds) {
   rtcClock.begin();
   int64_t localUnix = 0;
   const bool updated = rtcClock.readLocalUnix(localUnix);
+  wakeTraceSetRtcRead(updated, localUnix);
   if (updated) {
     deviceClock.restoreLocalUnix(localUnix, utcOffsetSeconds);
   }
@@ -121,6 +124,7 @@ bool PeriodicWakeService::syncClockFromRtc(int32_t utcOffsetSeconds) {
   return updated;
 #else
   (void)utcOffsetSeconds;
+  wakeTraceSetRtcRead(false, 0);
   return false;
 #endif
 }
@@ -172,7 +176,8 @@ void PeriodicWakeService::seedSleepClockPreviousFrame(
     const SleepClockSnapshot &sleepClock) {
   if (sleepClock.clockSet) {
     deviceClock.restoreLocalUnix(sleepClock.localUnix,
-                                 sleepClock.utcOffsetSeconds);
+                                 sleepClock.utcOffsetSeconds,
+                                 sleepClock.timeEstimated);
   }
 
   display.lock();
@@ -187,7 +192,8 @@ void PeriodicWakeService::seedSleepClockPreviousFrame(
     }
   }
   deviceClock.formatDate(dateText, sizeof(dateText));
-  drawLockscreenClockScreen(display, timeText, dateText);
+  drawLockscreenClockScreen(display, timeText, dateText,
+                            sleepClock.timeEstimated);
   display.seedPartialBothImages();
   display.unlock();
 }
@@ -198,9 +204,11 @@ void PeriodicWakeService::initializeDisplay(
       static_cast<uint8_t>(initializedDisplay) >= static_cast<uint8_t>(mode)) {
     return;
   }
+  wakeTraceSetDisplay(WakeTracePhase::DisplayInitializing, 1);
   if (mode == PeriodicDisplayMode::Full || !sleepClock.previousFrameValid) {
     display.begin();
     initializedDisplay = PeriodicDisplayMode::Full;
+    wakeTraceSetDisplay(WakeTracePhase::DisplayReady, 2);
     return;
   }
   if (kRetainEpdPower) {
@@ -210,12 +218,14 @@ void PeriodicWakeService::initializeDisplay(
     seedSleepClockPreviousFrame(sleepClock);
   }
   initializedDisplay = PeriodicDisplayMode::Partial;
+  wakeTraceSetDisplay(WakeTracePhase::DisplayReady, 2);
 }
 
 void PeriodicWakeService::flushDisplay(PeriodicDisplayMode mode) {
   if (mode == PeriodicDisplayMode::None) {
     return;
   }
+  wakeTraceSetDisplay(WakeTracePhase::DisplayFlushing, 3);
   display.lock();
   if (initializedDisplay == PeriodicDisplayMode::Full) {
     display.flush();
@@ -223,10 +233,11 @@ void PeriodicWakeService::flushDisplay(PeriodicDisplayMode mode) {
     display.flushPartial();
   }
   display.unlock();
+  wakeTraceSetDisplay(WakeTracePhase::DisplayFlushed, 4);
 }
 
 void PeriodicWakeService::renderSleepClockScreen(
-    bool partialUpdate, ConfigTimeFormat timeFormat) {
+    bool partialUpdate, ConfigTimeFormat timeFormat, bool timeEstimated) {
   char timeText[16];
   char dateText[16];
   deviceClock.formatTime(timeText, sizeof(timeText), timeFormat);
@@ -240,13 +251,19 @@ void PeriodicWakeService::renderSleepClockScreen(
 
   display.lock();
   display.clear();
-  drawLockscreenClockScreen(display, timeText, dateText);
+  drawLockscreenClockScreen(display, timeText, dateText, timeEstimated);
+  int64_t renderedLocalUnix = 0;
+  deviceClock.snapshotLocalUnix(renderedLocalUnix);
+  wakeTraceSetDisplay(WakeTracePhase::DisplayFlushing, 3,
+                      renderedLocalUnix);
   if (partialUpdate) {
     display.flushPartial();
   } else {
     display.flush();
   }
   display.unlock();
+  wakeTraceSetDisplay(WakeTracePhase::DisplayFlushed, 4,
+                      renderedLocalUnix);
 }
 
 void PeriodicWakeService::prepareForPowerTransition() {
@@ -258,6 +275,8 @@ void PeriodicWakeService::prepareForPowerTransition() {
 void PeriodicWakeService::enterSleepClockDeepSleep() {
   int64_t localUnix = 0;
   const bool clockSet = deviceClock.snapshotLocalUnix(localUnix);
+  const bool timeEstimated = deviceClock.isEstimated();
+  wakeTraceBeginSleepSession(localUnix);
   const PeriodicWakePolicy policy =
       periodicPolicyFromConfig(currentSystemConfig());
   PinkPeriodicPlan pinkPlan;
@@ -269,9 +288,12 @@ void PeriodicWakeService::enterSleepClockDeepSleep() {
                                   pinkPlan.nextDueMinute);
   const uint16_t intervalSeconds = wakeIntervalSeconds(clockSet, localUnix);
   const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
-  sleepClockContextStart(clockSet, localUnix, deviceClock.utcOffsetSeconds(),
-                         intervalSeconds, timeFormat);
-  renderSleepClockScreen(false, timeFormat);
+  sleepClockContextStart(clockSet, timeEstimated, localUnix,
+                         deviceClock.utcOffsetSeconds(), intervalSeconds,
+                         timeFormat);
+  wakeTraceSetSleep(WakeTracePhase::ContextStored, 1);
+  renderSleepClockScreen(false, timeFormat, timeEstimated);
+  wakeTraceSetSleep(WakeTracePhase::PreparingSleep, 2);
   prepareForPowerTransition();
   enterDeepSleep(wakeIntervalUs(intervalSeconds), kRetainEpdPower);
   rebootDevice();
@@ -279,18 +301,27 @@ void PeriodicWakeService::enterSleepClockDeepSleep() {
 
 bool PeriodicWakeService::handleTimerWake() {
   SleepClockSnapshot sleepClock;
-  if (!deepSleepWokeFromTimer() || !sleepClockContextLoad(sleepClock)) {
+  if (!deepSleepWokeFromTimer()) {
     return false;
   }
+  if (!sleepClockContextLoad(sleepClock)) {
+    wakeTraceSetContext(false, 0);
+    return false;
+  }
+  wakeTraceSetContext(true, sleepClock.localUnix);
 
   setCpuFrequencyMhz(kWakeCpuMhz);
   disableWirelessForSleep();
+
+  // Seeding reconstructs the prior frame through DeviceClock. Do it before
+  // loading this wake's authoritative time so it cannot overwrite the new one.
+  initializeDisplay(PeriodicDisplayMode::Partial, sleepClock);
 
   bool clockSet = syncClockFromRtc(sleepClock.utcOffsetSeconds);
   if (!clockSet && sleepClock.clockSet) {
     deviceClock.restoreLocalUnix(
         sleepClock.localUnix + sleepClock.wakeIntervalSeconds,
-        sleepClock.utcOffsetSeconds);
+        sleepClock.utcOffsetSeconds, true);
     clockSet = true;
   }
   if (waitForRtcMinuteChangeIfNeeded()) {
@@ -301,6 +332,7 @@ bool PeriodicWakeService::handleTimerWake() {
   if (!deviceClock.snapshotLocalUnix(localUnix)) {
     clockSet = false;
   }
+  wakeTraceSetClockAdvanced(localUnix);
 
   PeriodicRetainedSnapshot retained;
   if (!periodicRetainedLoad(retained)) {
@@ -308,7 +340,14 @@ bool PeriodicWakeService::handleTimerWake() {
   }
   registerSystemTasks(retained.policy.timeSyncIntervalHours);
 
+  const int64_t localMinute = localUnix / 60;
+  const bool dispatchClaimed =
+      clockSet && periodicRetainedClaimDispatchMinute(localMinute);
+  wakeTraceSetDispatch(WakeTracePhase::RetainedClaim, 1);
+
+  wakeTraceSetDispatch(WakeTracePhase::BatteryReading, 2);
   batteryMonitor.refresh();
+  wakeTraceSetDispatch(WakeTracePhase::BatteryReady, 2);
   if (hooks.batteryCutoffReached != nullptr &&
       hooks.batteryCutoffReached()) {
     initializeDisplay(PeriodicDisplayMode::Partial, sleepClock);
@@ -323,10 +362,6 @@ bool PeriodicWakeService::handleTimerWake() {
       batteryAtWake.percentage <= PERIODIC_LOW_BATTERY_PERCENT;
   const bool tasksSuppressed =
       retained.policy.disableOnLowBattery && lowBattery;
-  const int64_t localMinute = localUnix / 60;
-  const bool dispatchClaimed =
-      clockSet && periodicRetainedClaimDispatchMinute(localMinute);
-
   PeriodicWakeSession session(localUnix, retained.lastDispatchMinute, clockSet,
                               retained.policy, retained.wifiPreferred,
                               lowBattery);
@@ -335,6 +370,7 @@ bool PeriodicWakeService::handleTimerWake() {
 
   if (dispatchClaimed && !tasksSuppressed && session.hasPendingTasks() &&
       session.nextWakeLevel() == PeriodicWakeLevel::Basic) {
+    wakeTraceSetDispatch(WakeTracePhase::BasicProfiledDispatch, 3);
     const PeriodicDisplayMode mode =
         session.displayModeFor(PeriodicWakeLevel::Basic);
     initializeDisplay(mode, sleepClock);
@@ -353,6 +389,7 @@ bool PeriodicWakeService::handleTimerWake() {
       localMinute >= retained.pinkNextDueMinute;
   if (dispatchClaimed && !tasksSuppressed &&
       (session.hasPendingTasks() || retainedPinkDue)) {
+    wakeTraceSetDispatch(WakeTracePhase::SystemDispatch, 4);
     systemStage.initialize();
     PeriodicWakePolicy activePolicy =
         periodicPolicyFromConfig(currentSystemConfig());
@@ -416,6 +453,7 @@ bool PeriodicWakeService::handleTimerWake() {
          session.nextWakeLevel() == PeriodicWakeLevel::Network) ||
         pinkPlan.dueAtNetwork;
     if (networkDue) {
+      wakeTraceSetDispatch(WakeTracePhase::NetworkDispatch, 5);
       initializeNetworkStage(retained.wifiPreferred);
       PeriodicDisplayMode networkDisplay = PeriodicDisplayMode::None;
       if (session.hasPendingTasks() &&
@@ -476,21 +514,31 @@ bool PeriodicWakeService::handleTimerWake() {
   if (wakeDevice) {
     return false;
   }
+  return finishTimerWake(sleepClock, clockSet, localUnix,
+                         keepPeriodicDisplay);
+}
+
+bool PeriodicWakeService::finishTimerWake(
+    const SleepClockSnapshot &sleepClock, bool clockSet, int64_t localUnix,
+    bool keepPeriodicDisplay) {
+  const bool timeEstimated = deviceClock.isEstimated();
 
   if (!keepPeriodicDisplay) {
     initializeDisplay(PeriodicDisplayMode::Partial, sleepClock);
     renderSleepClockScreen(
         initializedDisplay == PeriodicDisplayMode::Partial,
-        sleepClock.timeFormat);
+        sleepClock.timeFormat, timeEstimated);
   }
 
   if (!deviceClock.snapshotLocalUnix(localUnix)) {
     clockSet = false;
   }
   const uint16_t intervalSeconds = wakeIntervalSeconds(clockSet, localUnix);
-  sleepClockContextUpdate(clockSet, localUnix,
+  sleepClockContextUpdate(clockSet, timeEstimated, localUnix,
                           deviceClock.utcOffsetSeconds(), intervalSeconds,
                           sleepClock.timeFormat, !keepPeriodicDisplay);
+  wakeTraceSetSleep(WakeTracePhase::ContextStored, 1);
+  wakeTraceSetSleep(WakeTracePhase::PreparingSleep, 2);
   prepareForPowerTransition();
   enterDeepSleep(wakeIntervalUs(intervalSeconds), kRetainEpdPower);
   rebootDevice();

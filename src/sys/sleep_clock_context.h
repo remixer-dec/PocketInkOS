@@ -9,8 +9,10 @@
 struct SleepClockSnapshot {
   /// True when periodic sleep clock mode is active.
   bool active;
-  /// Whether localUnix is based on a trusted clock value.
+  /// Whether localUnix contains a usable clock value.
   bool clockSet;
+  /// Whether localUnix was advanced from retained state after an RTC failure.
+  bool timeEstimated;
   /// Local Unix timestamp captured for the next wake cycle.
   int64_t localUnix;
   /// UTC offset paired with localUnix.
@@ -24,14 +26,16 @@ struct SleepClockSnapshot {
 };
 
 /// Starts periodic sleep clock mode with the current clock state.
-void sleepClockContextStart(bool clockSet, int64_t localUnix,
+void sleepClockContextStart(bool clockSet, bool timeEstimated,
+                            int64_t localUnix,
                             int32_t utcOffsetSeconds,
                             uint16_t wakeIntervalSeconds,
                             ConfigTimeFormat timeFormat);
 /// Loads periodic sleep clock state after wake.
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot);
 /// Updates periodic sleep clock state before returning to sleep.
-void sleepClockContextUpdate(bool clockSet, int64_t localUnix,
+void sleepClockContextUpdate(bool clockSet, bool timeEstimated,
+                             int64_t localUnix,
                              int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
                              ConfigTimeFormat timeFormat,

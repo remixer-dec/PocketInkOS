@@ -22,6 +22,7 @@ const LockscreenLayoutConfig &lockscreenLayoutConfig();
 void drawLockscreenSleepScreen(AppDisplay &display);
 /// Draws the low-power lockscreen clock frame.
 void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
-                               const char *dateText);
+                               const char *dateText,
+                               bool timeEstimated = false);
 
 #endif

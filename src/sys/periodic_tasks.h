@@ -38,15 +38,11 @@ struct PeriodicTaskStats {
   /// Saturating cumulative duration in 10 ms units.
   uint16_t totalDuration10Ms = 0;
   uint16_t runCount = 0;
-  /// Summed positive battery-voltage drops while USB was disconnected.
-  uint16_t totalBatteryDropMv = 0;
 };
 
-/// Start sample used to attribute elapsed time and battery change to one hook.
+/// Start sample used to attribute elapsed time to one hook.
 struct PeriodicTaskMeasurement {
   uint32_t startedAtMs = 0;
-  uint16_t batteryStartMv = 0;
-  bool usbConnectedAtStart = false;
   /// False when this task was the unfinished callback from an earlier boot.
   bool shouldRun = true;
 };

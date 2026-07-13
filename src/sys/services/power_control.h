@@ -21,5 +21,9 @@ void emergencyPowerOffDevice();
 void enterDeepSleep(uint64_t timerWakeupUs = 0, bool keepEpdPowerOn = false);
 /// Reports whether the current boot was caused by a deep-sleep timer wake.
 bool deepSleepWokeFromTimer();
+/// Platform reset reason used by the retained wake trace.
+int16_t deviceResetReason();
+/// Platform wakeup cause used by the retained wake trace.
+int16_t deviceWakeupCause();
 
 #endif

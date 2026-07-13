@@ -18,6 +18,7 @@
 #include "sys/pink_executable.h"
 #include "sys/periodic_tasks.h"
 #include "sys/sleep_clock_context.h"
+#include "sys/wake_trace.h"
 #include "sys/services/sd_storage.h"
 #include "sys/drivers/usb_status.h"
 #include "sys/services/connectivity_service.h"
@@ -273,9 +274,36 @@ void logSetupStage(const char *stage) {
   Serial.flush();
 }
 
+void logRetainedWakeTrace() {
+  WakeTraceSnapshot trace;
+  if (!wakeTraceLoad(trace)) {
+    Serial.println("[pocketink] wake-trace invalid");
+    return;
+  }
+  Serial.printf(
+      "[pocketink] wake-trace boot=%lu timer=%lu reset=%d wake=%d "
+      "previous-reset=%d previous-wake=%d phase=%s context=%s rtc=%s "
+      "dispatch=%u display=%u sleep=%u retained=%lld rtc-time=%lld "
+      "rendered=%lld\n",
+      static_cast<unsigned long>(trace.bootCount),
+      static_cast<unsigned long>(trace.timerWakeCount), trace.resetReason,
+      trace.wakeupCause, trace.previousResetReason,
+      trace.previousWakeupCause, wakeTracePhaseName(trace.phase),
+      wakeTraceResultName(trace.sleepContext),
+      wakeTraceResultName(trace.rtcRead),
+      static_cast<unsigned>(trace.dispatchStage),
+      static_cast<unsigned>(trace.displayStage),
+      static_cast<unsigned>(trace.sleepStage),
+      static_cast<long long>(trace.retainedLocalUnix),
+      static_cast<long long>(trace.rtcLocalUnix),
+      static_cast<long long>(trace.renderedLocalUnix));
+  Serial.flush();
+}
+
 void setup() {
-  periodicWakeService.registerSystemTasks();
   lowPowerSleepClockWake = deepSleepWokeFromTimer();
+  wakeTraceBeginBoot(deviceResetReason(), deviceWakeupCause(),
+                     lowPowerSleepClockWake);
   debugLoggingSetEnabled(!lowPowerSleepClockWake);
   if (lowPowerSleepClockWake) {
     setCpuFrequencyMhz(LOW_POWER_WAKE_CPU_MHZ);
@@ -313,6 +341,7 @@ void setup() {
     }
   }
   logSetupStage("normal boot");
+  logRetainedWakeTrace();
   sleepClockContextClear();
   heapMark("after-sleep-clock-check");
 

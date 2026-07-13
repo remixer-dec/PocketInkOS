@@ -24,10 +24,13 @@ void DeviceClock::set(int64_t unixTime, int32_t utcOffsetSeconds) {
   utcOffset = utcOffsetSeconds;
   baseMillis = millis();
   setFlag = true;
+  estimatedFlag = false;
   setFilesystemClock(baseUnix + utcOffset);
 }
 
 bool DeviceClock::isSet() const { return setFlag; }
+
+bool DeviceClock::isEstimated() const { return setFlag && estimatedFlag; }
 
 bool DeviceClock::snapshotLocalUnix(int64_t &localUnix) const {
   if (!setFlag) {
@@ -60,8 +63,10 @@ bool DeviceClock::snapshotUnixMillis(int64_t &unixTime,
 }
 
 void DeviceClock::restoreLocalUnix(int64_t localUnix,
-                                   int32_t utcOffsetSeconds) {
+                                   int32_t utcOffsetSeconds,
+                                   bool estimated) {
   set(localUnix - utcOffsetSeconds, utcOffsetSeconds);
+  estimatedFlag = estimated;
 }
 
 int32_t DeviceClock::utcOffsetSeconds() const { return utcOffset; }

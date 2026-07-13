@@ -72,7 +72,7 @@ bool shellContextRestoreAfterSleep(MenuState &menuState,
 
   if (!deviceClock.isSet() && snapshot.system.clockSet) {
     deviceClock.restoreLocalUnix(snapshot.system.clockLocalUnix,
-                                 snapshot.system.clockUtcOffsetSeconds);
+                                 snapshot.system.clockUtcOffsetSeconds, true);
   }
 
   restoreWifiOn(snapshot.system.wifiOn);

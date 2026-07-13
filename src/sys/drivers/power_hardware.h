@@ -17,5 +17,9 @@ void powerHardwareOff();
 void powerHardwareEnterDeepSleep(uint64_t timerWakeupUs, bool keepEpdPowerOn);
 /// Reports whether deep sleep ended because of the timer.
 bool powerHardwareWokeFromTimer();
+/// Returns the platform reset reason as a stable diagnostic integer.
+int16_t powerHardwareResetReason();
+/// Returns the platform wakeup cause as a stable diagnostic integer.
+int16_t powerHardwareWakeupCause();
 
 #endif

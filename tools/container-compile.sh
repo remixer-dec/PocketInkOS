@@ -175,6 +175,7 @@ FILES=( \
   "$ROOT/src/sys/system_fonts.cpp" \
   "$ROOT/src/shell/screenshot.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
+  "$ROOT/src/sys/wake_trace.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/shell/shell_buttons.cpp" \
   "$ROOT/src/ui/components/audio_player_component.cpp" \

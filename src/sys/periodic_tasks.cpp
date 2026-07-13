@@ -1,8 +1,6 @@
 #include "sys/periodic_tasks.h"
 
 #include "sys/builtin_apps.h"
-#include "sys/services/battery_monitor.h"
-#include "sys/drivers/usb_status.h"
 
 #include <Arduino.h>
 
@@ -28,11 +26,11 @@
 namespace {
 
 constexpr uint32_t kPeriodicContextMagic = 0x50544358UL; // PTCX
-constexpr uint32_t kPeriodicStatsMagic = 0x50545354UL;   // PTST
+constexpr uint32_t kPeriodicStatsMagic = 0x50545332UL;   // PTS2
 constexpr size_t kMaxSystemTasks = 8;
 constexpr size_t kMaxTrackedTaskStats = 24;
 
-static_assert(sizeof(PeriodicTaskStats) == 8,
+static_assert(sizeof(PeriodicTaskStats) == 6,
               "RTC periodic stats must stay compact");
 
 struct StoredPeriodicContext {
@@ -200,17 +198,6 @@ uint16_t taskIdHash(const char *id) {
   return folded == 0 ? 1 : folded;
 }
 
-uint16_t batteryMillivolts() {
-  const BatterySnapshot &battery = batteryMonitor.snapshot();
-  if (!battery.valid || battery.voltage <= 0.0f) {
-    return 0;
-  }
-  const float millivolts = battery.voltage * 1000.0f;
-  return millivolts >= 65535.0f
-             ? UINT16_MAX
-             : static_cast<uint16_t>(millivolts + 0.5f);
-}
-
 } // namespace
 
 uint16_t periodicEffectiveIntervalMinutes(uint16_t requestedMinutes,
@@ -326,8 +313,6 @@ PeriodicTaskMeasurement periodicTaskMeasurementStart(const char *taskId) {
   retainedPeriodicStats.inFlightIdHash = idHash;
   retainedPeriodicStats.checksum = statsChecksum(retainedPeriodicStats);
   measurement.startedAtMs = millis();
-  measurement.batteryStartMv = batteryMillivolts();
-  measurement.usbConnectedAtStart = usbConnected();
   return measurement;
 }
 
@@ -337,8 +322,6 @@ void periodicTaskMeasurementFinish(
     return;
   }
   const uint32_t elapsedMs = millis() - measurement.startedAtMs;
-  batteryMonitor.refresh();
-  const uint16_t endMv = batteryMillivolts();
 
   ensureStatsValid();
   const uint16_t idHash = taskIdHash(taskId);
@@ -377,17 +360,6 @@ void periodicTaskMeasurementFinish(
   }
   if (stats.runCount < UINT16_MAX) {
     stats.runCount++;
-  }
-  if (!measurement.usbConnectedAtStart && !usbConnected() && endMv != 0 &&
-      measurement.batteryStartMv > endMv) {
-    const uint16_t drop =
-        static_cast<uint16_t>(measurement.batteryStartMv - endMv);
-    if (UINT16_MAX - stats.totalBatteryDropMv < drop) {
-      stats.totalBatteryDropMv = UINT16_MAX;
-    } else {
-      stats.totalBatteryDropMv =
-          static_cast<uint16_t>(stats.totalBatteryDropMv + drop);
-    }
   }
   retainedPeriodicStats.checksum = statsChecksum(retainedPeriodicStats);
 }

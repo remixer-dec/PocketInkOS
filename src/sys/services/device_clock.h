@@ -11,8 +11,10 @@ class DeviceClock {
 public:
   /// Sets the clock from Unix time and UTC offset.
   void set(int64_t unixTime, int32_t utcOffsetSeconds);
-  /// Returns true after the clock has been set from a trusted source.
+  /// Returns true after the clock has a usable time value.
   bool isSet() const;
+  /// Returns true when the current time was advanced from retained state.
+  bool isEstimated() const;
   /// Captures current local Unix time in seconds.
   bool snapshotLocalUnix(int64_t &localUnix) const;
   /// Captures current local Unix time and milliseconds into the current second.
@@ -23,7 +25,8 @@ public:
   bool snapshotUnixMillis(int64_t &unixTime,
                           uint16_t &millisIntoSecond) const;
   /// Restores local Unix time and its UTC offset after deep sleep.
-  void restoreLocalUnix(int64_t localUnix, int32_t utcOffsetSeconds);
+  void restoreLocalUnix(int64_t localUnix, int32_t utcOffsetSeconds,
+                        bool estimated = false);
   /// Returns the UTC offset currently applied to local snapshots.
   int32_t utcOffsetSeconds() const;
   /// Returns the current local minute index for minute-granularity UI refresh.
@@ -41,6 +44,7 @@ private:
   int32_t utcOffset = 0;
   unsigned long baseMillis = 0;
   bool setFlag = false;
+  bool estimatedFlag = false;
 
   int64_t nowLocalUnix() const;
 };

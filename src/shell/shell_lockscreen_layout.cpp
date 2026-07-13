@@ -91,7 +91,7 @@ void drawLockscreenSleepScreen(AppDisplay &display) {
 }
 
 void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
-                               const char *dateText) {
+                               const char *dateText, bool timeEstimated) {
   display.fillScreen(0);
   if (lockscreenConfig.topIcon != '\0') {
     drawCenteredIcon(display, lockscreenConfig.topIcon, 42, 1);
@@ -104,14 +104,20 @@ void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
   int16_t timeY;
   uint16_t timeW;
   uint16_t timeH;
-  display.getTextBounds(timeText != nullptr ? timeText : "", 0, 0, &timeX,
-                        &timeY, &timeW, &timeH);
+  const char *visibleTime = timeText != nullptr ? timeText : "";
+  display.getTextBounds(visibleTime, 0, 0, &timeX, &timeY, &timeW, &timeH);
   // "12:34 AM" does not fit at the 24-hour clock's scale. Measure first so
   // both formats remain genuinely centered instead of clipping at the edge.
   if (timeW > EPD_WIDTH - 12) {
     display.setTextSize(3);
   }
-  drawCenteredText(display, timeText != nullptr ? timeText : "", 104);
+  display.getTextBounds(visibleTime, 0, 104, &timeX, &timeY, &timeW, &timeH);
+  drawCenteredText(display, visibleTime, 104);
+  if (timeEstimated && timeW > 0) {
+    const int16_t lineX = (EPD_WIDTH - static_cast<int16_t>(timeW)) / 2;
+    display.drawLine(lineX, timeY - 3,
+                     lineX + static_cast<int16_t>(timeW) - 1, timeY - 3, 1);
+  }
   if (lockscreenConfig.showDate) {
     display.setTextSize(1);
     drawCenteredText(display, dateText != nullptr ? dateText : "", 140);

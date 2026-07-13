@@ -45,3 +45,7 @@ void enterDeepSleep(uint64_t timerWakeupUs, bool keepEpdPowerOn) {
 }
 
 bool deepSleepWokeFromTimer() { return powerHardwareWokeFromTimer(); }
+
+int16_t deviceResetReason() { return powerHardwareResetReason(); }
+
+int16_t deviceWakeupCause() { return powerHardwareWakeupCause(); }

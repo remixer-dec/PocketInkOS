@@ -1,6 +1,7 @@
 #include "sys/drivers/power_hardware.h"
 
 #include "sys/global.h"
+#include "sys/wake_trace.h"
 
 #include <Arduino.h>
 
@@ -9,6 +10,13 @@
 #define POCKET_INK_HAS_ESP_SLEEP 1
 #else
 #define POCKET_INK_HAS_ESP_SLEEP 0
+#endif
+
+#if __has_include(<esp_system.h>)
+#include <esp_system.h>
+#define POCKET_INK_HAS_ESP_SYSTEM 1
+#else
+#define POCKET_INK_HAS_ESP_SYSTEM 0
 #endif
 
 #if __has_include(<driver/gpio.h>)
@@ -103,7 +111,9 @@ void startDeepSleepWakeOnPowerButton(uint64_t timerWakeupUs = 0) {
 #if POCKET_INK_HAS_ESP_SLEEP
   esp_sleep_enable_ext0_wakeup(static_cast<gpio_num_t>(PWR_BUTTON_PIN), 0);
   if (timerWakeupUs > 0) {
-    esp_sleep_enable_timer_wakeup(timerWakeupUs);
+    if (esp_sleep_enable_timer_wakeup(timerWakeupUs) == ESP_OK) {
+      wakeTraceSetSleep(WakeTracePhase::SleepArmed, 3);
+    }
   }
   esp_deep_sleep_start();
 #else
@@ -166,5 +176,21 @@ bool powerHardwareWokeFromTimer() {
   return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
 #else
   return false;
+#endif
+}
+
+int16_t powerHardwareResetReason() {
+#if POCKET_INK_HAS_ESP_SYSTEM
+  return static_cast<int16_t>(esp_reset_reason());
+#else
+  return 0;
+#endif
+}
+
+int16_t powerHardwareWakeupCause() {
+#if POCKET_INK_HAS_ESP_SLEEP
+  return static_cast<int16_t>(esp_sleep_get_wakeup_cause());
+#else
+  return 0;
 #endif
 }
