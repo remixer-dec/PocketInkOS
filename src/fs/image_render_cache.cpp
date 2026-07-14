@@ -1,4 +1,4 @@
-#include "fs/providers/image_render_cache.h"
+#include "fs/image_render_cache.h"
 
 #include "sys/psram_allocator.h"
 
@@ -366,6 +366,15 @@ ImageRenderCache *ImageRenderCachePool::acquire() {
   poolEntries[victim].cache.clear();
   poolEntries[victim].lastUsed = clock;
   return &poolEntries[victim].cache;
+}
+
+const ImageRenderCache *ImageRenderCachePool::onlyEntry() const {
+  const ImageRenderCachePoolEntry *poolEntries =
+      static_cast<const ImageRenderCachePoolEntry *>(entries);
+  return poolEntries != nullptr && entryCapacity == 1U &&
+                 poolEntries[0].cache.ready()
+             ? &poolEntries[0].cache
+             : nullptr;
 }
 
 void ImageRenderCachePool::clear() {

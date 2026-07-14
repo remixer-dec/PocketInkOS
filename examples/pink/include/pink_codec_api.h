@@ -50,6 +50,12 @@ struct PinkCodecInfo {
   char artist[64];
 };
 
+struct PinkCodecArtwork {
+  uint32_t streamOffset;
+  uint32_t byteSize;
+  char mime[32];
+};
+
 struct PinkCodecApi {
   uint16_t abiVersion;
   uint16_t reserved;
@@ -62,6 +68,8 @@ struct PinkCodecApi {
   void (*close)(void *decoder);
   /// Optional bounded seek-cache work. Returns true while more work remains.
   bool (*warmSeekCache)(void *decoder, uint16_t frameBudget);
+  /// Optional encoded artwork location within the original source stream.
+  bool (*getArtwork)(void *decoder, PinkCodecArtwork *artwork);
 };
 
 typedef const PinkCodecApi *(*PinkCodecEntryPoint)();

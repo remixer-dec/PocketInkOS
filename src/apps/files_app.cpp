@@ -4,7 +4,9 @@
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
 #include "sys/services/lockscreen_guard.h"
+#include "sys/services/device_controls.h"
 #include "sys/psram_allocator.h"
+#include "ui/components/audio_player_component.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
 
@@ -1424,6 +1426,8 @@ bool FilesApp::openViewer(const char *path, const char *title,
   viewerFullscreen = false;
   viewerOptionsOpen = false;
   viewerPageJumpOpen = false;
+  viewerPreviousAvailable = false;
+  viewerNextAvailable = false;
   viewerScaleToFit = true;
   viewerDither = 1;
   viewerPageInput = "";
@@ -1443,6 +1447,92 @@ bool FilesApp::openViewer(const char *path, const char *title,
   if (viewerSupportsPageJump(activeViewer)) {
     viewerSize = viewerPageCount(activeViewer, providerId, viewerPath);
   }
+  if (activeViewer->togglePlayback != nullptr) {
+    viewerPreviousAvailable = adjacentTrackIndex(-1) >= 0;
+    viewerNextAvailable = adjacentTrackIndex(1) >= 0;
+  }
+  return true;
+}
+
+int16_t FilesApp::adjacentTrackIndex(int8_t direction) const {
+  if (entries == nullptr || entryCount == 0 || direction == 0 ||
+      viewerPath[0] == '\0') {
+    return -1;
+  }
+  int32_t current = -1;
+  char path[sizeof(currentPath)];
+  for (uint16_t i = 0; i < entryCount; i++) {
+    if (entries[i].directory || !entries[i].nameComplete ||
+        !joinPath(path, sizeof(path), currentPath, entryName(entries[i]))) {
+      continue;
+    }
+    if (strcmp(path, viewerPath) == 0) {
+      current = i;
+      break;
+    }
+  }
+  if (current < 0) {
+    return -1;
+  }
+
+  for (int32_t i = current + (direction < 0 ? -1 : 1);
+       i >= 0 && i < entryCount; i += direction < 0 ? -1 : 1) {
+    const FileEntry &entry = entries[i];
+    if (entry.directory || !entry.nameComplete ||
+        !joinPath(path, sizeof(path), currentPath, entryName(entry))) {
+      continue;
+    }
+    const FileViewerExtension *viewer = findFileViewerForPath(path);
+    if (viewer != nullptr && viewer->togglePlayback != nullptr) {
+      return static_cast<int16_t>(i);
+    }
+  }
+  if (direction > 0) {
+    // The playlist is circular in the forward direction: after its last
+    // playable entry, Next opens the first one (or restarts a single track).
+    for (int32_t i = 0; i <= current; i++) {
+      const FileEntry &entry = entries[i];
+      if (entry.directory || !entry.nameComplete ||
+          !joinPath(path, sizeof(path), currentPath, entryName(entry))) {
+        continue;
+      }
+      const FileViewerExtension *viewer = findFileViewerForPath(path);
+      if (viewer != nullptr && viewer->togglePlayback != nullptr) {
+        return static_cast<int16_t>(i);
+      }
+    }
+  }
+  return -1;
+}
+
+bool FilesApp::openAdjacentTrack(int8_t direction) {
+  const int16_t index = adjacentTrackIndex(direction);
+  if (index < 0) {
+    return false;
+  }
+  const char *name = entryName(entries[index]);
+  char path[sizeof(viewerPath)];
+  char title[sizeof(viewerTitle)];
+  if (!joinPath(path, sizeof(path), currentPath, name)) {
+    return false;
+  }
+  copyDisplayText(title, sizeof(title), name);
+  const bool fullscreen = viewerFullscreen;
+  closeViewer();
+
+  const FileViewerExtension *viewer = nullptr;
+  FileViewerActivity activity = viewerActivity();
+  const FileViewerOpenResult result =
+      openFileWithViewer(providerId, path, &viewer, &activity);
+  if (result != FileViewerOpenResult::Opened) {
+    char status[sizeof(statusText)];
+    formatViewerStatus(viewer, result, status, sizeof(status));
+    setTransientStatus(status);
+    return true;
+  }
+  selectedIndex = index;
+  openViewer(path, title, viewer);
+  viewerFullscreen = fullscreen;
   return true;
 }
 
@@ -1465,6 +1555,8 @@ void FilesApp::closeViewer() {
   viewerFullscreen = false;
   viewerOptionsOpen = false;
   viewerPageJumpOpen = false;
+  viewerPreviousAvailable = false;
+  viewerNextAvailable = false;
   viewerPageInput = "";
   nextPdfProgressRedrawMs = 0;
 }
@@ -1488,6 +1580,8 @@ FilesApp::makeViewerRuntime(bool fullscreen, FileViewerActivity *activity) const
   runtime.imageDither = viewerDither;
   runtime.imageScaleToFit = viewerScaleToFit;
   runtime.imageCacheEntries = 1;
+  runtime.hasPreviousTrack = viewerPreviousAvailable;
+  runtime.hasNextTrack = viewerNextAvailable;
   runtime.activity = activity;
   return runtime;
 }
@@ -1534,6 +1628,9 @@ bool FilesApp::handleViewerTouch(const TouchPoint &point) {
       viewerOffset = runtime.offset;
       if (runtime.size != 0) {
         viewerSize = runtime.size;
+      }
+      if (runtime.trackNavigation != 0) {
+        return openAdjacentTrack(runtime.trackNavigation);
       }
       markListDirty();
       return true;
@@ -1934,6 +2031,12 @@ bool FilesApp::handleMenuButton() {
       viewerPageInput = "";
       return true;
     }
+    if (activeViewer->togglePlayback != nullptr &&
+        audioPlayerConfiguredLayout() == AudioPlayerLayoutStyle::Artwork) {
+      volumeDown();
+      audioPlayerShowVolumeFeedback();
+      return true;
+    }
     closeViewer();
     return true;
   }
@@ -1954,13 +2057,41 @@ bool FilesApp::handleMenuButton() {
   return true;
 }
 
+bool FilesApp::playerButtonsControlVolume() const {
+  return activeViewer != nullptr && activeViewer->togglePlayback != nullptr &&
+         audioPlayerConfiguredLayout() == AudioPlayerLayoutStyle::Artwork;
+}
+
+bool FilesApp::handleMenuDoubleButton() {
+  if (!playerButtonsControlVolume()) {
+    return false;
+  }
+  volumeDown();
+  volumeDown();
+  audioPlayerShowVolumeFeedback();
+  return true;
+}
+
+bool FilesApp::handleMenuLongButton() {
+  if (activeViewer == nullptr) {
+    return false;
+  }
+  closeViewer();
+  return true;
+}
+
 bool FilesApp::handlePowerButton() {
   if (activeViewer != nullptr) {
-    if (activeViewer->id != nullptr &&
-        equalsIgnoreCase(activeViewer->id, "midi")) {
+    if (activeViewer->togglePlayback != nullptr) {
+      if (audioPlayerConfiguredLayout() == AudioPlayerLayoutStyle::Artwork) {
+        volumeUp();
+        audioPlayerShowVolumeFeedback();
+        markDirtyRegion(0, 0, 200, 200);
+        return true;
+      }
       FileViewerActivity activity = viewerActivity();
       FileViewerRuntime runtime = makeViewerRuntime(viewerFullscreen, &activity);
-      if (midiViewerTogglePlayback(runtime)) {
+      if (activeViewer->togglePlayback(runtime)) {
         viewerOffset = runtime.offset;
         if (runtime.size != 0) {
           viewerSize = runtime.size;
@@ -2000,6 +2131,16 @@ bool FilesApp::handlePowerButton() {
   }
   selectedIndex = NO_SELECTION;
   clampView();
+  return true;
+}
+
+bool FilesApp::handlePowerDoubleButton() {
+  if (!playerButtonsControlVolume()) {
+    return false;
+  }
+  volumeUp();
+  volumeUp();
+  audioPlayerShowVolumeFeedback();
   return true;
 }
 

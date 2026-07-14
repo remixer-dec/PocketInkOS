@@ -1,6 +1,7 @@
 #ifndef SYS_AUDIO_AUDIO_CAPTURE_H
 #define SYS_AUDIO_AUDIO_CAPTURE_H
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -43,17 +44,25 @@ private:
   uint8_t *activeBuffer = nullptr;
   int16_t *dmaBuffer = nullptr;
   size_t activeCapacity = 0;
-  size_t activeLength = 0;
+  std::atomic<size_t> activeLength{0};
   size_t activeDataOffset = 0;
-  bool active = false;
+  std::atomic<bool> active{false};
   bool activeWav = false;
   bool hardwareActive = false;
+  void *taskHandle = nullptr;
+  std::atomic<bool> taskRunning{false};
+  std::atomic<bool> stopRequested{false};
+  std::atomic<bool> captureFailed{false};
 
   bool begin(AudioCaptureResult &out, uint32_t maxDurationMs, bool wav,
              char *error, int errorSize);
   bool ensureCodec(char *error, int errorSize);
   bool ensureI2s(char *error, int errorSize);
   bool readPcmChunk(char *error, int errorSize);
+  bool startCaptureTask(char *error, int errorSize);
+  void stopCaptureTask();
+  static void taskEntry(void *user);
+  void taskLoop();
   void shutdownHardware();
   void stopI2s();
   void standbyCodec();

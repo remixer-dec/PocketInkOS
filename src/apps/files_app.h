@@ -21,7 +21,10 @@ public:
   void draw(Adafruit_GFX &gfx);
   bool handleTouch(const TouchPoint &point);
   bool handleMenuButton();
+  bool handleMenuDoubleButton();
+  bool handleMenuLongButton();
   bool handlePowerButton();
+  bool handlePowerDoubleButton();
   bool update();
   bool hasActiveSession() const;
   bool consumeDirtyRegion(int16_t *x, int16_t *y, int16_t *w, int16_t *h);
@@ -71,6 +74,8 @@ private:
   bool viewerOptionsOpen = false;
   bool viewerScaleToFit = true;
   bool viewerPageJumpOpen = false;
+  bool viewerPreviousAvailable = false;
+  bool viewerNextAvailable = false;
   uint8_t viewerDither = 1;
   String viewerPageInput;
   T9KeyboardComponent viewerPageKeyboard;
@@ -128,6 +133,9 @@ private:
   bool requestJsLaunch(const char *path);
   bool openViewer(const char *path, const char *title,
                   const FileViewerExtension *viewer);
+  int16_t adjacentTrackIndex(int8_t direction) const;
+  bool openAdjacentTrack(int8_t direction);
+  bool playerButtonsControlVolume() const;
   bool providerMounted() const;
   void closeViewer();
   FileViewerActivity viewerActivity() const;

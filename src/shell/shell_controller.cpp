@@ -820,6 +820,16 @@ void ShellController::restoreRetainedContextAfterSleep() {
 }
 
 void ShellController::prepareForPowerTransition() {
+  if (activeDefinition != nullptr) {
+    if (activeDefinition->behavior.onExit != nullptr) {
+      activeDefinition->behavior.onExit();
+    }
+    if (activeDefinition->behavior.onRelease != nullptr) {
+      activeDefinition->behavior.onRelease();
+    }
+    activeDefinition = nullptr;
+    activeApp = nullptr;
+  }
   if (hooks.prepareForPowerTransition != nullptr) {
     hooks.prepareForPowerTransition(hooks.context);
   }

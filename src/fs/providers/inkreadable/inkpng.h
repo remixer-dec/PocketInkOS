@@ -24,6 +24,10 @@
 #define IPNG_MAX_ROW_BYTES 65535U
 #endif
 
+#ifndef IPNG_COOPERATE
+#define IPNG_COOPERATE() ((void)0)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -768,6 +772,9 @@ static ipng_result ipng_png_byte(ipng_png *png, uint8_t byte) {
   }
   png->row_pos = 0;
   png->pass_row++;
+  if ((png->pass_row & 15U) == 0U) {
+    IPNG_COOPERATE();
+  }
   if (png->pass_row >= png->pass_h) {
     png->pass = png->info.interlace ? (uint8_t)(png->pass + 1U) : 7;
     png->need_filter = 0;

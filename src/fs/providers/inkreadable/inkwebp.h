@@ -32,6 +32,10 @@
 #define IWEBP_MAX_VP8L_PIXELS 524288UL
 #endif
 
+#ifndef IWEBP_COOPERATE
+#define IWEBP_COOPERATE() ((void)0)
+#endif
+
 #define IWEBP_MAX_TOKEN_PARTITIONS 8U
 
 #ifdef __cplusplus
@@ -2066,6 +2070,7 @@ static iwebp_result iwebp_decode_vp8(const uint8_t *data, size_t size,
         goto done;
       }
     }
+    IWEBP_COOPERATE();
   }
   result = IWEBP_OK;
 done:
@@ -2545,7 +2550,13 @@ static iwebp_result iwebp_ldecode_image(iwebp_lbit *br, iwebp_limage *image,
       iwebp_lcolor *pixel = image->pixels;
       iwebp_lcolor *end = image->pixels + pixels;
       uint16_t x = 0;
+      size_t next_cooperate = 32768U;
       while (pixel < end && err == IWEBP_OK) {
+        const size_t decoded_pixels = (size_t)(pixel - image->pixels);
+        if (decoded_pixels >= next_cooperate) {
+          IWEBP_COOPERATE();
+          next_cooperate = decoded_pixels + 32768U;
+        }
         iwebp_lgroup *group = &groups[0];
         if (huffman_image != NULL) {
           const uint32_t y = (uint32_t)(pixel - image->pixels) / image->width;
@@ -2760,6 +2771,9 @@ static iwebp_result iwebp_lapply_predict(iwebp_limage *image,
           iwebp_lcolor_add(image->pixels[y * image->width + x],
                            iwebp_lpredictor(mode, image, x, y));
     }
+    if ((y & 15U) == 15U) {
+      IWEBP_COOPERATE();
+    }
   }
   return IWEBP_OK;
 }
@@ -2775,6 +2789,9 @@ static void iwebp_lapply_color(iwebp_limage *image, const iwebp_limage *color) {
       p->b = (uint8_t)(p->b + (((int8_t)m.g * (int8_t)p->g) >> 5));
       p->b = (uint8_t)(p->b + (((int8_t)m.r * (int8_t)p->r) >> 5));
     }
+    if ((y & 15U) == 15U) {
+      IWEBP_COOPERATE();
+    }
   }
 }
 
@@ -2783,6 +2800,9 @@ static void iwebp_lapply_green(iwebp_limage *image) {
   for (size_t i = 0; i < pixels; i++) {
     image->pixels[i].r = (uint8_t)(image->pixels[i].r + image->pixels[i].g);
     image->pixels[i].b = (uint8_t)(image->pixels[i].b + image->pixels[i].g);
+    if ((i & 32767U) == 32767U) {
+      IWEBP_COOPERATE();
+    }
   }
 }
 
@@ -2860,6 +2880,9 @@ static iwebp_result iwebp_lapply_palette(iwebp_limage *image,
           (uint8_t)((packed >> ((x & pack_mask) * mask_bits)) & mask);
       dst[x] = idx < transform->palette_size ? transform->image.pixels[idx]
                                              : transparent;
+    }
+    if ((y & 15U) == 15U) {
+      IWEBP_COOPERATE();
     }
   }
   IWEBP_FREE(image->pixels);
@@ -2984,6 +3007,9 @@ static iwebp_result iwebp_decode_alpha(const uint8_t *data, size_t size,
         }
         out->alpha[i] = (uint8_t)(src[i] + pred);
       }
+      if ((y & 15U) == 15U) {
+        IWEBP_COOPERATE();
+      }
     }
     return IWEBP_OK;
   }
@@ -3032,6 +3058,9 @@ static iwebp_result iwebp_decode_vp8l(const uint8_t *data, size_t size,
                                    (uint16_t)p.b * 29U) >>
                                   8);
         iwebp_emit_luma(out, x, y, gray);
+      }
+      if ((y & 15U) == 15U) {
+        IWEBP_COOPERATE();
       }
     }
   }

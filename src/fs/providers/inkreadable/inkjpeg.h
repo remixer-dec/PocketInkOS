@@ -40,6 +40,10 @@
 #define IJPG_PROGRESSIVE_DC_FALLBACK 1
 #endif
 
+#ifndef IJPG_COOPERATE
+#define IJPG_COOPERATE() ((void)0)
+#endif
+
 #ifndef IJPG_TRACE_PROGRESS
 #define IJPG_TRACE_PROGRESS(scan, result) ((void)0)
 #endif
@@ -1547,6 +1551,7 @@ static void ijpg_emit_luma_rows(ijpg_jpeg *jpg, uint32_t base_y,
       }
     }
   }
+  IJPG_COOPERATE();
 }
 
 static ijpg_result ijpg_progressive_render(ijpg_jpeg *jpg) {

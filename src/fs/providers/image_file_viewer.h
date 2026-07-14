@@ -2,8 +2,10 @@
 #define IMAGE_FILE_VIEWER_H
 
 #include "fs/file_viewer_registry.h"
-#include "fs/providers/image_render_cache.h"
+#include "fs/image_render_cache.h"
 
+#include <FS.h>
+#include <atomic>
 #include <stddef.h>
 
 extern const FileViewerExtension IMAGE_FILE_VIEWER;
@@ -35,5 +37,32 @@ bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
                               uint8_t dither, bool scaleToFit,
                               const ImageTransform &transform,
                               ImageRenderCachePool *cache = nullptr);
+
+/// Decodes one encoded-image slice from a larger provider file. The encoded
+/// bytes are transient; a supplied cache retains only the rendered 1-bit image.
+/// Embedded callers may suppress decoder status text in their own UI.
+bool drawImagePathSliceTransformed(
+    Adafruit_GFX &gfx, const char *providerId, const char *path,
+    uint32_t streamOffset, uint32_t byteSize, const char *extension,
+    int16_t imageX, int16_t imageY, int16_t imageW, int16_t imageH,
+    uint8_t dither, bool scaleToFit, const ImageTransform &transform,
+    ImageRenderCachePool *cache = nullptr, bool showErrors = true);
+
+/// Decodes an embedded image into a PSRAM render cache without touching the
+/// destination framebuffer. Intended for background workers.
+bool cacheImagePathSlice(const char *providerId, const char *path,
+                         uint32_t streamOffset, uint32_t byteSize,
+                         const char *extension, int16_t imageW,
+                         int16_t imageH, uint8_t dither, bool scaleToFit,
+                         ImageRenderCachePool *cache);
+
+/// File-owning workers use this form so their handle remains closable even if
+/// the decode task must be stopped before the image decoder returns.
+bool cacheImageFileSlice(File &file, const char *providerId, const char *path,
+                         uint32_t streamOffset, uint32_t byteSize,
+                         const char *extension, int16_t imageW,
+                         int16_t imageH, uint8_t dither, bool scaleToFit,
+                         ImageRenderCachePool *cache,
+                         const std::atomic<bool> *cancelRequested = nullptr);
 
 #endif

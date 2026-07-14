@@ -86,6 +86,8 @@ struct SystemConfig {
   } home;
 
   char layout[16];
+  /// Shell-wide built-in audio player skin.
+  char audioPlayerLayout[12];
 
   struct {
     char topIcon[2];

@@ -6,13 +6,27 @@
 
 struct TouchPoint;
 
+using AudioArtworkRenderer = bool (*)(void *user, Adafruit_GFX &gfx,
+                                      int16_t x, int16_t y, int16_t width,
+                                      int16_t height);
+
 /// Touch actions emitted by the audio player component.
 enum class AudioPlayerAction : uint8_t {
   None,
   TogglePlayPause,
+  PreviousTrack,
+  NextTrack,
   VolumeDown,
   VolumeUp,
   Seek,
+};
+
+/// Visual arrangements corresponding to the four built-in player concepts.
+enum class AudioPlayerLayoutStyle : uint8_t {
+  Artwork,
+  Minimal,
+  Mixer,
+  Controls,
 };
 
 /// Result of hit-testing the audio player component.
@@ -32,7 +46,22 @@ struct AudioPlayerState {
   bool muted = false;
   uint32_t positionMs = 0;
   uint32_t durationMs = 0;
+  bool canPrevious = false;
+  bool canNext = false;
+  /// Optional pre-rendered 1-bit cover. Decoding and caching stay caller-owned.
+  const uint8_t *artwork = nullptr;
+  uint16_t artworkWidth = 0;
+  uint16_t artworkHeight = 0;
+  /// Optional caller-owned renderer for encoded or cached cover artwork.
+  AudioArtworkRenderer renderArtwork = nullptr;
+  void *artworkUser = nullptr;
 };
+
+/// Returns the shell-wide player layout selected in system settings.
+AudioPlayerLayoutStyle audioPlayerConfiguredLayout();
+
+/// Shows the current volume in the corner on the player's next frame.
+void audioPlayerShowVolumeFeedback();
 
 /// Draws and hit-tests the compact/fullscreen audio playback controls.
 class AudioPlayerComponent {

@@ -75,6 +75,8 @@ public:
   bool setCapacity(uint8_t entries);
   ImageRenderCache *find(uint16_t width, uint16_t height, uint64_t key);
   ImageRenderCache *acquire();
+  /// Returns the ready entry when this pool is configured for one image.
+  const ImageRenderCache *onlyEntry() const;
   void clear();
 
   uint8_t capacity() const { return entryCapacity; }

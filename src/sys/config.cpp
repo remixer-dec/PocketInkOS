@@ -251,6 +251,8 @@ void resetSystemDefaults() {
   copyValue(currentConfig.home.widgets, sizeof(currentConfig.home.widgets),
             "temp,hum,cpuTemp,sd,battery,logoText,buttonHelp");
   copyValue(currentConfig.layout, sizeof(currentConfig.layout), "default");
+  copyValue(currentConfig.audioPlayerLayout,
+            sizeof(currentConfig.audioPlayerLayout), "controls");
   copyValue(currentConfig.lockscreen.topIcon,
             sizeof(currentConfig.lockscreen.topIcon), "S");
   currentConfig.lockscreen.showDate = true;
@@ -294,6 +296,8 @@ const StringConfigField *stringConfigField(const char *key) {
       {"home.widgets", currentConfig.home.widgets,
        sizeof(currentConfig.home.widgets)},
       {"layout", currentConfig.layout, sizeof(currentConfig.layout)},
+      {"interface.audioPlayerLayout", currentConfig.audioPlayerLayout,
+       sizeof(currentConfig.audioPlayerLayout)},
       {"lockscreen.topIcon", currentConfig.lockscreen.topIcon,
        sizeof(currentConfig.lockscreen.topIcon)},
       {"timezone", currentConfig.time.timezone,

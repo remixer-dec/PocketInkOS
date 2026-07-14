@@ -74,10 +74,28 @@ struct BehaviorBuilder {
     return next;
   }
 
-  /// Sets the power-button callback.
-  BehaviorBuilder withPowerBtn(AppEventHandler handler) const {
+  /// Sets only the menu long-press callback without positional placeholders.
+  BehaviorBuilder withMenuLongBtn(AppEventHandler menuLong) const {
+    BehaviorBuilder next = *this;
+    next.behavior.onMenuLong = menuLong;
+    return next;
+  }
+
+  /// Sets power-button callbacks for single, double, and long presses.
+  BehaviorBuilder withPowerBtn(AppEventHandler handler,
+                               AppEventHandler powerDouble = nullptr,
+                               AppEventHandler powerLong = nullptr) const {
     BehaviorBuilder next = *this;
     next.behavior.onPower = handler;
+    next.behavior.onPowerDouble = powerDouble;
+    next.behavior.onPowerLong = powerLong;
+    return next;
+  }
+
+  /// Sets only the power long-press callback without positional placeholders.
+  BehaviorBuilder withPowerLongBtn(AppEventHandler powerLong) const {
+    BehaviorBuilder next = *this;
+    next.behavior.onPowerLong = powerLong;
     return next;
   }
 

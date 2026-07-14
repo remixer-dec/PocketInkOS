@@ -128,6 +128,7 @@ FILES=( \
   "$ROOT/src/sys/drivers/epaper_driver_bsp.cpp" \
   "$ROOT/src/sys/audio/audio_capture.cpp" \
   "$ROOT/src/sys/audio/wav_encoder.cpp" \
+  "$ROOT/src/sys/audio/audio_decode_queue.cpp" \
   "$ROOT/src/sys/audio/audio_playback_renderer.cpp" \
   "$ROOT/src/sys/audio/audio_power.cpp" \
   "$ROOT/src/sys/drivers/shared_i2c_bus.cpp" \
@@ -147,11 +148,14 @@ FILES=( \
   "$ROOT/src/apps/deghost_app.cpp" \
   "$ROOT/src/fs/file_provider.cpp" \
   "$ROOT/src/fs/file_viewer_registry.cpp" \
+  "$ROOT/src/fs/providers/pink_audio_file_viewer.cpp" \
   "$ROOT/src/fs/providers/hex_file_viewer.cpp" \
   "$ROOT/src/fs/providers/epub_file_viewer.cpp" \
   "$ROOT/src/fs/providers/midi_file_viewer.cpp" \
   "$ROOT/src/fs/providers/resonatto/remidi_synth.cpp" \
   "$ROOT/src/fs/providers/pdf_file_viewer.cpp" \
+  "$ROOT/src/fs/artwork_decode_worker.cpp" \
+  "$ROOT/src/fs/image_render_cache.cpp" \
   "$ROOT/src/fs/providers/image_file_viewer.cpp" \
   "$ROOT/src/fs/providers/svg_file_viewer.cpp" \
   "$ROOT/src/fs/providers/text_file_viewer.cpp" \
@@ -164,6 +168,7 @@ FILES=( \
   "$ROOT/src/sys/services/lockscreen_guard.cpp" \
   "$ROOT/src/sys/drivers/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
+  "$ROOT/src/sys/pink_codec.cpp" \
   "$ROOT/src/sys/pink_periodic_tasks.cpp" \
   "$ROOT/src/sys/pocketinkjs_app.cpp" \
   "$ROOT/src/sys/services/power_control.cpp" \

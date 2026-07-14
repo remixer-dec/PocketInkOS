@@ -61,6 +61,12 @@ struct CodecInfo {
   char artist[64];
 };
 
+struct CodecArtwork {
+  uint32_t streamOffset;
+  uint32_t byteSize;
+  char mime[32];
+};
+
 struct CodecApi {
   uint16_t abiVersion;
   uint16_t reserved;
@@ -71,6 +77,7 @@ struct CodecApi {
   bool (*seekPcmFrame)(void *, uint32_t, uint32_t *);
   void (*close)(void *);
   bool (*warmSeekCache)(void *, uint16_t);
+  bool (*getArtwork)(void *, CodecArtwork *);
 };
 
 constexpr size_t kCodecApiV1Size = offsetof(CodecApi, warmSeekCache);
@@ -354,14 +361,48 @@ bool PinkAudioCodec::seekPcmFrame(uint32_t targetFrame,
 }
 
 bool PinkAudioCodec::warmSeekCache(uint16_t frameBudget) {
+  if (!supportsSeekCacheWarmup()) {
+    return false;
+  }
   const CodecApi *codec = static_cast<const CodecApi *>(api);
-  const bool hasCallback =
-      codec != nullptr &&
-      codec->apiSize >= offsetof(CodecApi, warmSeekCache) +
-                            sizeof(codec->warmSeekCache) &&
-      codec->warmSeekCache != nullptr;
-  return hasCallback && decoder != nullptr && frameBudget != 0U &&
+  return decoder != nullptr && frameBudget != 0U &&
          codec->warmSeekCache(decoder, frameBudget);
+}
+
+bool PinkAudioCodec::supportsSeekCacheWarmup() const {
+  const CodecApi *codec = static_cast<const CodecApi *>(api);
+  return codec != nullptr &&
+         codec->apiSize >= offsetof(CodecApi, warmSeekCache) +
+                               sizeof(codec->warmSeekCache) &&
+         codec->warmSeekCache != nullptr;
+}
+
+bool PinkAudioCodec::artwork(PinkAudioArtworkInfo &info) const {
+  info = {};
+  const CodecApi *codec = static_cast<const CodecApi *>(api);
+  CodecArtwork artwork = {};
+  if (!supportsArtwork() || decoder == nullptr ||
+      !codec->getArtwork(decoder, &artwork) || artwork.byteSize == 0U) {
+    return false;
+  }
+  info.streamOffset = artwork.streamOffset;
+  info.byteSize = artwork.byteSize;
+  memcpy(info.mime, artwork.mime, sizeof(info.mime));
+  info.mime[sizeof(info.mime) - 1U] = '\0';
+  return true;
+}
+
+bool PinkAudioCodec::supportsArtwork() const {
+  const CodecApi *codec = static_cast<const CodecApi *>(api);
+  return codec != nullptr &&
+         codec->apiSize >= offsetof(CodecApi, getArtwork) +
+                               sizeof(codec->getArtwork) &&
+         codec->getArtwork != nullptr;
+}
+
+bool PinkAudioCodec::supportsCurrentApi() const {
+  const CodecApi *codec = static_cast<const CodecApi *>(api);
+  return codec != nullptr && codec->apiSize >= sizeof(CodecApi);
 }
 
 void PinkAudioCodec::close() {

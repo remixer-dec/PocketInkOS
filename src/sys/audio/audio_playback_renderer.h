@@ -26,6 +26,20 @@ struct AudioPlaybackConfig {
   bool playWhenMutedAtMinimumVolume = false;
 };
 
+struct AudioPlaybackDiagnostics {
+  uint32_t chunksWritten = 0;
+  uint32_t sourcePcmHash = 0;
+  uint32_t pcmHash = 0;
+  uint32_t lastI2sWriteUs = 0;
+  uint32_t maxI2sWriteUs = 0;
+  uint16_t lastFrames = 0;
+  uint16_t sourcePeak = 0;
+  uint16_t lastPeak = 0;
+  int16_t lastMean = 0;
+  uint8_t status = 0;
+  uint8_t effectiveVolume = 0;
+};
+
 /// Streams signed 16-bit stereo PCM to the codec and I2S output path.
 class AudioPlaybackRenderer {
 public:
@@ -54,6 +68,7 @@ public:
   uint16_t lastPeak() const { return playbackLastPeak.load(); }
   /// Returns the number of chunks written since begin().
   uint32_t chunksWritten() const { return playbackChunksWritten.load(); }
+  AudioPlaybackDiagnostics diagnostics() const;
 
 private:
   static void taskEntry(void *user);
@@ -82,6 +97,15 @@ private:
   std::atomic<bool> taskRunning{false};
   std::atomic<uint16_t> playbackLastPeak{0};
   std::atomic<uint32_t> playbackChunksWritten{0};
+  std::atomic<uint32_t> playbackPcmHash{2166136261U};
+  std::atomic<uint32_t> playbackSourcePcmHash{2166136261U};
+  std::atomic<uint32_t> playbackLastI2sWriteUs{0};
+  std::atomic<uint32_t> playbackMaxI2sWriteUs{0};
+  std::atomic<uint16_t> playbackLastFrames{0};
+  std::atomic<uint16_t> playbackSourcePeak{0};
+  std::atomic<int16_t> playbackLastMean{0};
+  std::atomic<uint8_t> playbackStatus{0};
+  std::atomic<uint8_t> playbackEffectiveVolume{0};
 };
 
 #endif

@@ -73,6 +73,7 @@ enum SettingId : uint8_t {
   SETTING_PERIODIC_DISABLE_LOW_BATTERY,
   SETTING_PERIODIC_LOW_BATTERY_PERCENT,
   SETTING_HOME_LAYOUT,
+  SETTING_AUDIO_PLAYER_LAYOUT,
   SETTING_HOME_SUN_BUTTON,
   SETTING_HOME_WIDGETS,
   SETTING_LOCKSCREEN_ICON,
@@ -182,6 +183,12 @@ const SettingOption kLayoutOptions[] = {
     {"Default", "default"},
     {"Ultra large", "ultra-large"},
 };
+const SettingOption kAudioPlayerLayoutOptions[] = {
+    {"Layout 1", "artwork"},
+    {"Layout 2", "minimal"},
+    {"Layout 3", "mixer"},
+    {"Layout 4", "controls"},
+};
 const InactivityOption kInactivityOptions[] = {
     {"0 (never)", 0}, {"1 min", 1}, {"2 min", 2},
     {"3 min", 3},     {"5 min", 5}, {"10 min", 10},
@@ -277,6 +284,12 @@ const SettingDefinition kGeneralSettings[] = {
     {SETTING_HOME_LAYOUT, "Layout", "layout", SettingKind::Options,
      kLayoutOptions,
      static_cast<uint8_t>(sizeof(kLayoutOptions) / sizeof(kLayoutOptions[0])),
+     0},
+    {SETTING_AUDIO_PLAYER_LAYOUT, "Audio player",
+     "interface.audioPlayerLayout", SettingKind::Options,
+     kAudioPlayerLayoutOptions,
+     static_cast<uint8_t>(sizeof(kAudioPlayerLayoutOptions) /
+                          sizeof(kAudioPlayerLayoutOptions[0])),
      0},
 };
 

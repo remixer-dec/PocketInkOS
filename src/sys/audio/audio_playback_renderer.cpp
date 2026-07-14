@@ -116,6 +116,15 @@ bool AudioPlaybackRenderer::begin(const AudioPlaybackStream &stream,
   stopRequested = false;
   playbackLastPeak = 0;
   playbackChunksWritten = 0;
+  playbackPcmHash = 2166136261U;
+  playbackSourcePcmHash = 2166136261U;
+  playbackLastI2sWriteUs = 0;
+  playbackMaxI2sWriteUs = 0;
+  playbackLastFrames = 0;
+  playbackSourcePeak = 0;
+  playbackLastMean = 0;
+  playbackStatus = 0;
+  playbackEffectiveVolume = 0;
 
   dmaBuffer = static_cast<int16_t *>(
       heap_caps_malloc(playbackConfig.chunkFrames * 2U * sizeof(int16_t),
@@ -166,7 +175,13 @@ bool AudioPlaybackRenderer::begin(const AudioPlaybackStream &stream,
 
 bool AudioPlaybackRenderer::pump(char *error, int errorSize) {
   if (!playbackActive && !taskRunning) {
-    return playbackFinished;
+    if (playbackFinished) {
+      return true;
+    }
+    setError(error, errorSize,
+             playbackStatus.load() == 2U ? "I2S write failed"
+                                         : "Audio task stopped");
+    return false;
   }
   if (txChannel == NULL || dmaBuffer == nullptr || !taskRunning ||
       playbackStream.fillPcm16 == nullptr) {
@@ -183,6 +198,7 @@ bool AudioPlaybackRenderer::writeChunk(char *error, int errorSize) {
   if (frames == 0) {
     playbackFinished = true;
     playbackActive = false;
+    playbackStatus = 1U;
     return true;
   }
 
@@ -192,38 +208,59 @@ bool AudioPlaybackRenderer::writeChunk(char *error, int errorSize) {
                               : deviceEffectiveOutputVolumePercent(
                                     playbackVolumePercent.load());
   const size_t sampleCount = frames * 2U;
+  uint16_t sourcePeak = 0;
   uint16_t peak = 0;
-  if (volume < 100U) {
-    for (size_t i = 0; i < sampleCount; i++) {
-      const int32_t scaled =
-          static_cast<int32_t>(dmaBuffer[i]) * static_cast<int32_t>(volume) /
-          100;
-      dmaBuffer[i] = static_cast<int16_t>(scaled);
-      const int32_t magnitude = scaled < 0 ? -scaled : scaled;
-      if (magnitude > peak) {
-        peak = static_cast<uint16_t>(magnitude > 32767 ? 32767 : magnitude);
-      }
+  int64_t sum = 0;
+  uint32_t sourceHash = playbackSourcePcmHash.load();
+  uint32_t hash = playbackPcmHash.load();
+  for (size_t i = 0; i < sampleCount; i++) {
+    int32_t sample = dmaBuffer[i];
+    const int32_t sourceMagnitude = sample < 0 ? -sample : sample;
+    if (sourceMagnitude > sourcePeak) {
+      sourcePeak = static_cast<uint16_t>(sourceMagnitude > 32767
+                                             ? 32767
+                                             : sourceMagnitude);
     }
-  } else {
-    for (size_t i = 0; i < sampleCount; i++) {
-      const int32_t sample = dmaBuffer[i];
-      const int32_t magnitude = sample < 0 ? -sample : sample;
-      if (magnitude > peak) {
-        peak = static_cast<uint16_t>(magnitude > 32767 ? 32767 : magnitude);
-      }
+    sourceHash ^= static_cast<uint16_t>(sample);
+    sourceHash *= 16777619U;
+    if (volume < 100U) {
+      sample = sample * static_cast<int32_t>(volume) / 100;
+      dmaBuffer[i] = static_cast<int16_t>(sample);
     }
+    const int32_t magnitude = sample < 0 ? -sample : sample;
+    if (magnitude > peak) {
+      peak = static_cast<uint16_t>(magnitude > 32767 ? 32767 : magnitude);
+    }
+    sum += sample;
+    hash ^= static_cast<uint16_t>(sample);
+    hash *= 16777619U;
   }
-  playbackLastPeak = peak;
-
   size_t bytesWritten = 0;
   const size_t byteCount = sampleCount * sizeof(int16_t);
-  if (i2s_channel_write(txChannel, dmaBuffer, byteCount, &bytesWritten,
-                        pdMS_TO_TICKS(50)) != ESP_OK ||
+  const uint32_t writeStartedUs = micros();
+  const esp_err_t writeResult = i2s_channel_write(
+      txChannel, dmaBuffer, byteCount, &bytesWritten, pdMS_TO_TICKS(50));
+  const uint32_t writeUs = micros() - writeStartedUs;
+  playbackLastI2sWriteUs = writeUs;
+  uint32_t previousMax = playbackMaxI2sWriteUs.load();
+  while (writeUs > previousMax &&
+         !playbackMaxI2sWriteUs.compare_exchange_weak(previousMax, writeUs)) {
+  }
+  if (writeResult != ESP_OK ||
       bytesWritten != byteCount) {
     setError(error, errorSize, "I2S write failed");
+    playbackStatus = 2U;
     playbackActive = false;
     return false;
   }
+  playbackLastPeak = peak;
+  playbackLastMean =
+      static_cast<int16_t>(sum / static_cast<int64_t>(sampleCount));
+  playbackLastFrames = static_cast<uint16_t>(frames);
+  playbackSourcePeak = sourcePeak;
+  playbackSourcePcmHash = sourceHash;
+  playbackPcmHash = hash;
+  playbackEffectiveVolume = static_cast<uint8_t>(volume);
   playbackChunksWritten++;
   return true;
 }
@@ -249,6 +286,22 @@ void AudioPlaybackRenderer::stop() {
     shutdownHardware();
     playbackOwner = nullptr;
   }
+}
+
+AudioPlaybackDiagnostics AudioPlaybackRenderer::diagnostics() const {
+  AudioPlaybackDiagnostics result;
+  result.chunksWritten = playbackChunksWritten.load();
+  result.sourcePcmHash = playbackSourcePcmHash.load();
+  result.pcmHash = playbackPcmHash.load();
+  result.lastI2sWriteUs = playbackLastI2sWriteUs.load();
+  result.maxI2sWriteUs = playbackMaxI2sWriteUs.load();
+  result.lastFrames = playbackLastFrames.load();
+  result.sourcePeak = playbackSourcePeak.load();
+  result.lastPeak = playbackLastPeak.load();
+  result.lastMean = playbackLastMean.load();
+  result.status = playbackStatus.load();
+  result.effectiveVolume = playbackEffectiveVolume.load();
+  return result;
 }
 
 void AudioPlaybackRenderer::setVolumePercent(uint8_t percent) {
@@ -407,16 +460,23 @@ bool AudioPlaybackRenderer::configureCodecFormat() {
 }
 
 bool AudioPlaybackRenderer::startCodecDac() {
-  return writeCodecRegister(kRegSystem0d, 0x01) &&
-         writeCodecRegister(kRegSystem0e, 0x02) &&
-         writeCodecRegister(kRegSystem12, 0x00) &&
-         writeCodecRegister(kRegSystem13, 0x10) &&
-         writeCodecRegister(kRegAdcEq, 0x6a) &&
-         writeCodecRegister(kRegDacRamp, 0x08) &&
-         writeCodecRegister(kRegDacMute, 0x00) &&
-         writeCodecRegister(kRegDacVolume, 0xc0) &&
-         writeCodecRegister(kRegGpio, 0x08) &&
-         writeCodecRegister(kRegGp, 0x00);
+  // Keep the analog output muted until its reference and gain are stable. A
+  // partially initialized DAC can otherwise start in a noisy state that lasts
+  // until the next full track transition.
+  if (!writeCodecRegister(kRegDacMute, 0x60) ||
+      !writeCodecRegister(kRegSystem0d, 0x01) ||
+      !writeCodecRegister(kRegSystem0e, 0x02) ||
+      !writeCodecRegister(kRegSystem12, 0x00) ||
+      !writeCodecRegister(kRegSystem13, 0x10) ||
+      !writeCodecRegister(kRegAdcEq, 0x6a) ||
+      !writeCodecRegister(kRegDacRamp, 0x08) ||
+      !writeCodecRegister(kRegDacVolume, 0xc0) ||
+      !writeCodecRegister(kRegGpio, 0x58) ||
+      !writeCodecRegister(kRegGp, 0x00)) {
+    return false;
+  }
+  delay(10);
+  return writeCodecRegister(kRegDacMute, 0x00);
 }
 
 bool AudioPlaybackRenderer::readCodecRegister(uint8_t reg, uint8_t &value) {
@@ -463,8 +523,9 @@ void AudioPlaybackRenderer::stopI2s() {
 
 void AudioPlaybackRenderer::shutdownHardware() {
   audioSpeakerAmpOff();
-  stopI2s();
+  // ES8311 standby is clocked; put it to sleep before removing I2S/MCLK.
   standbyCodec();
+  stopI2s();
   audioPowerOff();
 }
 

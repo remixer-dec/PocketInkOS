@@ -27,6 +27,10 @@
 #define IWBMP_STRICT_PADDING 1
 #endif
 
+#ifndef IWBMP_COOPERATE
+#define IWBMP_COOPERATE() ((void)0)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -357,6 +361,9 @@ static iwbmp_result iwbmp_decode_pixels(iwbmp_reader *reader,
         const uint8_t black = (((uint8_t)c & (uint8_t)(0x80U >> bit)) == 0);
         iwbmp_emit_render(wbmp, x, y, black);
       }
+    }
+    if ((y & 15U) == 15U) {
+      IWBMP_COOPERATE();
     }
   }
   iwbmp_flush_scale(wbmp);

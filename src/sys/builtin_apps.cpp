@@ -302,12 +302,27 @@ const AppDefinition builtInApps[] = {
     builtInApp("files", "files", "N", MENU_APPS, &filesScreen,
                        []() { filesApp.reset(); },
                        defaultContextBehavior<FilesApp, filesApp>()
-                           .withMenuBtn(dirtyIfHandledMethod<
-                              FilesApp, filesApp,
-                              &FilesApp::handleMenuButton>)
+                           .withMenuBtn(
+                               dirtyIfHandledMethod<
+                                   FilesApp, filesApp,
+                                   &FilesApp::handleMenuButton>,
+                               dirtyIfHandledMethod<
+                                   FilesApp, filesApp,
+                                   &FilesApp::handleMenuDoubleButton>)
+                           .withMenuLongBtn(
+                               dirtyIfHandledMethod<
+                                   FilesApp, filesApp,
+                                   &FilesApp::handleMenuLongButton>)
                            .withPowerBtn(dirtyIfHandledMethod<
                               FilesApp, filesApp,
-                              &FilesApp::handlePowerButton>)
+                              &FilesApp::handlePowerButton>,
+                              dirtyIfHandledMethod<
+                                  FilesApp, filesApp,
+                                  &FilesApp::handlePowerDoubleButton>)
+                           .withPowerLongBtn(
+                              dirtyIfHandledMethod<
+                                  FilesApp, filesApp,
+                                  &FilesApp::handleMenuLongButton>)
                            .withRelease([]() { filesApp.release(); })
                            .build(),
                        true, sdStorageMounted),
@@ -327,6 +342,22 @@ const AppDefinition builtInApps[] = {
                          return dirtyIfHandled(
                              voiceNotesApp.handleMenuDoubleButton());
                        })
+                   .withMenuLongBtn(
+                       []() {
+                         return dirtyIfHandled(
+                             voiceNotesApp.handleMenuLongButton());
+                       })
+                   .withPowerBtn(
+                       dirtyIfHandledMethod<
+                           VoiceNotesApp, voiceNotesApp,
+                           &VoiceNotesApp::handlePowerButton>,
+                       dirtyIfHandledMethod<
+                           VoiceNotesApp, voiceNotesApp,
+                           &VoiceNotesApp::handlePowerDoubleButton>)
+                   .withPowerLongBtn(
+                       dirtyIfHandledMethod<
+                           VoiceNotesApp, voiceNotesApp,
+                           &VoiceNotesApp::handleMenuLongButton>)
                    .withRelease([]() { voiceNotesApp.release(); })
                    .build(),
                true, sdStorageMounted),

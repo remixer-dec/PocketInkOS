@@ -16,7 +16,7 @@ namespace {
 static const uint16_t kPathCapacity = 288;
 static const uint32_t kPlaybackSampleRate = 16000;
 static const unsigned long kProgressRedrawMs = 5000;
-static const unsigned long kPressFeedbackMs = 180;
+static const unsigned long kTrackFeedbackMs = 180;
 
 struct MidiViewerState {
   char providerId[12] = {};
@@ -24,6 +24,8 @@ struct MidiViewerState {
   remidi_sequence sequence = {};
   bool loaded = false;
   bool playing = false;
+  bool autoplayPending = true;
+  bool playerDrawn = false;
   AudioPlayerAction pressedAction = AudioPlayerAction::None;
   unsigned long pressedUntil = 0;
   uint32_t positionMs = 0;
@@ -40,15 +42,6 @@ MidiViewerState &midiState() {
 AudioPlayerComponent &playerComponent() {
   static AudioPlayerComponent component;
   return component;
-}
-
-void showPressFeedback(MidiViewerState &state, AudioPlayerAction action) {
-  if (action == AudioPlayerAction::TogglePlayPause ||
-      action == AudioPlayerAction::VolumeDown ||
-      action == AudioPlayerAction::VolumeUp) {
-    state.pressedAction = action;
-    state.pressedUntil = millis() + kPressFeedbackMs;
-  }
 }
 
 bool copyText(char *dest, size_t destSize, const char *source) {
@@ -92,6 +85,8 @@ void resetState(MidiViewerState &state) {
   state.sequence = {};
   state.loaded = false;
   state.playing = false;
+  state.autoplayPending = true;
+  state.playerDrawn = false;
   state.pressedAction = AudioPlayerAction::None;
   state.pressedUntil = 0;
   state.positionMs = 0;
@@ -142,6 +137,7 @@ bool startPlayback(MidiViewerState &state) {
 }
 
 bool togglePlayback(FileViewerRuntime &runtime, MidiViewerState &state) {
+  state.autoplayPending = false;
   if (state.sequence.info.durationMs == 0) {
     return true;
   }
@@ -206,9 +202,10 @@ void formatDetail(const remidi_info &info, char *out, size_t outSize) {
 }
 
 FileViewerOpenResult openMidiViewer(const FileViewerRequest &request) {
-  return ensureState(request.providerId, request.path)
-             ? FileViewerOpenResult::Opened
-             : FileViewerOpenResult::Failed;
+  if (!ensureState(request.providerId, request.path)) {
+    return FileViewerOpenResult::Failed;
+  }
+  return FileViewerOpenResult::Opened;
 }
 
 void drawMidiViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
@@ -243,7 +240,10 @@ void drawMidiViewer(Adafruit_GFX &gfx, const FileViewerRuntime &runtime) {
   playerState.muted = controls.muted;
   playerState.positionMs = state.positionMs;
   playerState.durationMs = state.sequence.info.durationMs;
+  playerState.canPrevious = runtime.hasPreviousTrack;
+  playerState.canNext = runtime.hasNextTrack;
   playerComponent().draw(gfx, playerState, runtime.fullscreen);
+  state.playerDrawn = true;
 }
 
 void scrollMidiViewer(FileViewerRuntime &, int8_t) {}
@@ -258,10 +258,26 @@ bool touchMidiViewer(FileViewerRuntime &runtime, const TouchPoint &point) {
   const AudioPlayerEvent event =
       playerComponent().hitTest(point, runtime.fullscreen,
                                 state.sequence.info.durationMs);
-  showPressFeedback(state, event.action);
+  if (event.action == AudioPlayerAction::PreviousTrack ||
+      event.action == AudioPlayerAction::NextTrack) {
+    state.pressedAction = event.action;
+    state.pressedUntil = millis() + kTrackFeedbackMs;
+  }
   switch (event.action) {
   case AudioPlayerAction::TogglePlayPause:
     return togglePlayback(runtime, state);
+  case AudioPlayerAction::PreviousTrack:
+    if (runtime.hasPreviousTrack) {
+      runtime.trackNavigation = -1;
+      return true;
+    }
+    return false;
+  case AudioPlayerAction::NextTrack:
+    if (runtime.hasNextTrack) {
+      runtime.trackNavigation = 1;
+      return true;
+    }
+    return false;
   case AudioPlayerAction::VolumeDown:
     volumeDown();
     return true;
@@ -304,10 +320,14 @@ bool updateMidiViewer(FileViewerRuntime &runtime) {
   runtime.size = state.sequence.info.durationMs;
   runtime.offset = state.positionMs;
   const unsigned long now = millis();
+  if (state.autoplayPending && state.playerDrawn) {
+    state.autoplayPending = false;
+    (void)startPlayback(state);
+    return true;
+  }
   if (state.pressedAction != AudioPlayerAction::None &&
       now >= state.pressedUntil) {
     state.pressedAction = AudioPlayerAction::None;
-    state.pressedUntil = 0;
     return true;
   }
   if (!state.playing) {
@@ -378,4 +398,5 @@ const FileViewerExtension MIDI_FILE_VIEWER = {
     midiVisibleBytes,
     nullptr,
     midiViewerClose,
+    midiViewerTogglePlayback,
 };

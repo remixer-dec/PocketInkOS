@@ -10,6 +10,7 @@
 #include <driver/i2s_std.h>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <cstring>
 #include <cstdlib>
 
@@ -23,6 +24,11 @@ constexpr int kWsPin = 38;
 constexpr int kDataOutPin = 45;
 constexpr size_t kDmaChunkBytes = 1024;
 constexpr int kI2cTimeoutMs = 100;
+constexpr uint32_t kI2sReadTimeoutMs = 100;
+constexpr uint32_t kCaptureTaskStackBytes = 4096;
+constexpr UBaseType_t kCaptureTaskPriority = 3;
+constexpr BaseType_t kCaptureTaskCore = 0;
+constexpr unsigned long kCaptureTaskStopTimeoutMs = 250;
 
 i2c_master_dev_handle_t codecDevice = NULL;
 i2s_chan_handle_t rxChannel = NULL;
@@ -47,6 +53,7 @@ bool AudioCapture::recordPcm16(AudioCaptureResult &out, uint32_t durationMs,
     if (!pumpPcm16(out, error, errorSize)) {
       return false;
     }
+    delay(2);
   }
   finishPcm16(out);
   return true;
@@ -61,6 +68,7 @@ bool AudioCapture::recordWav(AudioCaptureResult &out, uint32_t durationMs,
     if (!pumpPcm16(out, error, errorSize)) {
       return false;
     }
+    delay(2);
   }
   finishPcm16(out);
   return true;
@@ -129,40 +137,43 @@ bool AudioCapture::begin(AudioCaptureResult &out, uint32_t maxDurationMs,
   out.sampleRate = kSampleRate;
   out.wav = activeWav;
   active = true;
+  captureFailed = false;
+  stopRequested = false;
+  if (!startCaptureTask(error, errorSize)) {
+    release(out);
+    return false;
+  }
   return true;
 }
 
 bool AudioCapture::pumpPcm16(AudioCaptureResult &out, char *error,
                              int errorSize) {
-  if (!active) {
-    return true;
-  }
-  if (!readPcmChunk(error, errorSize)) {
+  if (captureFailed) {
+    setError(error, errorSize, "I2S read failed");
     release(out);
     return false;
   }
   out.data = activeBuffer;
-  out.length = activeDataOffset + activeLength;
+  out.length = activeDataOffset + activeLength.load();
   out.sampleRate = kSampleRate;
   out.wav = activeWav;
-  if (activeLength >= activeCapacity) {
-    active = false;
-  }
   return true;
 }
 
 void AudioCapture::finishPcm16(AudioCaptureResult &out) {
+  stopCaptureTask();
   if (dmaBuffer != nullptr) {
     heap_caps_free(dmaBuffer);
     dmaBuffer = nullptr;
   }
   out.data = activeBuffer;
-  out.length = activeDataOffset + activeLength;
+  const size_t recordedLength = activeLength.load();
+  out.length = activeDataOffset + recordedLength;
   out.sampleRate = kSampleRate;
   out.wav = activeWav;
   if (activeWav &&
       !wav::writePcmHeader(out.data, activeDataOffset, kSampleRate, 1, 16,
-                           activeLength)) {
+                           recordedLength)) {
     out.length = 0;
   }
   activeBuffer = nullptr;
@@ -175,6 +186,7 @@ void AudioCapture::finishPcm16(AudioCaptureResult &out) {
 }
 
 void AudioCapture::release(AudioCaptureResult &result) {
+  stopCaptureTask();
   if (dmaBuffer != nullptr) {
     heap_caps_free(dmaBuffer);
     dmaBuffer = nullptr;
@@ -188,6 +200,7 @@ void AudioCapture::release(AudioCaptureResult &result) {
   activeDataOffset = 0;
   active = false;
   activeWav = false;
+  captureFailed = false;
   shutdownHardware();
   if (result.data != nullptr) {
     psram::release(result.data);
@@ -278,12 +291,12 @@ bool AudioCapture::ensureI2s(char *error, int errorSize) {
   i2s_std_config_t stdConfig = {};
   stdConfig.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kSampleRate);
   stdConfig.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-  // ES8311 is a mono codec. Ask the RX driver for one sample per frame so the
-  // byte count matches the mono WAV rate. Treating this buffer as interleaved
-  // stereo discarded every second sample and made a 7 s manual recording
-  // produce roughly 3.5 s of PCM.
+  // Standard I2S always clocks two slots per frame on ESP32-S3. Configure that
+  // representation explicitly, then retain only the ES8311's first slot when
+  // building the mono WAV. Treating both slots as consecutive mono samples
+  // doubles the WAV duration and halves its pitch.
   stdConfig.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-      I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+      I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
   stdConfig.gpio_cfg.mclk = static_cast<gpio_num_t>(kMclkPin);
   stdConfig.gpio_cfg.bclk = static_cast<gpio_num_t>(kBclkPin);
   stdConfig.gpio_cfg.ws = static_cast<gpio_num_t>(kWsPin);
@@ -345,7 +358,7 @@ bool AudioCapture::readPcmChunk(char *error, int errorSize) {
   }
   size_t bytesRead = 0;
   esp_err_t err = i2s_channel_read(rxChannel, dmaBuffer, kDmaChunkBytes,
-                                   &bytesRead, pdMS_TO_TICKS(20));
+                                   &bytesRead, pdMS_TO_TICKS(kI2sReadTimeoutMs));
   if (err != ESP_OK) {
     setError(error, errorSize, "I2S read failed");
     return false;
@@ -354,15 +367,67 @@ bool AudioCapture::readPcmChunk(char *error, int errorSize) {
     return true;
   }
 
-  const size_t samples = bytesRead / sizeof(int16_t);
-  for (size_t i = 0; i < samples && activeLength + 1 < activeCapacity; i++) {
-    const int16_t mono = dmaBuffer[i];
-    activeBuffer[activeDataOffset + activeLength++] =
+  const size_t frames = bytesRead / (sizeof(int16_t) * 2U);
+  size_t length = activeLength.load(std::memory_order_relaxed);
+  for (size_t i = 0; i < frames && length + 1 < activeCapacity; i++) {
+    const int16_t mono = dmaBuffer[i * 2U];
+    activeBuffer[activeDataOffset + length++] =
         static_cast<uint8_t>(mono & 0xff);
-    activeBuffer[activeDataOffset + activeLength++] =
+    activeBuffer[activeDataOffset + length++] =
         static_cast<uint8_t>((mono >> 8) & 0xff);
   }
+  activeLength.store(length, std::memory_order_release);
+  if (length >= activeCapacity) {
+    active = false;
+  }
   return true;
+}
+
+bool AudioCapture::startCaptureTask(char *error, int errorSize) {
+  TaskHandle_t created = nullptr;
+  taskRunning = true;
+  if (xTaskCreatePinnedToCore(taskEntry, "audio-capture",
+                              kCaptureTaskStackBytes, this,
+                              kCaptureTaskPriority, &created,
+                              kCaptureTaskCore) != pdPASS) {
+    taskRunning = false;
+    setError(error, errorSize, "Audio task failed");
+    return false;
+  }
+  taskHandle = created;
+  return true;
+}
+
+void AudioCapture::stopCaptureTask() {
+  stopRequested = true;
+  const unsigned long start = millis();
+  while (taskRunning && millis() - start < kCaptureTaskStopTimeoutMs) {
+    delay(2);
+  }
+  if (taskRunning && taskHandle != nullptr) {
+    vTaskDelete(static_cast<TaskHandle_t>(taskHandle));
+    taskRunning = false;
+  }
+  taskHandle = nullptr;
+}
+
+void AudioCapture::taskEntry(void *user) {
+  AudioCapture *capture = static_cast<AudioCapture *>(user);
+  if (capture != nullptr) {
+    capture->taskLoop();
+  }
+  vTaskDelete(nullptr);
+}
+
+void AudioCapture::taskLoop() {
+  while (!stopRequested && active) {
+    if (!readPcmChunk(nullptr, 0)) {
+      captureFailed = true;
+      active = false;
+      break;
+    }
+  }
+  taskRunning = false;
 }
 
 bool AudioCapture::readCodecRegister(uint8_t reg, uint8_t &value) {

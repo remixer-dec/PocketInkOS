@@ -39,6 +39,10 @@ struct FileViewerRuntime {
   uint8_t imageDither = 1;
   bool imageScaleToFit = true;
   uint8_t imageCacheEntries = 0;
+  bool hasPreviousTrack = false;
+  bool hasNextTrack = false;
+  /// Output from an audio viewer touch handler: -1 previous, +1 next.
+  int8_t trackNavigation = 0;
   FileViewerActivity *activity = nullptr;
 };
 
@@ -91,6 +95,7 @@ typedef uint32_t (*FileViewerVisibleBytesHandler)(
 typedef bool (*FileViewerMatchHandler)(const char *path,
                                        const char *extension);
 typedef void (*FileViewerCloseHandler)();
+typedef bool (*FileViewerPlaybackHandler)(FileViewerRuntime &runtime);
 
 struct FileViewerExtension {
   const char *id = nullptr;
@@ -107,6 +112,8 @@ struct FileViewerExtension {
   FileViewerMatchHandler matches = nullptr;
   /// Releases viewer-owned files, tasks, decoders, and loaded libraries.
   FileViewerCloseHandler close = nullptr;
+  /// Optional hardware-button playback control for audio-like viewers.
+  FileViewerPlaybackHandler togglePlayback = nullptr;
 };
 
 const FileViewerExtension *findFileViewerForPath(const char *path);

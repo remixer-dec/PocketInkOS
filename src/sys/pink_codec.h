@@ -17,6 +17,12 @@ struct PinkAudioCodecInfo {
   char artist[64] = {};
 };
 
+struct PinkAudioArtworkInfo {
+  uint32_t streamOffset = 0;
+  uint32_t byteSize = 0;
+  char mime[32] = {};
+};
+
 /// Re-scans `/bin/codecs` for typed .pink libraries.
 void pinkCodecRefresh();
 /// Reports whether an installed audio codec declares this extension.
@@ -37,6 +43,11 @@ public:
   bool seekPcmFrame(uint32_t targetFrame, uint32_t *actualFrame = nullptr);
   /// Warms an optional codec seek cache without blocking on a full scan.
   bool warmSeekCache(uint16_t frameBudget);
+  bool supportsSeekCacheWarmup() const;
+  /// Returns the encoded cover location in the caller-owned source stream.
+  bool artwork(PinkAudioArtworkInfo &info) const;
+  bool supportsArtwork() const;
+  bool supportsCurrentApi() const;
   void close();
   bool loaded() const { return decoder != nullptr; }
 
