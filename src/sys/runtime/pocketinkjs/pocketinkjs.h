@@ -205,6 +205,8 @@ enum class Tag : uint8_t {
   Resolver = 15,
   Date = 16,
   Error = 17,
+  Uint8Array = 18,
+  Map = 19,
 };
 
 static constexpr uint64_t kBoxMask = UINT64_C(0x7ff8000000000000);
@@ -285,6 +287,8 @@ enum class BlockKind : uint8_t {
   Promise,
   Date,
   Error,
+  Uint8Array,
+  Map,
   Module,
   ExternalScratch,
 };
@@ -322,6 +326,11 @@ struct ValuesPayload {
   uint32_t capacity = 0;
 };
 
+struct Uint8ArrayPayload {
+  uint32_t length = 0;
+  uint32_t reserved = 0;
+};
+
 struct ParameterSpan {
   uint32_t start = 0;
   uint16_t length = 0;
@@ -346,7 +355,7 @@ struct PromisePayload {
   uint32_t nextJob = 0;
   uint8_t state = 0; // 0 pending, 1 fulfilled, 2 rejected, 3 adopted.
   uint8_t queued = 0;
-  uint16_t reserved = 0;
+  uint16_t reserved = 0; // 1 finally reaction, 2 process.nextTick job.
 };
 
 struct DatePayload {
@@ -439,6 +448,9 @@ enum class BuiltinObject : uint8_t {
   SyntaxError,
   EvalError,
   UriError,
+  Uint8Array,
+  Map,
+  Process,
 };
 
 enum class BuiltinFunction : uint16_t {
@@ -559,9 +571,25 @@ enum class BuiltinFunction : uint16_t {
   DateGetMinutes,
   DateGetSeconds,
   DateGetMilliseconds,
+  Uint8ArrayFrom,
+  Uint8ArrayOf,
+  Uint8ArraySet,
+  Uint8ArraySlice,
+  Uint8ArrayFill,
+  MapGet,
+  MapSet,
+  MapHas,
+  MapDelete,
+  MapClear,
+  MapKeys,
+  MapValues,
+  MapEntries,
+  MapForEach,
+  ProcessCwd,
+  ProcessNextTick,
 };
 
-static_assert(static_cast<uint16_t>(BuiltinFunction::DateGetMilliseconds) <
+static_assert(static_cast<uint16_t>(BuiltinFunction::ProcessNextTick) <
               256U);
 
 template <size_t Width> struct BuiltinProperty {
@@ -705,6 +733,10 @@ public:
   Value makeArray(size_t reserve = 0);
   /// Allocates an empty JavaScript Set.
   Value makeSet();
+  /// Allocates a byte-packed fixed-length Uint8Array.
+  Value makeUint8Array(size_t length = 0);
+  /// Allocates an empty string-keyed JavaScript Map.
+  Value makeMap();
   /// Allocates a pending promise intended for later host settlement.
   Value makePromise();
   /// Rejects a promise using the current error and clears that host failure path.
@@ -841,6 +873,8 @@ private:
   uint32_t stepsRemaining_ = 0;
   uint32_t randomState_ = 0x91e10da5U;
   Value lastResult_ = {};
+  uint32_t processEnv_ = 0;
+  uint32_t processArgv_ = 0;
   const Value *callArguments_ = nullptr;
   size_t callArgumentCount_ = 0;
   // A pending throw reuses error_ as the parser's existing unwind signal.
@@ -915,6 +949,18 @@ private:
   bool reserveCollection(Value collectionValue, size_t capacity);
   bool collectionPush(Value collectionValue, Value value, bool unique);
   bool collectionRemoveAt(Value collectionValue, size_t index, Value *removed);
+  detail::Uint8ArrayPayload *uint8ArrayPayload(Value value);
+  const detail::Uint8ArrayPayload *uint8ArrayPayload(Value value) const;
+  uint8_t *uint8ArrayData(detail::Uint8ArrayPayload *value) const {
+    return reinterpret_cast<uint8_t *>(value + 1);
+  }
+  const uint8_t *
+  uint8ArrayData(const detail::Uint8ArrayPayload *value) const {
+    return reinterpret_cast<const uint8_t *>(value + 1);
+  }
+  size_t uint8ArrayLength(Value value) const;
+  Value uint8ArrayAt(Value value, size_t index) const;
+  bool uint8ArraySet(Value value, size_t index, Value item);
 
   int findBinding(NameRef name) const;
   bool defineBinding(NameRef name, Value value, bool constant);
@@ -952,6 +998,10 @@ private:
                 int64_t *index, bool *numeric);
   bool setIndex(Value receiver, NameRef name, int64_t index, bool numeric,
                 Value value);
+  bool mapSet(Value map, Value key, Value value);
+  Value processEnvironment();
+  Value processArguments();
+  Value processCwd();
 
   Value makeFunction(uint32_t source, uint32_t bodyStart, uint32_t bodyEnd,
                      const detail::ParameterSpan *parameters,
@@ -970,7 +1020,7 @@ private:
   Value callBuiltin(detail::BuiltinFunction function, Value receiver,
                     const Value *args, size_t argc);
   Value builtinProperty(detail::BuiltinObject object, const char *key,
-                        size_t keyLength) const;
+                        size_t keyLength);
 
   Value toStringValue(Value value);
   size_t formatDepth(Value value, char *out, size_t outSize,
@@ -1093,6 +1143,8 @@ inline void Runtime::initializeWorkspace() {
   heapUsed_ = 8; // Offset zero remains the null link in heap structures.
   peakHeapUsed_ = heapUsed_;
   lastResult_ = undefined();
+  processEnv_ = 0;
+  processArgv_ = 0;
   exception_ = undefined();
   randomState_ ^= static_cast<uint32_t>(nowMilliseconds());
   ready_ = true;
@@ -1551,6 +1603,8 @@ inline ValueType Runtime::typeOf(Value value) const {
   case detail::Tag::Object:
   case detail::Tag::Date:
   case detail::Tag::Error:
+  case detail::Tag::Uint8Array:
+  case detail::Tag::Map:
     return ValueType::Object;
   case detail::Tag::Promise:
     return ValueType::Promise;
@@ -1558,7 +1612,8 @@ inline ValueType Runtime::typeOf(Value value) const {
     const detail::BuiltinObject object =
         static_cast<detail::BuiltinObject>(detail::payloadOf(value));
     return object == detail::BuiltinObject::Math ||
-                   object == detail::BuiltinObject::Json
+                   object == detail::BuiltinObject::Json ||
+                   object == detail::BuiltinObject::Process
                ? ValueType::Object
                : ValueType::Function;
   }
@@ -1586,7 +1641,9 @@ inline bool Runtime::isCallable(Value value) const {
           static_cast<detail::BuiltinObject>(detail::payloadOf(value)) !=
               detail::BuiltinObject::Math &&
           static_cast<detail::BuiltinObject>(detail::payloadOf(value)) !=
-              detail::BuiltinObject::Json);
+              detail::BuiltinObject::Json &&
+          static_cast<detail::BuiltinObject>(detail::payloadOf(value)) !=
+              detail::BuiltinObject::Process);
 }
 
 inline bool Runtime::isTruthy(Value value) const {
@@ -1708,6 +1765,19 @@ inline size_t Runtime::formatDepth(Value value, char *out, size_t outSize,
   case ValueType::Object:
     if (detail::tagOf(value) == detail::Tag::Date) {
       append("[object Date]", 13);
+    } else if (detail::tagOf(value) == detail::Tag::Uint8Array) {
+      const size_t length = uint8ArrayLength(value);
+      for (size_t i = 0; i < length; i++) {
+        if (i != 0)
+          append(",", 1);
+        const int count = std::snprintf(
+            numberText, sizeof(numberText), "%u",
+            static_cast<unsigned>(uint8ArrayData(uint8ArrayPayload(value))[i]));
+        if (count > 0)
+          append(numberText, static_cast<size_t>(count));
+      }
+    } else if (detail::tagOf(value) == detail::Tag::Map) {
+      append("[object Map]", 12);
     } else if (detail::tagOf(value) == detail::Tag::Error) {
       const detail::ErrorPayload *data = errorPayload(value);
       const StringView name =
@@ -1780,6 +1850,27 @@ inline Value Runtime::makeSet() {
   return set;
 }
 
+inline Value Runtime::makeUint8Array(size_t length) {
+  if (length > UINT32_MAX ||
+      length > UINT32_MAX - sizeof(detail::Uint8ArrayPayload)) {
+    return fail(ErrorCode{89});
+  }
+  const uint32_t offset = allocateBlock(
+      detail::BlockKind::Uint8Array,
+      sizeof(detail::Uint8ArrayPayload) + length);
+  if (offset == 0)
+    return undefined();
+  auto *data = static_cast<detail::Uint8ArrayPayload *>(payload(offset));
+  data->length = static_cast<uint32_t>(length);
+  return detail::boxed(detail::Tag::Uint8Array, offset);
+}
+
+inline Value Runtime::makeMap() {
+  const uint32_t offset = allocateBlock(detail::BlockKind::Map,
+                                        sizeof(detail::ObjectPayload));
+  return offset != 0 ? detail::boxed(detail::Tag::Map, offset) : undefined();
+}
+
 inline Value Runtime::makePromise() {
   const uint32_t offset = allocateBlock(detail::BlockKind::Promise,
                                         sizeof(detail::PromisePayload));
@@ -1850,6 +1941,40 @@ inline detail::CollectionPayload *Runtime::collection(Value value) {
 
 inline const detail::CollectionPayload *Runtime::collection(Value value) const {
   return const_cast<Runtime *>(this)->collection(value);
+}
+
+inline detail::Uint8ArrayPayload *Runtime::uint8ArrayPayload(Value value) {
+  const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(value));
+  return detail::tagOf(value) == detail::Tag::Uint8Array &&
+                 validOffset(offset, detail::BlockKind::Uint8Array)
+             ? static_cast<detail::Uint8ArrayPayload *>(payload(offset))
+             : nullptr;
+}
+
+inline const detail::Uint8ArrayPayload *
+Runtime::uint8ArrayPayload(Value value) const {
+  return const_cast<Runtime *>(this)->uint8ArrayPayload(value);
+}
+
+inline size_t Runtime::uint8ArrayLength(Value value) const {
+  const detail::Uint8ArrayPayload *data = uint8ArrayPayload(value);
+  return data != nullptr ? data->length : 0;
+}
+
+inline Value Runtime::uint8ArrayAt(Value value, size_t index) const {
+  const detail::Uint8ArrayPayload *data = uint8ArrayPayload(value);
+  return data != nullptr && index < data->length
+             ? number(static_cast<double>(uint8ArrayData(data)[index]))
+             : undefined();
+}
+
+inline bool Runtime::uint8ArraySet(Value value, size_t index, Value item) {
+  detail::Uint8ArrayPayload *data = uint8ArrayPayload(value);
+  if (data == nullptr || index >= data->length)
+    return false;
+  uint8ArrayData(data)[index] =
+      static_cast<uint8_t>(detail::toUint32(toNumber(item)) & 0xffU);
+  return true;
 }
 
 inline detail::ValuesPayload *Runtime::valuesPayload(uint32_t offset) {
@@ -1989,12 +2114,16 @@ inline bool Runtime::collectionRemoveAt(Value collectionValue, size_t index,
 
 inline int Runtime::findProperty(Value object, const char *key,
                                  size_t keyLength) const {
-  if (detail::tagOf(object) != detail::Tag::Object) {
+  const detail::Tag tag = detail::tagOf(object);
+  if (tag != detail::Tag::Object && tag != detail::Tag::Map) {
     return 0;
   }
+  const detail::BlockKind kind = tag == detail::Tag::Map
+                                     ? detail::BlockKind::Map
+                                     : detail::BlockKind::Object;
   const uint32_t objectOffset =
       static_cast<uint32_t>(detail::payloadOf(object));
-  if (!validOffset(objectOffset, detail::BlockKind::Object)) {
+  if (!validOffset(objectOffset, kind)) {
     return 0;
   }
   const detail::ObjectPayload *objectData =
@@ -2014,7 +2143,9 @@ inline int Runtime::findProperty(Value object, const char *key,
 
 inline bool Runtime::objectSet(Value object, const char *key, size_t keyLength,
                                Value value) {
-  if (detail::tagOf(object) != detail::Tag::Object || key == nullptr) {
+  const detail::Tag tag = detail::tagOf(object);
+  if ((tag != detail::Tag::Object && tag != detail::Tag::Map) ||
+      key == nullptr) {
     setError(ErrorCode{10}, nullptr, 0);
     return false;
   }
@@ -2044,13 +2175,47 @@ inline bool Runtime::objectSet(Value object, const char *key, size_t keyLength,
   return true;
 }
 
+inline bool Runtime::mapSet(Value map, Value key, Value value) {
+  if (detail::tagOf(map) != detail::Tag::Map) {
+    setError(ErrorCode{107}, nullptr, 0);
+    return false;
+  }
+  Value keyValue = toStringValue(key);
+  const StringView text = stringView(keyValue);
+  if (error_.message[0] != '\0')
+    return false;
+  const int existing = findProperty(map, text.data, text.size);
+  if (existing != 0) {
+    propertyPayload(static_cast<uint32_t>(existing))->value = value;
+    return true;
+  }
+  const uint32_t propertyOffset = allocateBlock(
+      detail::BlockKind::Property, sizeof(detail::PropertyPayload));
+  if (propertyOffset == 0)
+    return false;
+  const uint32_t mapOffset =
+      static_cast<uint32_t>(detail::payloadOf(map));
+  auto *mapData = static_cast<detail::ObjectPayload *>(payload(mapOffset));
+  detail::PropertyPayload *property = propertyPayload(propertyOffset);
+  property->next = mapData->firstProperty;
+  property->key = keyValue;
+  property->value = value;
+  mapData->firstProperty = propertyOffset;
+  return true;
+}
+
 inline bool Runtime::deleteProperty(Value object, const char *key,
                                     size_t keyLength) {
-  if (detail::tagOf(object) != detail::Tag::Object || key == nullptr)
+  const detail::Tag tag = detail::tagOf(object);
+  if ((tag != detail::Tag::Object && tag != detail::Tag::Map) ||
+      key == nullptr)
     return false;
   const uint32_t objectOffset =
       static_cast<uint32_t>(detail::payloadOf(object));
-  if (!validOffset(objectOffset, detail::BlockKind::Object))
+  const detail::BlockKind kind = tag == detail::Tag::Map
+                                     ? detail::BlockKind::Map
+                                     : detail::BlockKind::Object;
+  if (!validOffset(objectOffset, kind))
     return false;
   auto *objectData =
       static_cast<detail::ObjectPayload *>(payload(objectOffset));
@@ -2071,14 +2236,18 @@ inline bool Runtime::deleteProperty(Value object, const char *key,
 }
 
 inline bool Runtime::copyObjectProperties(Value target, Value source) {
-  if (detail::tagOf(target) != detail::Tag::Object)
+  if (detail::tagOf(target) != detail::Tag::Object &&
+      detail::tagOf(target) != detail::Tag::Map)
     return false;
   const detail::Tag tag = detail::tagOf(source);
   if (tag == detail::Tag::Null || tag == detail::Tag::Undefined)
     return true;
-  if (tag == detail::Tag::Object) {
+  if (tag == detail::Tag::Object || tag == detail::Tag::Map) {
     const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(source));
-    if (!validOffset(offset, detail::BlockKind::Object))
+    const detail::BlockKind kind = tag == detail::Tag::Map
+                                       ? detail::BlockKind::Map
+                                       : detail::BlockKind::Object;
+    if (!validOffset(offset, kind))
       return false;
     uint32_t property =
         static_cast<const detail::ObjectPayload *>(payload(offset))
@@ -2133,11 +2302,15 @@ inline Value Runtime::objectGet(Value object, const char *key,
 }
 
 inline size_t Runtime::objectPropertyCount(Value object) const {
-  if (detail::tagOf(object) != detail::Tag::Object) {
+  const detail::Tag tag = detail::tagOf(object);
+  if (tag != detail::Tag::Object && tag != detail::Tag::Map) {
     return 0;
   }
   const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(object));
-  if (!validOffset(offset, detail::BlockKind::Object)) {
+  const detail::BlockKind kind = tag == detail::Tag::Map
+                                     ? detail::BlockKind::Map
+                                     : detail::BlockKind::Object;
+  if (!validOffset(offset, kind)) {
     return 0;
   }
   size_t count = 0;
@@ -2287,6 +2460,16 @@ inline Value Runtime::builtinGlobal(NameRef name) const {
     return detail::boxed(detail::Tag::BuiltinFunction,
                          static_cast<uint16_t>(
                              detail::BuiltinFunction::SetConstructor));
+  if (equals("Uint8Array"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::Uint8Array));
+  if (equals("Map"))
+    return detail::boxed(detail::Tag::BuiltinObject,
+                         static_cast<uint8_t>(detail::BuiltinObject::Map));
+  if (equals("process"))
+    return detail::boxed(detail::Tag::BuiltinObject,
+                         static_cast<uint8_t>(detail::BuiltinObject::Process));
   if (equals("parseInt"))
     return detail::boxed(detail::Tag::BuiltinFunction,
                          static_cast<uint16_t>(detail::BuiltinFunction::ParseInt));
@@ -2351,6 +2534,52 @@ inline Value Runtime::builtinGlobal(NameRef name) const {
     return detail::boxed(detail::Tag::BuiltinObject,
                          static_cast<uint8_t>(detail::BuiltinObject::UriError));
   return undefined();
+}
+
+inline Value Runtime::processEnvironment() {
+  if (processEnv_ != 0)
+    return detail::boxed(detail::Tag::Object, processEnv_);
+  Value environment = makeObject();
+  if (isUndefined(environment))
+    return environment;
+  Value nodeEnvironment = makeString("production");
+  if (error_.message[0] == '\0' &&
+      objectSet(environment, "NODE_ENV", nodeEnvironment))
+    processEnv_ = static_cast<uint32_t>(detail::payloadOf(environment));
+  return environment;
+}
+
+inline Value Runtime::processArguments() {
+  if (processArgv_ != 0)
+    return detail::boxed(detail::Tag::Array, processArgv_);
+  Value arguments = makeArray(2);
+  if (isUndefined(arguments))
+    return arguments;
+  Value executable = makeString("pocketinkjs");
+  if (error_.message[0] != '\0' || !arrayPush(arguments, executable))
+    return arguments;
+  if (const detail::ModulePayload *module = moduleForSource(entrySource_))
+    if (!arrayPush(arguments, module->path))
+      return arguments;
+  processArgv_ = static_cast<uint32_t>(detail::payloadOf(arguments));
+  return arguments;
+}
+
+inline Value Runtime::processCwd() {
+  if (const detail::ModulePayload *module = moduleForSource(entrySource_)) {
+    const StringView path = stringView(module->path);
+    if (path.data != nullptr) {
+      size_t length = path.size;
+      while (length > 0 && path.data[length - 1U] != '/')
+        length--;
+      if (length == 0)
+        return makeString("/");
+      if (length > 1)
+        length--;
+      return makeString(path.data, length);
+    }
+  }
+  return makeString("/");
 }
 
 inline detail::ModulePayload *Runtime::moduleForSource(uint32_t source) {
@@ -2671,7 +2900,7 @@ inline bool Runtime::bindMethod(const char *path,
 
 inline Value Runtime::builtinProperty(detail::BuiltinObject object,
                                       const char *key,
-                                      size_t keyLength) const {
+                                      size_t keyLength) {
   auto is = [key, keyLength](const char *name) {
     const size_t length = std::strlen(name);
     return length == keyLength && std::memcmp(key, name, length) == 0;
@@ -2768,6 +2997,30 @@ inline Value Runtime::builtinProperty(detail::BuiltinObject object,
     };
     return detail::findBuiltinProperty(properties, key, keyLength);
   }
+  case detail::BuiltinObject::Uint8Array: {
+    static constexpr detail::BuiltinProperty<5> properties[] = {
+        detail::builtinProperty<5>("from", B::Uint8ArrayFrom),
+        detail::builtinProperty<5>("of", B::Uint8ArrayOf),
+    };
+    return detail::findBuiltinProperty(properties, key, keyLength);
+  }
+  case detail::BuiltinObject::Process:
+    if (is("env"))
+      return processEnvironment();
+    if (is("argv"))
+      return processArguments();
+    if (is("pid"))
+      return number(1);
+    if (is("cwd"))
+      return detail::boxed(
+          detail::Tag::BuiltinFunction,
+          static_cast<uint16_t>(detail::BuiltinFunction::ProcessCwd));
+    if (is("nextTick"))
+      return detail::boxed(
+          detail::Tag::BuiltinFunction,
+          static_cast<uint16_t>(detail::BuiltinFunction::ProcessNextTick));
+    break;
+  case detail::BuiltinObject::Map:
   case detail::BuiltinObject::Boolean:
   case detail::BuiltinObject::Error:
   case detail::BuiltinObject::TypeError:
@@ -2866,6 +3119,35 @@ inline Value Runtime::getProperty(Value receiver, const char *key,
     };
     return detail::findBuiltinProperty(properties, key, keyLength);
   }
+  case detail::Tag::Uint8Array: {
+    if (is("length") || is("byteLength"))
+      return number(static_cast<double>(uint8ArrayLength(receiver)));
+    static constexpr detail::BuiltinProperty<9> properties[] = {
+        detail::builtinProperty<9>("set", B::Uint8ArraySet),
+        detail::builtinProperty<9>("slice", B::Uint8ArraySlice),
+        detail::builtinProperty<9>("subarray", B::Uint8ArraySlice),
+        detail::builtinProperty<9>("fill", B::Uint8ArrayFill),
+    };
+    return detail::findBuiltinProperty(properties, key, keyLength);
+  }
+  case detail::Tag::Map: {
+    if (is("size"))
+      return number(static_cast<double>(objectPropertyCount(receiver)));
+    static constexpr detail::BuiltinProperty<8> properties[] = {
+        detail::builtinProperty<8>("get", B::MapGet),
+        detail::builtinProperty<8>("set", B::MapSet),
+        detail::builtinProperty<8>("has", B::MapHas),
+        detail::builtinProperty<8>("delete", B::MapDelete),
+        detail::builtinProperty<8>("clear", B::MapClear),
+        detail::builtinProperty<8>("keys", B::MapKeys),
+        detail::builtinProperty<8>("values", B::MapValues),
+        detail::builtinProperty<8>("entries", B::MapEntries),
+        detail::builtinProperty<8>("forEach", B::MapForEach),
+    };
+    const Value method =
+        detail::findBuiltinProperty(properties, key, keyLength);
+    return isUndefined(method) ? objectGet(receiver, key, keyLength) : method;
+  }
   case detail::Tag::String: {
     if (is("length"))
       return number(static_cast<double>(stringView(receiver).size));
@@ -2945,7 +3227,8 @@ inline Value Runtime::getProperty(Value receiver, const char *key,
 
 inline bool Runtime::setProperty(Value receiver, const char *key,
                                  size_t keyLength, Value value) {
-  if (detail::tagOf(receiver) == detail::Tag::Object) {
+  if (detail::tagOf(receiver) == detail::Tag::Object ||
+      detail::tagOf(receiver) == detail::Tag::Map) {
     return objectSet(receiver, key, keyLength, value);
   }
   setError(detail::ErrorKind::TypeError, ErrorCode{20}, nullptr, 0);
@@ -2974,12 +3257,15 @@ inline bool Runtime::getIndex(Value receiver, Value key, Value *result,
   }
   if (*numeric && (detail::tagOf(receiver) == detail::Tag::Array ||
                    detail::tagOf(receiver) == detail::Tag::Set ||
-                   detail::tagOf(receiver) == detail::Tag::String)) {
+                   detail::tagOf(receiver) == detail::Tag::String ||
+                   detail::tagOf(receiver) == detail::Tag::Uint8Array)) {
     if (detail::tagOf(receiver) == detail::Tag::String) {
       const StringView text = stringView(receiver);
       *result = static_cast<size_t>(*index) < text.size
                     ? makeString(text.data + *index, 1)
                     : undefined();
+    } else if (detail::tagOf(receiver) == detail::Tag::Uint8Array) {
+      *result = uint8ArrayAt(receiver, static_cast<size_t>(*index));
     } else {
       *result = arrayAt(receiver, static_cast<size_t>(*index));
     }
@@ -3006,6 +3292,9 @@ inline bool Runtime::setIndex(Value receiver, NameRef name, int64_t index,
     setError(ErrorCode{22}, nullptr, 0);
     return false;
   }
+  if (numeric && detail::tagOf(receiver) == detail::Tag::Uint8Array)
+    return index >= 0 &&
+           uint8ArraySet(receiver, static_cast<size_t>(index), value);
   if (name.data == nullptr) {
     setError(ErrorCode{23}, nullptr, 0);
     return false;
@@ -3025,7 +3314,11 @@ inline bool Runtime::deleteIndex(Value receiver, NameRef name, int64_t index,
     }
     return true;
   }
-  if (detail::tagOf(receiver) == detail::Tag::Object && name.data != nullptr)
+  if (numeric && detail::tagOf(receiver) == detail::Tag::Uint8Array)
+    return false;
+  if ((detail::tagOf(receiver) == detail::Tag::Object ||
+       detail::tagOf(receiver) == detail::Tag::Map) &&
+      name.data != nullptr)
     return deleteProperty(receiver, name.data, name.length);
   return false;
 }
@@ -3034,6 +3327,7 @@ inline bool Runtime::hasIndex(Value receiver, Value key) {
   const detail::Tag tag = detail::tagOf(receiver);
   if (tag != detail::Tag::Object && tag != detail::Tag::Array &&
       tag != detail::Tag::String && tag != detail::Tag::Set &&
+      tag != detail::Tag::Uint8Array && tag != detail::Tag::Map &&
       tag != detail::Tag::Promise && tag != detail::Tag::Date &&
       tag != detail::Tag::Error && tag != detail::Tag::BuiltinObject) {
     setError(detail::ErrorKind::TypeError, ErrorCode{229}, nullptr, 0);
@@ -3043,9 +3337,10 @@ inline bool Runtime::hasIndex(Value receiver, Value key) {
   if (error_.message[0] != '\0')
     return false;
   const StringView text = stringView(keyText);
-  if (tag == detail::Tag::Object)
+  if (tag == detail::Tag::Object || tag == detail::Tag::Map)
     return findProperty(receiver, text.data, text.size) != 0;
-  if (tag != detail::Tag::Array && tag != detail::Tag::String)
+  if (tag != detail::Tag::Array && tag != detail::Tag::String &&
+      tag != detail::Tag::Uint8Array)
     return !isUndefined(getProperty(receiver, text.data, text.size));
   if (text.size == 6 && std::memcmp(text.data, "length", 6) == 0)
     return true;
@@ -3061,6 +3356,8 @@ inline bool Runtime::hasIndex(Value receiver, Value key) {
   }
   const size_t length = tag == detail::Tag::Array
                             ? arrayLength(receiver)
+                        : tag == detail::Tag::Uint8Array
+                            ? uint8ArrayLength(receiver)
                             : stringView(receiver).size;
   return index < length;
 }
@@ -3568,11 +3865,25 @@ inline RunResult Runtime::drainJobs(size_t maximum) {
     const Value input = data->result;
     const Value handler = rejected ? data->onRejected : data->onFulfilled;
     const Value child = data->child;
-    const bool finallyHandler = data->reserved != 0;
+    const uint16_t jobKind = data->reserved;
+    const bool finallyHandler = jobKind == 1;
+    const bool nextTickJob = jobKind == 2;
     data->reserved = 0;
     data->onFulfilled = undefined();
     data->onRejected = undefined();
     data->child = undefined();
+    if (nextTickJob) {
+      const detail::CollectionPayload *owner = collection(input);
+      const detail::ValuesPayload *arguments =
+          owner != nullptr ? valuesPayload(owner->values) : nullptr;
+      callValue(handler, undefined(),
+                arguments != nullptr ? valuesData(arguments) : nullptr,
+                arguments != nullptr ? arguments->length : 0);
+      completed++;
+      if (error_.message[0] != '\0')
+        break;
+      continue;
+    }
     if (isCallable(handler)) {
       Value output = finallyHandler
                          ? callValue(handler, undefined(), nullptr, 0)
@@ -3622,6 +3933,8 @@ inline void Runtime::markValue(Value value, uint32_t &workCount,
   case detail::Tag::Date:
   case detail::Tag::Error:
   case detail::Tag::Source:
+  case detail::Tag::Uint8Array:
+  case detail::Tag::Map:
     markOffset(static_cast<uint32_t>(detail::payloadOf(value)), workCount,
                overflow);
     break;
@@ -3669,6 +3982,8 @@ inline void Runtime::collectGarbage() {
   markOffset(promiseJobHead_, workCount, overflow);
   markOffset(moduleHead_, workCount, overflow);
   markValue(lastResult_, workCount, overflow);
+  markOffset(processEnv_, workCount, overflow);
+  markOffset(processArgv_, workCount, overflow);
   if (exceptionPending_)
     markValue(exception_, workCount, overflow);
 
@@ -3676,7 +3991,8 @@ inline void Runtime::collectGarbage() {
     const uint32_t offset = gcWork_[--workCount];
     detail::BlockHeader *block = header(offset);
     switch (block->kind) {
-    case detail::BlockKind::Object: {
+    case detail::BlockKind::Object:
+    case detail::BlockKind::Map: {
       const auto *object = static_cast<const detail::ObjectPayload *>(
           payload(offset));
       markOffset(object->firstProperty, workCount, overflow);
@@ -3810,6 +4126,7 @@ enum class TokenType : uint8_t {
   OptionalChain,
   Arrow,
   Let,
+  Var,
   Const,
   Function,
   If,
@@ -3859,6 +4176,12 @@ enum class TokenType : uint8_t {
   StarAssign,
   SlashAssign,
   PercentAssign,
+  AndAssign,
+  OrAssign,
+  XorAssign,
+  ShiftLeftAssign,
+  ShiftRightAssign,
+  ShiftRightUnsignedAssign,
   NullishAssign,
   Equal,
   NotEqual,
@@ -4098,26 +4421,36 @@ public:
       }
       break;
     case '<':
-      token.type = match('<') ? TokenType::ShiftLeft
-                              : (match('=') ? TokenType::LessEqual
-                                            : TokenType::Less);
+      if (match('<'))
+        token.type = match('=') ? TokenType::ShiftLeftAssign
+                                : TokenType::ShiftLeft;
+      else
+        token.type = match('=') ? TokenType::LessEqual : TokenType::Less;
       break;
     case '>':
       if (match('>')) {
-        token.type = match('>') ? TokenType::ShiftRightUnsigned
-                                : TokenType::ShiftRight;
+        if (match('>'))
+          token.type = match('=') ? TokenType::ShiftRightUnsignedAssign
+                                  : TokenType::ShiftRightUnsigned;
+        else
+          token.type = match('=') ? TokenType::ShiftRightAssign
+                                  : TokenType::ShiftRight;
       } else {
         token.type = match('=') ? TokenType::GreaterEqual : TokenType::Greater;
       }
       break;
     case '&':
-      token.type = match('&') ? TokenType::LogicalAnd : TokenType::And;
+      token.type = match('&') ? TokenType::LogicalAnd
+                              : (match('=') ? TokenType::AndAssign
+                                            : TokenType::And);
       break;
     case '|':
-      token.type = match('|') ? TokenType::LogicalOr : TokenType::Or;
+      token.type = match('|') ? TokenType::LogicalOr
+                              : (match('=') ? TokenType::OrAssign
+                                            : TokenType::Or);
       break;
     case '^':
-      token.type = TokenType::Xor;
+      token.type = match('=') ? TokenType::XorAssign : TokenType::Xor;
       break;
     default:
       token.type = TokenType::Error;
@@ -4156,6 +4489,8 @@ private:
   static TokenType keyword(const char *text, uint32_t length) {
     if (same(text, length, "let"))
       return TokenType::Let;
+    if (same(text, length, "var"))
+      return TokenType::Var;
     if (same(text, length, "const"))
       return TokenType::Const;
     if (same(text, length, "function"))
@@ -4470,7 +4805,8 @@ inline bool Parser::identifierToken(detail::TokenType type) const {
 
 inline bool Parser::startsStatement(detail::TokenType type) const {
   using T = detail::TokenType;
-  return type == T::Let || type == T::Const || type == T::If ||
+  return type == T::Let || type == T::Var || type == T::Const ||
+         type == T::If ||
          type == T::While || type == T::Do || type == T::For ||
          type == T::Return || type == T::Break || type == T::Continue ||
          type == T::Switch || type == T::Try || type == T::Throw ||
@@ -4915,7 +5251,7 @@ inline Parser::Expression Parser::arrayLiteral(bool execute) {
       if (execute) {
         const detail::Tag tag = detail::tagOf(spread.value);
         if (tag != detail::Tag::Array && tag != detail::Tag::Set &&
-            tag != detail::Tag::String) {
+            tag != detail::Tag::String && tag != detail::Tag::Uint8Array) {
           runtime_.setError(detail::ErrorKind::TypeError, ErrorCode{226},
                             source_, token_.start);
         } else {
@@ -5695,7 +6031,8 @@ inline bool Parser::pattern(Value value, PatternMode mode, bool execute) {
   if (token_.type == T::LeftBracket) {
     if (execute && detail::tagOf(value) != detail::Tag::Array &&
         detail::tagOf(value) != detail::Tag::Set &&
-        detail::tagOf(value) != detail::Tag::String) {
+        detail::tagOf(value) != detail::Tag::String &&
+        detail::tagOf(value) != detail::Tag::Uint8Array) {
       runtime_.setError(detail::ErrorKind::TypeError,
                         ErrorCode{222}, source_, token_.start);
       return false;
@@ -5891,6 +6228,10 @@ inline Parser::Expression Parser::assignment(bool execute) {
   if (operation != T::Assign && operation != T::PlusAssign &&
       operation != T::MinusAssign && operation != T::StarAssign &&
       operation != T::SlashAssign && operation != T::PercentAssign &&
+      operation != T::AndAssign && operation != T::OrAssign &&
+      operation != T::XorAssign && operation != T::ShiftLeftAssign &&
+      operation != T::ShiftRightAssign &&
+      operation != T::ShiftRightUnsignedAssign &&
       operation != T::NullishAssign) {
     return left;
   }
@@ -5923,6 +6264,18 @@ inline Parser::Expression Parser::assignment(bool execute) {
       binary = T::Slash;
     else if (operation == T::PercentAssign)
       binary = T::Percent;
+    else if (operation == T::AndAssign)
+      binary = T::And;
+    else if (operation == T::OrAssign)
+      binary = T::Or;
+    else if (operation == T::XorAssign)
+      binary = T::Xor;
+    else if (operation == T::ShiftLeftAssign)
+      binary = T::ShiftLeft;
+    else if (operation == T::ShiftRightAssign)
+      binary = T::ShiftRight;
+    else if (operation == T::ShiftRightUnsignedAssign)
+      binary = T::ShiftRightUnsigned;
     const bool nestedDelimiter =
         token_.type == T::RightParen || token_.type == T::RightBracket ||
         token_.type == T::RightBrace || token_.type == T::Comma ||
@@ -6015,6 +6368,12 @@ inline Value Parser::applyBinary(detail::TokenType operation, Value left,
         break;
       case detail::BuiltinObject::Date:
         matches = leftTag == detail::Tag::Date;
+        break;
+      case detail::BuiltinObject::Uint8Array:
+        matches = leftTag == detail::Tag::Uint8Array;
+        break;
+      case detail::BuiltinObject::Map:
+        matches = leftTag == detail::Tag::Map;
         break;
       case detail::BuiltinObject::Error:
       case detail::BuiltinObject::TypeError:
@@ -6132,6 +6491,7 @@ inline Parser::Flow Parser::statement(bool execute) {
   case T::LeftBrace:
     return block(execute);
   case T::Let:
+  case T::Var:
     return declaration(execute, false);
   case T::Const:
     return declaration(execute, true);
@@ -6419,7 +6779,8 @@ inline Parser::Flow Parser::exportStatement(bool execute) {
     return {FlowKind::Normal, value};
   }
 
-  if (token_.type == T::Const || token_.type == T::Let) {
+  if (token_.type == T::Const || token_.type == T::Let ||
+      token_.type == T::Var) {
     const bool constant = token_.type == T::Const;
     advance();
     if (!identifierToken(token_.type)) {
@@ -6695,6 +7056,8 @@ inline size_t Parser::iterableLength(Value iterable) const {
   if (detail::tagOf(iterable) == detail::Tag::String) {
     return runtime_.stringView(iterable).size;
   }
+  if (detail::tagOf(iterable) == detail::Tag::Uint8Array)
+    return runtime_.uint8ArrayLength(iterable);
   return 0;
 }
 
@@ -6718,6 +7081,12 @@ inline bool Parser::iterableAt(Value iterable, size_t index, Value *value) const
     *value = const_cast<Runtime &>(runtime_).makeString(text.data + index, 1);
     return true;
   }
+  if (detail::tagOf(iterable) == detail::Tag::Uint8Array) {
+    if (index >= runtime_.uint8ArrayLength(iterable))
+      return false;
+    *value = runtime_.uint8ArrayAt(iterable, index);
+    return true;
+  }
   return false;
 }
 
@@ -6725,7 +7094,7 @@ inline bool Parser::appendSpread(Value iterable, Value *values, size_t &count,
                                  size_t capacity) {
   const detail::Tag tag = detail::tagOf(iterable);
   if (tag != detail::Tag::Array && tag != detail::Tag::Set &&
-      tag != detail::Tag::String) {
+      tag != detail::Tag::String && tag != detail::Tag::Uint8Array) {
     runtime_.setError(detail::ErrorKind::TypeError, ErrorCode{226}, source_,
                       token_.start);
     return false;
@@ -6753,7 +7122,8 @@ inline Parser::Flow Parser::forStatement(bool execute) {
   expect(T::LeftParen, ErrorCode{50});
   const uint16_t scopeMarker =
       execute ? runtime_.enterScope() : runtime_.bindingCount_;
-  bool declarationInit = token_.type == T::Let || token_.type == T::Const;
+  bool declarationInit = token_.type == T::Let || token_.type == T::Var ||
+                         token_.type == T::Const;
   bool declarationConst = token_.type == T::Const;
   detail::Token firstName;
   bool hasFirstName = false;
@@ -6803,9 +7173,12 @@ inline Parser::Flow Parser::forStatement(bool execute) {
           if (detail::tagOf(iterable) == detail::Tag::Object)
             length = runtime_.objectPropertyCount(iterable);
           else if (detail::tagOf(iterable) == detail::Tag::Array ||
-                   detail::tagOf(iterable) == detail::Tag::String)
+                   detail::tagOf(iterable) == detail::Tag::String ||
+                   detail::tagOf(iterable) == detail::Tag::Uint8Array)
             length = detail::tagOf(iterable) == detail::Tag::Array
                          ? runtime_.arrayLength(iterable)
+                     : detail::tagOf(iterable) == detail::Tag::Uint8Array
+                         ? runtime_.uint8ArrayLength(iterable)
                          : runtime_.stringView(iterable).size;
           else
             length = 0;
@@ -6928,6 +7301,8 @@ inline Parser::Flow Parser::forStatement(bool execute) {
         length = runtime_.objectPropertyCount(iterable);
       else if (detail::tagOf(iterable) == detail::Tag::Array)
         length = runtime_.arrayLength(iterable);
+      else if (detail::tagOf(iterable) == detail::Tag::Uint8Array)
+        length = runtime_.uint8ArrayLength(iterable);
       else if (detail::tagOf(iterable) == detail::Tag::String)
         length = runtime_.stringView(iterable).size;
       else
@@ -7324,6 +7699,46 @@ inline Value Runtime::callValue(Value function, Value receiver,
       }
       return array;
     }
+    case detail::BuiltinObject::Uint8Array: {
+      if (argc == 0)
+        return makeUint8Array();
+      if (isNumber(args[0])) {
+        const double requested = toNumber(args[0]);
+        if (!std::isfinite(requested) || requested < 0 ||
+            requested > UINT32_MAX || std::floor(requested) != requested)
+          return fail(ErrorCode{89});
+        return makeUint8Array(static_cast<size_t>(requested));
+      }
+      return callBuiltin(detail::BuiltinFunction::Uint8ArrayFrom,
+                         undefined(), args, 1);
+    }
+    case detail::BuiltinObject::Map: {
+      Value map = makeMap();
+      if (argc == 0 || isUndefined(args[0]))
+        return map;
+      const detail::Tag sourceTag = detail::tagOf(args[0]);
+      if (sourceTag == detail::Tag::Map) {
+        const size_t count = objectPropertyCount(args[0]);
+        for (size_t i = 0; i < count && error_.message[0] == '\0'; i++) {
+          Value key;
+          Value value;
+          objectPropertyAt(args[0], i, &key, &value);
+          mapSet(map, key, value);
+        }
+        return map;
+      }
+      if (sourceTag != detail::Tag::Array && sourceTag != detail::Tag::Set)
+        return fail(ErrorCode{247});
+      for (size_t i = 0;
+           i < arrayLength(args[0]) && error_.message[0] == '\0'; i++) {
+        const Value entry = arrayAt(args[0], i);
+        if (detail::tagOf(entry) != detail::Tag::Array ||
+            arrayLength(entry) < 2)
+          return fail(ErrorCode{101});
+        mapSet(map, arrayAt(entry, 0), arrayAt(entry, 1));
+      }
+      return map;
+    }
     case detail::BuiltinObject::Object:
       if (argc > 0 && (typeOf(args[0]) == ValueType::Object ||
                        typeOf(args[0]) == ValueType::Array ||
@@ -7387,6 +7802,7 @@ inline Value Runtime::callValue(Value function, Value receiver,
     }
     case detail::BuiltinObject::Math:
     case detail::BuiltinObject::Json:
+    case detail::BuiltinObject::Process:
       return fail(ErrorCode{91});
     }
   }
@@ -7541,6 +7957,9 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
       for (size_t i = 0; i < length; i++) {
         collectionPush(set, arrayAt(source, i), true);
       }
+    } else if (detail::tagOf(source) == detail::Tag::Uint8Array) {
+      for (size_t i = 0; i < uint8ArrayLength(source); i++)
+        collectionPush(set, uint8ArrayAt(source, i), true);
     } else if (isString(source)) {
       const StringView text = stringView(source);
       for (size_t i = 0; i < text.size; i++)
@@ -7698,6 +8117,9 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
         detail::tagOf(source) == detail::Tag::Set) {
       for (size_t i = 0; i < arrayLength(source); i++)
         arrayPush(result, arrayAt(source, i));
+    } else if (detail::tagOf(source) == detail::Tag::Uint8Array) {
+      for (size_t i = 0; i < uint8ArrayLength(source); i++)
+        arrayPush(result, uint8ArrayAt(source, i));
     } else if (isString(source)) {
       const StringView text = stringView(source);
       for (size_t i = 0; i < text.size; i++)
@@ -7706,6 +8128,215 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
       return fail(ErrorCode{98});
     }
     return result;
+  }
+  case B::Uint8ArrayFrom: {
+    const Value source = argument(0);
+    const detail::Tag tag = detail::tagOf(source);
+    size_t length = 0;
+    if (tag == detail::Tag::Array || tag == detail::Tag::Set)
+      length = arrayLength(source);
+    else if (tag == detail::Tag::Uint8Array)
+      length = uint8ArrayLength(source);
+    else if (tag == detail::Tag::String)
+      length = stringView(source).size;
+    else
+      return fail(ErrorCode{246});
+    const Value mapper = argument(1);
+    if (!isUndefined(mapper) && !isCallable(mapper))
+      return fail(ErrorCode{111});
+    Value result = makeUint8Array(length);
+    for (size_t i = 0; i < length && error_.message[0] == '\0'; i++) {
+      Value item = undefined();
+      if (tag == detail::Tag::Array || tag == detail::Tag::Set)
+        item = arrayAt(source, i);
+      else if (tag == detail::Tag::Uint8Array)
+        item = uint8ArrayAt(source, i);
+      else
+        item = makeString(stringView(source).data + i, 1);
+      if (isCallable(mapper)) {
+        Value mapperArgs[2] = {item, number(static_cast<double>(i))};
+        item = callValue(mapper, undefined(), mapperArgs, 2);
+      }
+      uint8ArraySet(result, i, item);
+    }
+    return result;
+  }
+  case B::Uint8ArrayOf: {
+    Value result = makeUint8Array(argc);
+    for (size_t i = 0; i < argc; i++)
+      uint8ArraySet(result, i, args[i]);
+    return result;
+  }
+  case B::Uint8ArraySet: {
+    if (!requireReceiver(detail::Tag::Uint8Array, ErrorCode{107}))
+      return undefined();
+    const Value source = argument(0);
+    const detail::Tag tag = detail::tagOf(source);
+    size_t length = 0;
+    if (tag == detail::Tag::Array || tag == detail::Tag::Set)
+      length = arrayLength(source);
+    else if (tag == detail::Tag::Uint8Array)
+      length = uint8ArrayLength(source);
+    else if (tag == detail::Tag::String)
+      length = stringView(source).size;
+    else
+      return fail(ErrorCode{246});
+    const double rawOffset = argc > 1 ? toNumber(args[1]) : 0;
+    if (!std::isfinite(rawOffset) || rawOffset < 0 ||
+        std::floor(rawOffset) != rawOffset ||
+        rawOffset > static_cast<double>(uint8ArrayLength(receiver)) ||
+        length > uint8ArrayLength(receiver) -
+                     static_cast<size_t>(rawOffset))
+      return fail(ErrorCode{89});
+    const size_t offset = static_cast<size_t>(rawOffset);
+    for (size_t i = 0; i < length; i++) {
+      Value item = tag == detail::Tag::Uint8Array
+                       ? uint8ArrayAt(source, i)
+                   : (tag == detail::Tag::Array || tag == detail::Tag::Set)
+                       ? arrayAt(source, i)
+                       : makeString(stringView(source).data + i, 1);
+      uint8ArraySet(receiver, offset + i, item);
+    }
+    return undefined();
+  }
+  case B::Uint8ArraySlice: {
+    if (!requireReceiver(detail::Tag::Uint8Array, ErrorCode{107}))
+      return undefined();
+    const size_t length = uint8ArrayLength(receiver);
+    const size_t begin = argc > 0
+                             ? normalizedIndex(toNumber(args[0]), length, false)
+                             : 0;
+    size_t end = argc > 1 ? normalizedIndex(toNumber(args[1]), length, true)
+                          : length;
+    if (end < begin)
+      end = begin;
+    Value result = makeUint8Array(end - begin);
+    const detail::Uint8ArrayPayload *source = uint8ArrayPayload(receiver);
+    detail::Uint8ArrayPayload *target = uint8ArrayPayload(result);
+    if (target != nullptr && end > begin)
+      std::memcpy(uint8ArrayData(target), uint8ArrayData(source) + begin,
+                  end - begin);
+    return result;
+  }
+  case B::Uint8ArrayFill: {
+    if (!requireReceiver(detail::Tag::Uint8Array, ErrorCode{107}))
+      return undefined();
+    const size_t length = uint8ArrayLength(receiver);
+    const size_t begin = argc > 1
+                             ? normalizedIndex(toNumber(args[1]), length, false)
+                             : 0;
+    const size_t end = argc > 2
+                           ? normalizedIndex(toNumber(args[2]), length, true)
+                           : length;
+    const uint8_t byte = static_cast<uint8_t>(
+        detail::toUint32(toNumber(argument(0))) & 0xffU);
+    if (end > begin)
+      std::memset(uint8ArrayData(uint8ArrayPayload(receiver)) + begin, byte,
+                  end - begin);
+    return receiver;
+  }
+  case B::MapGet:
+  case B::MapHas:
+  case B::MapDelete: {
+    if (!requireReceiver(detail::Tag::Map, ErrorCode{107}))
+      return undefined();
+    Value keyValue = toStringValue(argument(0));
+    const StringView key = stringView(keyValue);
+    const int found = findProperty(receiver, key.data, key.size);
+    if (function == B::MapHas)
+      return boolean(found != 0);
+    if (function == B::MapDelete) {
+      if (found == 0)
+        return boolean(false);
+      deleteProperty(receiver, key.data, key.size);
+      return boolean(true);
+    }
+    return found != 0
+               ? propertyPayload(static_cast<uint32_t>(found))->value
+               : undefined();
+  }
+  case B::MapSet:
+    if (!requireReceiver(detail::Tag::Map, ErrorCode{107}))
+      return undefined();
+    mapSet(receiver, argument(0), argument(1));
+    return receiver;
+  case B::MapClear: {
+    if (!requireReceiver(detail::Tag::Map, ErrorCode{107}))
+      return undefined();
+    const uint32_t offset =
+        static_cast<uint32_t>(detail::payloadOf(receiver));
+    auto *map = static_cast<detail::ObjectPayload *>(payload(offset));
+    uint32_t property = map->firstProperty;
+    map->firstProperty = 0;
+    while (property != 0 &&
+           validOffset(property, detail::BlockKind::Property)) {
+      const uint32_t next = propertyPayload(property)->next;
+      header(property)->kind = detail::BlockKind::Free;
+      property = next;
+    }
+    return undefined();
+  }
+  case B::MapKeys:
+  case B::MapValues:
+  case B::MapEntries: {
+    if (!requireReceiver(detail::Tag::Map, ErrorCode{107}))
+      return undefined();
+    const size_t count = objectPropertyCount(receiver);
+    Value result = makeArray(count);
+    const uint32_t offset =
+        static_cast<uint32_t>(detail::payloadOf(receiver));
+    uint32_t property =
+        static_cast<const detail::ObjectPayload *>(payload(offset))
+            ->firstProperty;
+    size_t index = count;
+    while (property != 0 && index > 0 &&
+           validOffset(property, detail::BlockKind::Property)) {
+      const detail::PropertyPayload *item = propertyPayload(property);
+      Value value = function == B::MapKeys ? item->key : item->value;
+      if (function == B::MapEntries) {
+        value = makeArray(2);
+        arrayPush(value, item->key);
+        arrayPush(value, item->value);
+      }
+      arraySet(result, --index, value);
+      property = item->next;
+    }
+    return result;
+  }
+  case B::MapForEach: {
+    if (!requireReceiver(detail::Tag::Map, ErrorCode{107}) ||
+        !isCallable(argument(0)))
+      return fail(ErrorCode{111});
+    const Value entries =
+        callBuiltin(B::MapEntries, receiver, nullptr, 0);
+    for (size_t i = 0;
+         i < arrayLength(entries) && error_.message[0] == '\0'; i++) {
+      const Value entry = arrayAt(entries, i);
+      Value callbackArgs[3] = {arrayAt(entry, 1), arrayAt(entry, 0), receiver};
+      callValue(argument(0), undefined(), callbackArgs, 3);
+    }
+    return undefined();
+  }
+  case B::ProcessCwd:
+    return processCwd();
+  case B::ProcessNextTick: {
+    if (!isCallable(argument(0)))
+      return fail(ErrorCode{111});
+    Value job = makePromise();
+    detail::PromisePayload *data = promisePayload(job);
+    if (data == nullptr)
+      return undefined();
+    data->state = 1;
+    data->onFulfilled = argument(0);
+    data->child = null(); // Non-undefined queue marker; no child Promise needed.
+    data->reserved = 2;
+    if (argc > 1) {
+      data->result = makeArray(argc - 1U);
+      for (size_t i = 1; i < argc; i++)
+        arrayPush(data->result, args[i]);
+    }
+    queuePromiseReaction(job);
+    return undefined();
   }
   case B::ObjectKeys:
   case B::ObjectValues:
