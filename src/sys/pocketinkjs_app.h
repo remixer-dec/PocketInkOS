@@ -16,6 +16,14 @@ bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
                          size_t idSize, char *label, size_t labelSize,
                          char *icon, size_t iconSize);
 
+/// Validated launch variant: loads, evaluates, and runs the initial lifecycle.
+/// It returns false and releases partial VM state on any initial error.
+bool PocketInkJSAppLaunchTestPath(const char *path, AppDefinition *out,
+                                  char *id, size_t idSize, char *label,
+                                  size_t labelSize, char *icon,
+                                  size_t iconSize, char *error,
+                                  size_t errorSize);
+
 /// Stops callbacks and releases all source/runtime PSRAM owned by PocketInkJS.
 void PocketInkJSAppStop();
 

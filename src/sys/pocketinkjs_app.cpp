@@ -18,6 +18,7 @@
 #include "netapps/lightweight_json_parser.h"
 #endif
 #include "sys/runtime/pocketinkjs/pocketinkjs.h"
+#include "sys/pink_executable.h"
 #include "sys/services/sd_storage.h"
 #include "sys/system_config.h"
 #include "sys/system_fonts.h"
@@ -293,6 +294,63 @@ void copyLabel(char *destination, size_t destinationSize, const char *path) {
   }
   if (length == 0) {
     copyText(destination, destinationSize, "script");
+  }
+}
+
+void readSourceMetadata(const char *path, char *label, size_t labelSize,
+                        char *icon, size_t iconSize) {
+  if (path == nullptr || label == nullptr || labelSize == 0 || icon == nullptr ||
+      iconSize == 0) {
+    return;
+  }
+  File file = openProviderPath("sd", path);
+  if (!file) {
+    return;
+  }
+  char header[257] = {};
+  const size_t amount = file.read(reinterpret_cast<uint8_t *>(header),
+                                  sizeof(header) - 1U);
+  file.close();
+  header[amount] = '\0';
+  const char *cursor = header;
+  while (*cursor != '\0') {
+    const char *lineEnd = strchr(cursor, '\n');
+    const size_t lineBytes =
+        lineEnd != nullptr ? static_cast<size_t>(lineEnd - cursor)
+                           : strlen(cursor);
+    const char namePrefix[] = "// @name:";
+    const char iconPrefix[] = "// @icon:";
+    if (lineBytes >= sizeof(namePrefix) - 1U &&
+        memcmp(cursor, namePrefix, sizeof(namePrefix) - 1U) == 0) {
+      const char *value = cursor + sizeof(namePrefix) - 1U;
+      while (value < cursor + lineBytes && *value == ' ') {
+        value++;
+      }
+      size_t copied = 0;
+      while (value < cursor + lineBytes && copied + 1U < labelSize &&
+             *value >= 0x20 && *value <= 0x7e) {
+        label[copied++] = *value++;
+      }
+      if (copied > 0) {
+        label[copied] = '\0';
+      }
+    } else if (lineBytes >= sizeof(iconPrefix) - 1U &&
+               memcmp(cursor, iconPrefix, sizeof(iconPrefix) - 1U) == 0) {
+      const char *value = cursor + sizeof(iconPrefix) - 1U;
+      while (value < cursor + lineBytes && *value == ' ') {
+        value++;
+      }
+      if (value < cursor + lineBytes && *value >= 0x20 && *value <= 0x7e) {
+        icon[0] = *value;
+        if (iconSize > 1U) {
+          icon[1] = '\0';
+        }
+      }
+    }
+    if (lineEnd == nullptr) {
+      break;
+    }
+    cursor = lineEnd + 1U;
   }
 }
 
@@ -1733,33 +1791,70 @@ PocketInkJS::Value parsePocketInkJSJson(PocketInkJS::Runtime &runtime, PocketInk
 
 class PocketInkJSApp : public ActiveApp {
 public:
-  void launch(const char *nextPath, const char *nextId) {
+  bool launch(const char *nextPath, const char *nextId,
+              bool retainFailureScreen, char *launchError = nullptr,
+              size_t launchErrorSize = 0U) {
+    if (launchError != nullptr && launchErrorSize > 0U) {
+      launchError[0] = '\0';
+    }
     unload();
     PocketInkJSLowestStackHwm = UINT_MAX;
     copyText(appId, sizeof(appId), nextId);
     activePocketInkJSApp = this;
     if (!appApiBeginSession(appId)) {
       copyText(status, sizeof(status), "NO API PSRAM");
-      return;
+      copyText(launchError, launchErrorSize, status);
+      if (!retainFailureScreen) {
+        unload();
+      }
+      return false;
     }
     const size_t pathLength = nextPath != nullptr ? strlen(nextPath) : 0;
     path = static_cast<char *>(allocatePsram(pathLength + 1U));
     if (path == nullptr) {
       copyText(status, sizeof(status), "NO PATH PSRAM");
-      return;
+      copyText(launchError, launchErrorSize, status);
+      if (!retainFailureScreen) {
+        unload();
+      }
+      return false;
     }
     memcpy(path, nextPath, pathLength + 1U);
     if (!startExecutor()) {
       copyText(status, sizeof(status), "NO EXECUTOR DRAM");
-      return;
+      copyText(launchError, launchErrorSize, status);
+      if (!retainFailureScreen) {
+        unload();
+      }
+      return false;
     }
     if (!execute(loadOperation, nullptr)) {
       copyText(status, sizeof(status), "EXECUTOR FAILED");
-      return;
+      copyText(launchError, launchErrorSize, status);
+      if (!retainFailureScreen) {
+        unload();
+      }
+      return false;
     }
-    if (runtime != nullptr) {
-      pendingStart = true;
+    if (runtime == nullptr) {
+      copyText(launchError, launchErrorSize,
+               status[0] != '\0' ? status : "TEST FAILED");
+      if (!retainFailureScreen) {
+        unload();
+      }
+      return false;
     }
+    pendingStart = true;
+    if (!retainFailureScreen) {
+      TestStartContext context;
+      if (!execute(testStartOperation, &context) || !context.ready) {
+        copyText(launchError, launchErrorSize,
+                 status[0] != '\0' ? status : "TEST FAILED");
+        unload();
+        return false;
+      }
+    }
+    return true;
   }
 
   void stop() { unload(); }
@@ -1794,6 +1889,9 @@ public:
       gfx.setTextColor(1);
       drawPocketInkJSCentered(gfx, "PocketInkJS", 54, 2);
       drawPocketInkJSWrappedCentered(gfx, status, 86);
+      if (returnablePocketInkJsReturnPending()) {
+        drawPocketInkJSCentered(gfx, "MENU: RETURN", 178, 1);
+      }
       return;
     }
     DrawContext context{&gfx};
@@ -1864,6 +1962,9 @@ private:
   struct RestoreContext {
     const uint8_t *buffer = nullptr;
     size_t length = 0;
+  };
+  struct TestStartContext {
+    bool ready = false;
   };
 
   char *path = nullptr;
@@ -2020,6 +2121,18 @@ private:
     RestoreContext *context = static_cast<RestoreContext *>(raw);
     if (context != nullptr)
       app.restoreRuntime(context->buffer, context->length);
+  }
+  static void testStartOperation(PocketInkJSApp &app, void *raw) {
+    TestStartContext *context = static_cast<TestStartContext *>(raw);
+    if (context == nullptr)
+      return;
+    app.updateRuntime();
+    if (app.status[0] == '\0') {
+      // Drawing natives are no-ops without a target, but JavaScript still runs.
+      // This catches invalid calls in the first render before launch succeeds.
+      app.run("onDraw", nullptr, 0, nullptr);
+    }
+    context->ready = app.runtime != nullptr && app.status[0] == '\0';
   }
 
   bool updateRuntime() {
@@ -2207,6 +2320,16 @@ private:
           static_cast<unsigned long>(stats.heapFreeBytes),
           static_cast<unsigned long>(stats.peakHeapUsedBytes),
           static_cast<unsigned long>(stats.workspaceBytes));
+    }
+    if (returnablePocketInkJsReturnPending()) {
+      char diagnostic[160] = {};
+      if (error.sourceLine[0] != '\0') {
+        snprintf(diagnostic, sizeof(diagnostic), "%s\n> %.60s", status,
+                 error.sourceLine);
+      } else {
+        copyText(diagnostic, sizeof(diagnostic), status);
+      }
+      returnablePocketInkJsSetError(diagnostic);
     }
     pendingDirty = true;
   }
@@ -3712,9 +3835,12 @@ AppBehavior PocketInkJSBehavior() {
 
 ActiveApp *PocketInkJSAppRuntime() { return &PocketInkJSApp; }
 
-bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
-                         size_t idSize, char *label, size_t labelSize,
-                         char *icon, size_t iconSize) {
+static bool launchPocketInkJSPath(const char *path, AppDefinition *out,
+                                  char *id, size_t idSize, char *label,
+                                  size_t labelSize, char *icon,
+                                  size_t iconSize, bool requireReady,
+                                  char *error = nullptr,
+                                  size_t errorSize = 0U) {
   if (path == nullptr || path[0] == '\0' || out == nullptr || id == nullptr ||
       label == nullptr || icon == nullptr || idSize == 0 || labelSize == 0 ||
       iconSize == 0) {
@@ -3727,7 +3853,12 @@ bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
   if (iconSize > 1) {
     icon[1] = '\0';
   }
-  PocketInkJSApp.launch(path, id);
+  readSourceMetadata(path, label, labelSize, icon, iconSize);
+  const bool ready = PocketInkJSApp.launch(path, id, !requireReady, error,
+                                           errorSize);
+  if (requireReady && !ready) {
+    return false;
+  }
 
   *out = AppDefinition{};
   out->id = id;
@@ -3738,6 +3869,22 @@ bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
   out->visible = sdStorageMounted;
   out->behavior = PocketInkJSBehavior();
   return true;
+}
+
+bool PocketInkJSAppLaunchPath(const char *path, AppDefinition *out, char *id,
+                              size_t idSize, char *label, size_t labelSize,
+                              char *icon, size_t iconSize) {
+  return launchPocketInkJSPath(path, out, id, idSize, label, labelSize, icon,
+                               iconSize, false, nullptr, 0U);
+}
+
+bool PocketInkJSAppLaunchTestPath(const char *path, AppDefinition *out,
+                                  char *id, size_t idSize, char *label,
+                                  size_t labelSize, char *icon,
+                                  size_t iconSize, char *error,
+                                  size_t errorSize) {
+  return launchPocketInkJSPath(path, out, id, idSize, label, labelSize, icon,
+                               iconSize, true, error, errorSize);
 }
 
 void PocketInkJSAppStop() { PocketInkJSApp.stop(); }
