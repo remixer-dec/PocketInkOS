@@ -1,8 +1,18 @@
 #ifndef LIST_COMPONENT_H
 #define LIST_COMPONENT_H
 
-#include "sys/services/touch_input.h"
 #include <stdint.h>
+
+// .pink apps use the same compact list behavior without pulling Arduino.h
+// into their freestanding build.
+#ifndef PINK_APP_API_H
+#include "sys/services/touch_input.h"
+#else
+struct TouchPoint {
+  uint16_t x;
+  uint16_t y;
+};
+#endif
 
 /// Touch navigation behavior for compact list controls.
 enum class UiListNavMode : uint8_t {

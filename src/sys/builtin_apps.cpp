@@ -6,9 +6,6 @@
 #include "apps/calculator_app.h"
 #include "apps/contact_links_app.h"
 #include "apps/settings_app.h"
-#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-#include "apps/voice_notes_app.h"
-#endif
 #include "apps/deghost_app.h"
 #include "apps/files_app.h"
 #include "apps/gfx_app.h"
@@ -51,9 +48,6 @@ GfxApp gfxApp;
 FilesApp filesApp;
 ContactLinksApp contactLinks;
 SettingsApp settingsApp;
-#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-VoiceNotesApp voiceNotesApp;
-#endif
 #if ENABLE_TTS
 TtsApp ttsApp;
 #endif
@@ -89,9 +83,6 @@ AppScreen<GfxApp, true> gfxScreen(gfxApp);
 AppScreen<FilesApp, true> filesScreen(filesApp);
 AppScreen<ContactLinksApp, true> contactLinksScreen(contactLinks);
 AppScreen<SettingsApp, true> settingsScreen(settingsApp);
-#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-AppScreen<VoiceNotesApp, true> voiceNotesScreen(voiceNotesApp);
-#endif
 #if ENABLE_TTS
 AppScreen<TtsApp, true> ttsScreen(ttsApp);
 #endif
@@ -326,42 +317,6 @@ const AppDefinition builtInApps[] = {
                            .withRelease([]() { filesApp.release(); })
                            .build(),
                        true, sdStorageMounted),
-#if defined(ENABLE_EXTENDED) && ENABLE_EXTENDED
-    builtInApp("voice_notes", "Voice notes", "$", MENU_APPS,
-               &voiceNotesScreen, []() { voiceNotesApp.reset(); },
-               defaultBehavior()
-                   .withEnter([]() { voiceNotesApp.onEnter(); })
-                   .withExit([]() { voiceNotesApp.onExit(); })
-                   .withMenuBtn(
-                       []() {
-                         return voiceNotesApp.handleMenuButton()
-                                    ? AppEventResult::Dirty
-                                    : AppEventResult::GoMenu;
-                       },
-                       []() {
-                         return dirtyIfHandled(
-                             voiceNotesApp.handleMenuDoubleButton());
-                       })
-                   .withMenuLongBtn(
-                       []() {
-                         return dirtyIfHandled(
-                             voiceNotesApp.handleMenuLongButton());
-                       })
-                   .withPowerBtn(
-                       dirtyIfHandledMethod<
-                           VoiceNotesApp, voiceNotesApp,
-                           &VoiceNotesApp::handlePowerButton>,
-                       dirtyIfHandledMethod<
-                           VoiceNotesApp, voiceNotesApp,
-                           &VoiceNotesApp::handlePowerDoubleButton>)
-                   .withPowerLongBtn(
-                       dirtyIfHandledMethod<
-                           VoiceNotesApp, voiceNotesApp,
-                           &VoiceNotesApp::handleMenuLongButton>)
-                   .withRelease([]() { voiceNotesApp.release(); })
-                   .build(),
-               true, sdStorageMounted),
-#endif
     contactLinksApp,
     builtInApp("settings", "settings", "S", MENU_APPS, &settingsScreen,
                    []() { settingsApp.reset(); },
@@ -545,6 +500,7 @@ void resetApps() {
   appConfigRegistryReset();
   calendarAppConfigRegister();
 #if ENABLE_NETWORK_APPS
+  aiAppConfigRegister();
   weatherAppConfigRegister();
 #endif
   for (size_t i = 0; i < builtInAppCount; i++) {

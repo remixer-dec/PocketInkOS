@@ -555,26 +555,6 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
   return true;
 }
 
-bool appendKeyValue(const char *path, const char *key, const char *value) {
-  if (!sdStorageMounted() || !validKey(key) || !validValue(value)) {
-    return false;
-  }
-
-  SD_MMC.mkdir(kConfigDir);
-  File file = SD_MMC.open(path, FILE_APPEND);
-  if (!file) {
-    return false;
-  }
-
-  const size_t keyLen = strlen(key);
-  const size_t valueLen = strlen(value);
-  return file.write(reinterpret_cast<const uint8_t *>(key), keyLen) == keyLen &&
-         file.write(reinterpret_cast<const uint8_t *>("="), 1) == 1 &&
-         file.write(reinterpret_cast<const uint8_t *>(value), valueLen) ==
-             valueLen &&
-         file.write(reinterpret_cast<const uint8_t *>("\n"), 1) == 1;
-}
-
 bool appConfigPath(const char *appId, char *out, size_t outSize) {
   if (appId == nullptr || appId[0] == '\0' || out == nullptr || outSize == 0) {
     return false;
@@ -688,8 +668,26 @@ bool configGet(const char *key, char *out, size_t outSize) {
   return systemCurrentValue(key, out, outSize);
 }
 
-static bool rewriteConfigFile(const char *key, const char *value) {
-  if (!sdStorageMounted() || !validKey(key) ||
+static bool configLineHasKey(const char *line, const char *key) {
+  const char *start = line;
+  while (*start != '\0' && isspace(static_cast<unsigned char>(*start))) {
+    start++;
+  }
+  const char *equals = strchr(start, '=');
+  if (equals == nullptr) {
+    return false;
+  }
+  const char *end = equals;
+  while (end > start && isspace(static_cast<unsigned char>(end[-1]))) {
+    end--;
+  }
+  const size_t length = static_cast<size_t>(end - start);
+  return strlen(key) == length && strncmp(start, key, length) == 0;
+}
+
+static bool rewriteConfigFile(const char *path, const char *key,
+                              const char *value) {
+  if (path == nullptr || !sdStorageMounted() || !validKey(key) ||
       (value != nullptr && !validValue(value))) {
     return false;
   }
@@ -700,7 +698,7 @@ static bool rewriteConfigFile(const char *key, const char *value) {
   size_t linesLen = 0;
   size_t linesCap = 0;
 
-  File readFile = SD_MMC.open(kSystemConfigPath);
+  File readFile = SD_MMC.open(path);
   if (readFile) {
     while (readFile.available() > 0) {
       size_t len = 0;
@@ -713,12 +711,11 @@ static bool rewriteConfigFile(const char *key, const char *value) {
       }
       lineBuf[len] = '\0';
 
-      char *text = trim(lineBuf);
-      if (text[0] == '\0' || text[0] == '#' || text[0] == ';') {
+      if (len == 0) {
         continue;
       }
 
-      if (strncmp(text, key, keyLen) == 0 && text[keyLen] == '=') {
+      if (configLineHasKey(lineBuf, key)) {
         continue;
       }
 
@@ -732,7 +729,7 @@ static bool rewriteConfigFile(const char *key, const char *value) {
         }
         lines = bigger;
       }
-      memcpy(lines + linesLen, text, len);
+      memcpy(lines + linesLen, lineBuf, len);
       linesLen += len;
       lines[linesLen++] = '\n';
     }
@@ -740,7 +737,7 @@ static bool rewriteConfigFile(const char *key, const char *value) {
   }
 
   SD_MMC.mkdir(kConfigDir);
-  File writeFile = SD_MMC.open(kSystemConfigPath, FILE_WRITE);
+  File writeFile = SD_MMC.open(path, FILE_WRITE);
   if (!writeFile) {
     free(lines);
     return false;
@@ -762,9 +759,6 @@ static bool rewriteConfigFile(const char *key, const char *value) {
   }
 
   writeFile.close();
-  if (ok) {
-    configReload();
-  }
   return ok;
 }
 
@@ -772,11 +766,19 @@ bool configSet(const char *key, const char *value) {
   if (!validSystemValue(key, value)) {
     return false;
   }
-  return rewriteConfigFile(key, value);
+  const bool written = rewriteConfigFile(kSystemConfigPath, key, value);
+  if (written) {
+    configReload();
+  }
+  return written;
 }
 
 bool configRemove(const char *key) {
-  return rewriteConfigFile(key, nullptr);
+  const bool removed = rewriteConfigFile(kSystemConfigPath, key, nullptr);
+  if (removed) {
+    configReload();
+  }
+  return removed;
 }
 
 bool configGetForApp(const char *appId, const char *key, char *out,
@@ -799,5 +801,5 @@ bool configSetForApp(const char *appId, const char *key, const char *value) {
   if (!appConfigPath(appId, path, sizeof(path))) {
     return false;
   }
-  return appendKeyValue(path, key, value);
+  return rewriteConfigFile(path, key, value);
 }

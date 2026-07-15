@@ -16,6 +16,8 @@ class TouchController {
 public:
   /// Resets and attaches the controller.
   bool begin();
+  /// Holds the controller in reset after all reads have stopped.
+  void end();
   /// Reads one raw controller sample.
   bool read(TouchControllerSample &sample);
 

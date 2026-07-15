@@ -31,7 +31,9 @@ private:
   enum class State : uint8_t {
     Idle,
     Requested,
+    StopBeforeStart,
     Capturing,
+    StopRequested,
     Ready,
     Delivered,
     Failed

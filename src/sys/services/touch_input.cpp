@@ -5,15 +5,21 @@
 #include "freertos/task.h"
 #include "sys/global.h"
 
+#include <atomic>
+
 static const uint32_t TOUCH_POLL_MS = 5;
 static const uint32_t TOUCH_TASK_STACK_WORDS = 4096;
 static const UBaseType_t TOUCH_TASK_PRIORITY = 1;
 static const BaseType_t TOUCH_TASK_CORE = 0;
 static const UBaseType_t TOUCH_QUEUE_DEPTH = 96;
+static const uint32_t TOUCH_STOP_TIMEOUT_MS = 250;
+
+enum class TouchTaskState : uint8_t { Stopped, Running, StopRequested };
 
 static bool touchReady = false;
 static TaskHandle_t touchTaskHandle = NULL;
 static QueueHandle_t touchQueue = NULL;
+static std::atomic<TouchTaskState> touchTaskState{TouchTaskState::Stopped};
 static bool fallbackWasDown = false;
 static TouchPoint fallbackLastPoint = {};
 
@@ -118,7 +124,10 @@ static void touchTask(void *) {
   bool taskWasDown = false;
   TouchPoint taskLastPoint = {};
   while (true) {
-    if (touchReady) {
+    TouchTaskState state = touchTaskState.load();
+    if (state == TouchTaskState::StopRequested) {
+      touchTaskState.store(TouchTaskState::Stopped);
+    } else if (state == TouchTaskState::Running) {
       TouchEvent event;
       if (pollTouchEvent(event, taskWasDown, taskLastPoint)) {
         queueTouch(event);
@@ -134,12 +143,27 @@ void TouchInput::begin() {
     touchQueue = xQueueCreate(TOUCH_QUEUE_DEPTH, sizeof(TouchEvent));
   }
   if (touchReady && touchTaskHandle == NULL) {
+    touchTaskState.store(TouchTaskState::Running);
     if (xTaskCreatePinnedToCore(touchTask, "touch", TOUCH_TASK_STACK_WORDS,
                                 NULL, TOUCH_TASK_PRIORITY, &touchTaskHandle,
                                 TOUCH_TASK_CORE) != pdPASS) {
       touchTaskHandle = NULL;
+      touchTaskState.store(TouchTaskState::Stopped);
     }
   }
+}
+
+void TouchInput::end() {
+  if (touchTaskHandle != NULL) {
+    touchTaskState.store(TouchTaskState::StopRequested);
+    const unsigned long startedAt = millis();
+    while (touchTaskState.load() != TouchTaskState::Stopped &&
+           millis() - startedAt < TOUCH_STOP_TIMEOUT_MS) {
+      delay(1);
+    }
+  }
+  touchReady = false;
+  controller.end();
 }
 
 bool TouchInput::read(TouchPoint &point) {

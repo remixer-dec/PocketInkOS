@@ -46,6 +46,11 @@ bool TouchController::begin() {
   return true;
 }
 
+void TouchController::end() {
+  pinMode(EPD_TP_RST_PIN, OUTPUT);
+  digitalWrite(EPD_TP_RST_PIN, LOW);
+}
+
 bool TouchController::read(TouchControllerSample &sample) {
   if (device == nullptr) {
     return false;

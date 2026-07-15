@@ -26,6 +26,8 @@ struct TouchEvent {
 class TouchInput {
 public:
   void begin();
+  /// Stops background bus traffic before reboot, power-off, or deep sleep.
+  void end();
   bool read(TouchPoint &point);
   bool readEvent(TouchEvent &event);
 };

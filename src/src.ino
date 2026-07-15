@@ -246,6 +246,7 @@ void renderLowBatteryScreen() {
 }
 
 void prepareForPowerTransition() {
+  touch.end();
   wifiTurnOff();
   disableWirelessForSleep();
   sdStorageEnd();

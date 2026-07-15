@@ -21,12 +21,30 @@ ServiceResult AudioCaptureService::request(Format format,
   }
   *data = nullptr;
   *size = 0;
-  if (maxDurationMs == 0 || maxDurationMs > kMaxDurationMs) {
+
+  State current = state.load(std::memory_order_acquire);
+  if (maxDurationMs == 0) {
+    if (current == State::Requested && command.format == format) {
+      state.store(State::StopBeforeStart, std::memory_order_release);
+      return ServiceResult::pending();
+    }
+    if (current == State::Capturing && command.format == format) {
+      state.store(State::StopRequested, std::memory_order_release);
+      return ServiceResult::pending();
+    }
+    if ((current == State::StopBeforeStart ||
+         current == State::StopRequested) &&
+        command.format == format) {
+      return ServiceResult::pending();
+    }
+    if (current != State::Ready) {
+      return ServiceResult::fail(ServiceError::InvalidArgument,
+                                 "no active capture to stop");
+    }
+  } else if (maxDurationMs > kMaxDurationMs) {
     return ServiceResult::fail(ServiceError::InvalidArgument,
                                "invalid capture duration");
   }
-
-  State current = state.load(std::memory_order_acquire);
   if (current == State::Ready) {
     if (completion.format != format) {
       return ServiceResult::fail(ServiceError::Busy,
@@ -37,7 +55,8 @@ ServiceResult AudioCaptureService::request(Format format,
     state.store(State::Delivered, std::memory_order_release);
     return ServiceResult::end();
   }
-  if (current == State::Requested || current == State::Capturing) {
+  if (current == State::Requested || current == State::StopBeforeStart ||
+      current == State::Capturing || current == State::StopRequested) {
     return command.format == format
                ? ServiceResult::pending()
                : ServiceResult::fail(ServiceError::Busy,
@@ -62,7 +81,8 @@ ServiceResult AudioCaptureService::request(Format format,
 
 void AudioCaptureService::updateOnMainCore() {
   State current = state.load(std::memory_order_acquire);
-  if (current == State::Requested) {
+  if (current == State::Requested || current == State::StopBeforeStart) {
+    const bool stopAfterStart = current == State::StopBeforeStart;
     completion = {};
     completion.format = command.format;
     char error[64] = {};
@@ -82,8 +102,23 @@ void AudioCaptureService::updateOnMainCore() {
     if (command.format == Format::Wav) {
       targetBytes += wav::kPcmHeaderSize;
     }
+    if (stopAfterStart) {
+      capture.finishPcm16(completion.result);
+      state.store(State::Ready, std::memory_order_release);
+      return;
+    }
     state.store(State::Capturing, std::memory_order_release);
     current = State::Capturing;
+  }
+  if (current == State::StopRequested) {
+    char error[64] = {};
+    if (!capture.pumpPcm16(completion.result, error, sizeof(error))) {
+      fail(error[0] != '\0' ? error : "capture read failed");
+      return;
+    }
+    capture.finishPcm16(completion.result);
+    state.store(State::Ready, std::memory_order_release);
+    return;
   }
   if (current != State::Capturing) {
     return;
