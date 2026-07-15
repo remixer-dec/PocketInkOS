@@ -144,6 +144,13 @@ without adding a separate hole bitmap.
 `toString()`. Thrown values cross function calls and become Promise rejections
 inside async functions, Promise executors, and continuation handlers.
 
+Modules support CommonJS `require`, `exports`, and `module.exports`, plus
+side-effect/default/named/namespace imports and simple named/default exports.
+Paths may be absolute or use `./` and `../`; `.js` is optional. Imports and
+exports are top-level snapshots. Uncached `require()` is limited to top-level
+execution, while cached modules may be required anywhere. Packages, JSON,
+dynamic imports, and re-exports are unsupported.
+
 Common collection, object, string, and number helpers are available, including
 `map`, `filter`, `reduce`, `sort`, `splice`, `findIndex`, `flat`,
 `Object.keys/values/entries/assign/defineProperty`, string padding and trimming,
@@ -155,8 +162,8 @@ functions do not capture caller locals. Promises currently support one
 continuation branch.
 
 Advanced object-oriented features such as classes, prototypes, and `this`,
-along with closures, `try...finally`, Error stacks/custom properties, modules,
-regex, and multiple Promise branches, are unsupported. Async continuations
+along with closures, `try...finally`, Error stacks/custom properties, regex,
+and multiple Promise branches, are unsupported. Async continuations
 cannot be fully suspended, and Unicode support is limited.
 
 ## JSON parser choices
@@ -177,10 +184,12 @@ important.
 
 All script allocations are scoped to the active app. The VM uses an adaptive
 PSRAM workspace with a 160 KiB floor and reserves at least 512 KiB or 25% of
-free PSRAM for fetch, UI, and system work. Source input is capped at 96 KiB;
-fetch bodies at 64 KiB. Values are compact 8-byte tagged values with 32-bit
-heap offsets, and the runtime uses bounded mark/sweep GC, parser/call depth,
-roots, and job work. The VM control object remains small internal-RAM state.
+free PSRAM for fetch, UI, and system work. Limits are 96 KiB for the entry
+source, 32 KiB per imported module, 48 KiB combined imports, 16 cached modules,
+and 64 KiB fetch bodies. Values are compact
+8-byte tagged values with 32-bit heap offsets, and the runtime uses bounded
+mark/sweep GC, parser/call depth, roots, and job work. The VM control object
+remains small internal-RAM state.
 Unique strings assigned with standalone `+=` reuse geometrically grown PSRAM
 blocks; aliased or expression-nested assignments retain immutable semantics.
 
@@ -205,6 +214,9 @@ Allocation failure returns `nullptr` without setting a runtime error.
 
 Register ordinary dotted names with `runtime.bind(...)` and receiver-aware
 methods with `runtime.bindMethod(...)`.
+
+Hosts enable modules with `Options::resolveModule`, `Options::readModule`, and
+`evalModule(source, length, entryPath)`.
 
 Script execution runs on an app-scoped executor task with a 40 KiB internal
 stack; the task and stack are created on launch and released on exit. The

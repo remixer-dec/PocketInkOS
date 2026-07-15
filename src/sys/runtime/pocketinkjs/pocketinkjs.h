@@ -69,6 +69,14 @@ using JsonParseFunction = Value (*)(Runtime &runtime, StringView json,
 /// Hook that lets the host advance platform work while awaiting a promise.
 using AwaitPendingFunction = bool (*)(Runtime &runtime, Value promise,
                                       void *userData);
+/// Resolves a module request to one canonical, null-terminated path.
+using ResolveModuleFunction = bool (*)(const char *importerPath,
+                                       const char *request,
+                                       char *resolvedPath, size_t capacity,
+                                       void *userData);
+/// Queries or reads one module. A null output queries the required byte count.
+using ReadModuleFunction = bool (*)(const char *resolvedPath, char *output,
+                                    size_t *inOutBytes, void *userData);
 
 /// Observable lifecycle of a JavaScript promise.
 enum class PromiseState : uint8_t { Pending, Fulfilled, Rejected };
@@ -94,10 +102,16 @@ struct Options {
   uint8_t maxCallDepth = 12;
   /// Maximum arguments accepted by one call expression.
   uint8_t maxCallArguments = 16;
+  /// Maximum cached modules, including the entry module.
+  uint8_t maxModules = 16;
   /// Maximum nested parser structures.
   uint8_t maxParseDepth = 32;
   /// Instruction budget reset for each top-level execution.
   uint32_t maxSteps = 120000;
+  /// Maximum source bytes accepted for one imported module.
+  uint32_t maxModuleSourceBytes = 32U * 1024U;
+  /// Maximum combined source bytes retained for imported modules.
+  uint32_t maxImportedSourceBytes = 48U * 1024U;
   /// Optional host monotonic/wall-clock provider used by Date.
   int64_t (*nowMilliseconds)(void *userData) = nullptr;
   /// Opaque context passed to nowMilliseconds.
@@ -110,6 +124,12 @@ struct Options {
   AwaitPendingFunction awaitPending = nullptr;
   /// Opaque context passed to awaitPending.
   void *awaitUserData = nullptr;
+  /// Optional module path resolver used by require/import.
+  ResolveModuleFunction resolveModule = nullptr;
+  /// Optional direct module reader used by require/import.
+  ReadModuleFunction readModule = nullptr;
+  /// Opaque context passed to both module callbacks.
+  void *moduleUserData = nullptr;
 };
 
 /// Last script failure with location and a bounded source excerpt.
@@ -265,6 +285,7 @@ enum class BlockKind : uint8_t {
   Promise,
   Date,
   Error,
+  Module,
   ExternalScratch,
 };
 
@@ -367,6 +388,18 @@ struct ErrorPayload {
   Value message = {};
 };
 
+struct ModulePayload {
+  Value path = {};
+  Value moduleObject = {};
+  Value exportsAlias = {};
+  Value failure = {};
+  uint32_t source = 0;
+  uint32_t next = 0;
+  uint8_t state = 0; // 0 loading, 1 loaded, 2 failed.
+  uint8_t reserved[3] = {};
+};
+static_assert(sizeof(ModulePayload) == 48U);
+
 struct ScratchPayload {
   uint32_t next = 0;
   uint32_t dataOffset = 0;
@@ -409,6 +442,7 @@ enum class BuiltinObject : uint8_t {
 };
 
 enum class BuiltinFunction : uint16_t {
+  Require,
   SetConstructor,
   ParseInt,
   ParseFloat,
@@ -718,6 +752,8 @@ public:
   RunResult eval(const char *source) {
     return eval(source, source != nullptr ? std::strlen(source) : 0);
   }
+  /// Evaluates an entry module with CommonJS globals and import/export syntax.
+  RunResult evalModule(const char *source, size_t length, const char *path);
   /// Calls a named global function with host-provided arguments.
   RunResult call(const char *name, const Value *args = nullptr,
                  size_t argc = 0);
@@ -789,6 +825,10 @@ private:
   uint32_t peakHeapUsed_ = 0;
   uint32_t promiseJobHead_ = 0;
   uint32_t promiseJobTail_ = 0;
+  uint32_t moduleHead_ = 0;
+  uint32_t entrySource_ = 0;
+  uint32_t activeSource_ = 0;
+  uint32_t importedSourceBytes_ = 0;
   uint16_t bindingCount_ = 0;
   uint16_t globalBindingCount_ = 0;
   uint16_t nativeCount_ = 0;
@@ -797,6 +837,7 @@ private:
   uint16_t scopeDepth_ = 0;
   uint8_t callDepth_ = 0;
   uint8_t parseDepth_ = 0;
+  uint8_t moduleCount_ = 0;
   uint32_t stepsRemaining_ = 0;
   uint32_t randomState_ = 0x91e10da5U;
   Value lastResult_ = {};
@@ -856,6 +897,7 @@ private:
   uint32_t sourceOffset(Value source) const;
   const char *sourceData(uint32_t sourceOffset) const;
   size_t sourceLength(uint32_t sourceOffset) const;
+  bool isModuleSource(uint32_t sourceOffset) const;
   void setTextLength(Value value, size_t length);
 
   detail::CollectionPayload *collection(Value value);
@@ -878,6 +920,17 @@ private:
   bool defineBinding(NameRef name, Value value, bool constant);
   bool assignBinding(size_t index, Value value);
   Value builtinGlobal(NameRef name) const;
+  detail::ModulePayload *moduleForSource(uint32_t source);
+  const detail::ModulePayload *moduleForSource(uint32_t source) const;
+  detail::ModulePayload *moduleForPath(const char *path, size_t length);
+  Value moduleExports(const detail::ModulePayload &module) const;
+  detail::ModulePayload *createModule(Value path, uint32_t source);
+  Value executeModule(detail::ModulePayload &module);
+  Value requireModule(Value request, uint32_t importerSource);
+  bool setModuleExport(uint32_t source, const char *name, size_t length,
+                       Value value);
+  bool assignModuleExportsAlias(uint32_t source, Value value);
+  void cacheModuleFailure(detail::ModulePayload &module);
   uint16_t enterScope();
   void leaveScope(uint16_t marker);
 
@@ -1460,6 +1513,11 @@ inline size_t Runtime::sourceLength(uint32_t offset) const {
   uint32_t length = 0;
   std::memcpy(&length, payload(offset), sizeof(length));
   return length;
+}
+
+inline bool Runtime::isModuleSource(uint32_t offset) const {
+  return validOffset(offset, detail::BlockKind::Source) &&
+         header(offset)->reserved != 0;
 }
 
 inline StringView Runtime::stringView(Value value) const {
@@ -2120,14 +2178,21 @@ inline int Runtime::findBinding(NameRef name) const {
     return binding.name != nullptr && binding.nameLength == name.length &&
            std::memcmp(binding.name, name.data, name.length) == 0;
   };
-  for (size_t i = bindingCount_; i > frameBase_; i--) {
-    if (matches(bindings_[i - 1U])) {
-      return static_cast<int>(i - 1U);
+  if (frameBase_ != 0) {
+    for (size_t i = bindingCount_; i > frameBase_; i--) {
+      if (matches(bindings_[i - 1U])) {
+        return static_cast<int>(i - 1U);
+      }
     }
   }
-  const size_t globalLimit = frameBase_ == 0 ? frameBase_ : globalBindingCount_;
+  const uint32_t requester = name.owner != 0 ? name.owner : entrySource_;
+  const size_t globalLimit =
+      frameBase_ == 0 ? bindingCount_ : globalBindingCount_;
   for (size_t i = globalLimit; i > 0; i--) {
-    if (matches(bindings_[i - 1U])) {
+    const detail::Binding &binding = bindings_[i - 1U];
+    if (matches(binding) &&
+        (!isModuleSource(binding.nameOwner) ||
+         binding.nameOwner == requester)) {
       return static_cast<int>(i - 1U);
     }
   }
@@ -2136,8 +2201,13 @@ inline int Runtime::findBinding(NameRef name) const {
 
 inline bool Runtime::defineBinding(NameRef name, Value value, bool constant) {
   const uint16_t visibleStart = frameBase_;
+  const bool globalModuleBinding =
+      frameBase_ == 0 && scopeDepth_ == 0 && isModuleSource(name.owner);
   for (size_t i = bindingCount_; i > visibleStart; i--) {
     const detail::Binding &binding = bindings_[i - 1U];
+    if (globalModuleBinding && binding.nameOwner != name.owner) {
+      continue;
+    }
     if (binding.scopeDepth == scopeDepth_ && binding.nameLength == name.length &&
         std::memcmp(binding.name, name.data, name.length) == 0) {
       setError(ErrorCode{11}, nullptr, 0);
@@ -2195,6 +2265,18 @@ inline Value Runtime::builtinGlobal(NameRef name) const {
     return length == name.length &&
            std::memcmp(name.data, text, name.length) == 0;
   };
+  if (equals("require")) {
+    if (moduleForSource(name.owner) != nullptr)
+      return detail::boxed(detail::Tag::BuiltinFunction,
+                           static_cast<uint16_t>(
+                               detail::BuiltinFunction::Require));
+  } else if (equals("module")) {
+    if (const detail::ModulePayload *module = moduleForSource(name.owner))
+      return module->moduleObject;
+  } else if (equals("exports")) {
+    if (const detail::ModulePayload *module = moduleForSource(name.owner))
+      return module->exportsAlias;
+  }
   if (equals("undefined"))
     return undefined();
   if (equals("NaN"))
@@ -2271,11 +2353,200 @@ inline Value Runtime::builtinGlobal(NameRef name) const {
   return undefined();
 }
 
+inline detail::ModulePayload *Runtime::moduleForSource(uint32_t source) {
+  uint32_t current = moduleHead_;
+  while (current != 0 && validOffset(current, detail::BlockKind::Module)) {
+    auto *module = static_cast<detail::ModulePayload *>(payload(current));
+    if (module->source == source && source != 0)
+      return module;
+    current = module->next;
+  }
+  return nullptr;
+}
+
+inline const detail::ModulePayload *
+Runtime::moduleForSource(uint32_t source) const {
+  uint32_t current = moduleHead_;
+  while (current != 0 && validOffset(current, detail::BlockKind::Module)) {
+    const auto *module =
+        static_cast<const detail::ModulePayload *>(payload(current));
+    if (module->source == source && source != 0)
+      return module;
+    current = module->next;
+  }
+  return nullptr;
+}
+
+inline detail::ModulePayload *Runtime::moduleForPath(const char *path,
+                                                     size_t length) {
+  uint32_t current = moduleHead_;
+  while (current != 0 && validOffset(current, detail::BlockKind::Module)) {
+    auto *module = static_cast<detail::ModulePayload *>(payload(current));
+    const StringView stored = stringView(module->path);
+    if (stored.size == length && stored.data != nullptr &&
+        std::memcmp(stored.data, path, length) == 0) {
+      return module;
+    }
+    current = module->next;
+  }
+  return nullptr;
+}
+
+inline Value Runtime::moduleExports(
+    const detail::ModulePayload &module) const {
+  return objectGet(module.moduleObject, "exports", 7);
+}
+
+inline detail::ModulePayload *Runtime::createModule(Value path,
+                                                    uint32_t source) {
+  if (!isString(path) || moduleCount_ >= options_.maxModules) {
+    setError(ErrorCode{237}, nullptr, 0);
+    return nullptr;
+  }
+  Value exports = makeObject();
+  Value moduleObject = makeObject();
+  if (error_.message[0] != '\0' ||
+      !objectSet(moduleObject, "exports", 7, exports)) {
+    return nullptr;
+  }
+  const uint32_t offset = allocateBlock(detail::BlockKind::Module,
+                                        sizeof(detail::ModulePayload));
+  if (offset == 0)
+    return nullptr;
+  auto *module = static_cast<detail::ModulePayload *>(payload(offset));
+  module->path = path;
+  module->moduleObject = moduleObject;
+  module->exportsAlias = exports;
+  module->failure = undefined();
+  module->source = source;
+  module->next = moduleHead_;
+  module->state = 0;
+  if (source != 0 && validOffset(source, detail::BlockKind::Source))
+    header(source)->reserved = 1;
+  moduleHead_ = offset;
+  moduleCount_++;
+  return module;
+}
+
+inline bool Runtime::setModuleExport(uint32_t source, const char *name,
+                                     size_t length, Value value) {
+  detail::ModulePayload *module = moduleForSource(source);
+  if (module == nullptr) {
+    setError(ErrorCode{242}, nullptr, 0);
+    return false;
+  }
+  return objectSet(moduleExports(*module), name, length, value);
+}
+
+inline bool Runtime::assignModuleExportsAlias(uint32_t source, Value value) {
+  detail::ModulePayload *module = moduleForSource(source);
+  if (module == nullptr) {
+    setError(ErrorCode{242}, nullptr, 0);
+    return false;
+  }
+  module->exportsAlias = value;
+  return true;
+}
+
+inline void Runtime::cacheModuleFailure(detail::ModulePayload &module) {
+  if (error_.message[0] != '\0')
+    module.failure = makeString(error_.message);
+  module.state = 2;
+}
+
+inline Value Runtime::requireModule(Value request, uint32_t importerSource) {
+  if (!isString(request))
+    return fail(ErrorCode{234});
+  const detail::ModulePayload *importer = moduleForSource(importerSource);
+  const StringView requestText = stringView(request);
+  if (importer == nullptr || requestText.size == 0 ||
+      std::memchr(requestText.data, '\0', requestText.size) != nullptr)
+    return fail(ErrorCode{234});
+  if (options_.resolveModule == nullptr || options_.readModule == nullptr)
+    return fail(ErrorCode{233});
+
+  constexpr size_t kResolvedCapacity = 256;
+  char resolved[kResolvedCapacity] = {};
+  const StringView importerPath = stringView(importer->path);
+  if (!options_.resolveModule(importerPath.data, requestText.data, resolved,
+                              sizeof(resolved), options_.moduleUserData)) {
+    return fail(ErrorCode{235});
+  }
+  size_t resolvedLength = 0;
+  while (resolvedLength < sizeof(resolved) && resolved[resolvedLength] != '\0')
+    resolvedLength++;
+  if (resolvedLength == 0 || resolvedLength == sizeof(resolved))
+    return fail(ErrorCode{236});
+
+  if (detail::ModulePayload *cached =
+          moduleForPath(resolved, resolvedLength)) {
+    if (cached->state == 2)
+      return raiseException(cached->failure);
+    return moduleExports(*cached);
+  }
+  if (callDepth_ != 0 || scopeDepth_ != 0)
+    return fail(ErrorCode{238});
+  if (moduleCount_ >= options_.maxModules)
+    return fail(ErrorCode{237});
+
+  Value path = makeString(resolved, resolvedLength);
+  if (error_.message[0] != '\0')
+    return undefined();
+  detail::ModulePayload *module = createModule(path, 0);
+  if (module == nullptr)
+    return undefined();
+
+  size_t sourceBytes = 0;
+  if (!options_.readModule(resolved, nullptr, &sourceBytes,
+                           options_.moduleUserData)) {
+    setError(ErrorCode{239}, nullptr, 0);
+    cacheModuleFailure(*module);
+    return undefined();
+  }
+  if (sourceBytes > options_.maxModuleSourceBytes || sourceBytes > UINT32_MAX) {
+    setError(ErrorCode{240}, nullptr, 0);
+    cacheModuleFailure(*module);
+    return undefined();
+  }
+  if (sourceBytes > options_.maxImportedSourceBytes -
+                        (importedSourceBytes_ < options_.maxImportedSourceBytes
+                             ? importedSourceBytes_
+                             : options_.maxImportedSourceBytes)) {
+    setError(ErrorCode{241}, nullptr, 0);
+    cacheModuleFailure(*module);
+    return undefined();
+  }
+
+  char *sourceDataOut = nullptr;
+  Value sourceValue = makeTextBlock(detail::BlockKind::Source,
+                                    detail::Tag::Source, nullptr, sourceBytes,
+                                    &sourceDataOut);
+  const uint32_t source = sourceOffset(sourceValue);
+  if (source == 0 || sourceDataOut == nullptr) {
+    cacheModuleFailure(*module);
+    return undefined();
+  }
+  size_t actualBytes = sourceBytes;
+  if (!options_.readModule(resolved, sourceDataOut, &actualBytes,
+                           options_.moduleUserData) ||
+      actualBytes > sourceBytes) {
+    header(source)->kind = detail::BlockKind::Free;
+    setError(ErrorCode{239}, nullptr, 0);
+    cacheModuleFailure(*module);
+    return undefined();
+  }
+  setTextLength(sourceValue, actualBytes);
+  module->source = source;
+  header(source)->reserved = 1;
+  importedSourceBytes_ += static_cast<uint32_t>(actualBytes);
+  return executeModule(*module);
+}
+
 inline Value Runtime::get(const char *name) const {
   if (name == nullptr) {
     return undefined();
   }
-  NameRef ref{name, static_cast<uint16_t>(std::strlen(name)), 0};
+  NameRef ref{name, static_cast<uint16_t>(std::strlen(name)), entrySource_};
   const int binding = findBinding(ref);
   return binding >= 0 ? bindings_[binding].value : builtinGlobal(ref);
 }
@@ -2931,6 +3202,15 @@ inline size_t Runtime::valueReferenceCount(Value target, size_t limit) const {
       found(error->message);
       break;
     }
+    case detail::BlockKind::Module: {
+      const auto *module = static_cast<const detail::ModulePayload *>(
+          payload(offset));
+      found(module->path);
+      found(module->moduleObject);
+      found(module->exportsAlias);
+      found(module->failure);
+      break;
+    }
     default:
       break;
     }
@@ -3387,6 +3667,7 @@ inline void Runtime::collectGarbage() {
     }
   }
   markOffset(promiseJobHead_, workCount, overflow);
+  markOffset(moduleHead_, workCount, overflow);
   markValue(lastResult_, workCount, overflow);
   if (exceptionPending_)
     markValue(exception_, workCount, overflow);
@@ -3444,6 +3725,17 @@ inline void Runtime::collectGarbage() {
           payload(offset));
       markValue(error->name, workCount, overflow);
       markValue(error->message, workCount, overflow);
+      break;
+    }
+    case detail::BlockKind::Module: {
+      const auto *module = static_cast<const detail::ModulePayload *>(
+          payload(offset));
+      markValue(module->path, workCount, overflow);
+      markValue(module->moduleObject, workCount, overflow);
+      markValue(module->exportsAlias, workCount, overflow);
+      markValue(module->failure, workCount, overflow);
+      markOffset(module->source, workCount, overflow);
+      markOffset(module->next, workCount, overflow);
       break;
     }
     default:
@@ -3547,6 +3839,10 @@ enum class TokenType : uint8_t {
   Async,
   Await,
   Instanceof,
+  Import,
+  Export,
+  From,
+  As,
   Plus,
   Minus,
   Star,
@@ -3918,6 +4214,14 @@ private:
       return TokenType::Await;
     if (same(text, length, "instanceof"))
       return TokenType::Instanceof;
+    if (same(text, length, "import"))
+      return TokenType::Import;
+    if (same(text, length, "export"))
+      return TokenType::Export;
+    if (same(text, length, "from"))
+      return TokenType::From;
+    if (same(text, length, "as"))
+      return TokenType::As;
     return TokenType::Identifier;
   }
 
@@ -3999,7 +4303,12 @@ private:
     bool entered_ = false;
   };
 
-  enum class ReferenceKind : uint8_t { None, Binding, Property };
+  enum class ReferenceKind : uint8_t {
+    None,
+    Binding,
+    Property,
+    ModuleExportsAlias,
+  };
   struct Reference {
     Value receiver = {};
     int64_t index = 0;
@@ -4044,6 +4353,7 @@ private:
   bool asyncBody_ = false;
   bool switchBody_ = false;
   bool allowMissingIdentifier_ = false;
+  uint8_t statementDepth_ = 0;
 
   bool advance();
   bool accept(detail::TokenType type);
@@ -4056,6 +4366,8 @@ private:
   Flow block(bool execute, bool createScope = true);
   Flow declaration(bool execute, bool constant, bool consumeEnd = true);
   Flow functionDeclaration(bool execute, bool asyncBody);
+  Flow importStatement(bool execute);
+  Flow exportStatement(bool execute);
   Flow ifStatement(bool execute);
   Flow whileStatement(bool execute);
   Flow doWhileStatement(bool execute);
@@ -4071,6 +4383,7 @@ private:
   size_t iterableLength(Value iterable) const;
   bool appendSpread(Value iterable, Value *values, size_t &count,
                     size_t capacity);
+  bool moduleTopLevel() const;
 
   Expression assignment(bool execute);
   Expression sequence(bool execute);
@@ -4149,7 +4462,10 @@ inline bool Parser::identifierToken(detail::TokenType type) const {
          type == detail::TokenType::Switch || type == detail::TokenType::Case ||
          type == detail::TokenType::Default || type == detail::TokenType::Delete ||
          type == detail::TokenType::Void ||
-         type == detail::TokenType::Instanceof;
+         type == detail::TokenType::Instanceof ||
+         type == detail::TokenType::Import ||
+         type == detail::TokenType::Export ||
+         type == detail::TokenType::From || type == detail::TokenType::As;
 }
 
 inline bool Parser::startsStatement(detail::TokenType type) const {
@@ -4158,7 +4474,13 @@ inline bool Parser::startsStatement(detail::TokenType type) const {
          type == T::While || type == T::Do || type == T::For ||
          type == T::Return || type == T::Break || type == T::Continue ||
          type == T::Switch || type == T::Try || type == T::Throw ||
-         type == T::LeftBrace || type == T::Function || type == T::Async;
+         type == T::Import || type == T::Export || type == T::LeftBrace ||
+         type == T::Function || type == T::Async;
+}
+
+inline bool Parser::moduleTopLevel() const {
+  return !functionBody_ && statementDepth_ == 1 &&
+         runtime_.isModuleSource(sourceOffset_);
 }
 
 inline void Parser::terminator() {
@@ -4179,12 +4501,14 @@ inline Parser::NestingGuard::NestingGuard(Parser &parser) : parser_(parser) {
     return;
   }
   parser_.runtime_.parseDepth_++;
+  parser_.statementDepth_++;
   entered_ = true;
 }
 
 inline Parser::NestingGuard::~NestingGuard() {
   if (entered_ && parser_.runtime_.parseDepth_ > 0) {
     parser_.runtime_.parseDepth_--;
+    parser_.statementDepth_--;
   }
 }
 
@@ -4796,8 +5120,18 @@ inline Parser::Expression Parser::primary(bool execute) {
         result.reference.kind = ReferenceKind::Binding;
         result.reference.binding = static_cast<uint16_t>(binding);
       } else {
-        result.value = runtime_.builtinGlobal(name);
-        if (runtime_.isUndefined(result.value)) {
+        const bool exportsName = name.length == 7 &&
+                                 std::memcmp(name.data, "exports", 7) == 0;
+        detail::ModulePayload *module =
+            exportsName ? runtime_.moduleForSource(sourceOffset_) : nullptr;
+        if (module != nullptr) {
+          result.value = module->exportsAlias;
+          result.reference.kind = ReferenceKind::ModuleExportsAlias;
+          result.reference.name = name;
+        } else {
+          result.value = runtime_.builtinGlobal(name);
+        }
+        if (module == nullptr && runtime_.isUndefined(result.value)) {
           if (!allowMissing) {
             runtime_.setError(detail::ErrorKind::ReferenceError,
                               ErrorCode{61}, source_, nameToken.start);
@@ -5284,6 +5618,9 @@ inline bool Parser::store(const Reference &reference, Value value) {
   if (reference.kind == ReferenceKind::Property) {
     return runtime_.setIndex(reference.receiver, reference.name,
                              reference.index, reference.numeric, value);
+  }
+  if (reference.kind == ReferenceKind::ModuleExportsAlias) {
+    return runtime_.assignModuleExportsAlias(reference.name.owner, value);
   }
   syntax(ErrorCode{68});
   return false;
@@ -5800,6 +6137,10 @@ inline Parser::Flow Parser::statement(bool execute) {
     return declaration(execute, true);
   case T::Function:
     return functionDeclaration(execute, false);
+  case T::Import:
+    return importStatement(execute);
+  case T::Export:
+    return exportStatement(execute);
   case T::Async:
     if (peekType() == T::Function)
       return functionDeclaration(execute, true);
@@ -5943,6 +6284,230 @@ inline Parser::Flow Parser::functionDeclaration(bool execute,
   }
   accept(detail::TokenType::Semicolon);
   return {FlowKind::Normal, function.value};
+}
+
+inline Parser::Flow Parser::importStatement(bool execute) {
+  using T = detail::TokenType;
+  if (!moduleTopLevel()) {
+    syntax(ErrorCode{242});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  advance(); // import
+
+  enum class Kind : uint8_t { SideEffect, Default, Named, Namespace };
+  Kind kind = Kind::SideEffect;
+  detail::Token local;
+  Span named;
+
+  if (token_.type != T::String) {
+    if (token_.type == T::LeftBrace) {
+      kind = Kind::Named;
+      advance();
+      named.begin = token_.start;
+      while (token_.type != T::RightBrace && token_.type != T::End &&
+             runtime_.error_.message[0] == '\0') {
+        if (!identifierToken(token_.type)) {
+          syntax(ErrorCode{243});
+          break;
+        }
+        advance();
+        if (accept(T::As)) {
+          if (!identifierToken(token_.type)) {
+            syntax(ErrorCode{243});
+            break;
+          }
+          advance();
+        }
+        if (!accept(T::Comma))
+          break;
+      }
+      named.end = token_.start;
+      expect(T::RightBrace, ErrorCode{243});
+    } else if (accept(T::Star)) {
+      kind = Kind::Namespace;
+      expect(T::As, ErrorCode{243});
+      if (!identifierToken(token_.type)) {
+        syntax(ErrorCode{243});
+        return {FlowKind::Normal, runtime_.undefined()};
+      }
+      local = token_;
+      advance();
+    } else if (identifierToken(token_.type)) {
+      kind = Kind::Default;
+      local = token_;
+      advance();
+    } else {
+      syntax(ErrorCode{243});
+      return {FlowKind::Normal, runtime_.undefined()};
+    }
+    expect(T::From, ErrorCode{243});
+  }
+
+  if (token_.type != T::String) {
+    syntax(ErrorCode{243});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  const detail::Token pathToken = token_;
+  Value path = execute ? stringLiteral(pathToken) : runtime_.undefined();
+  advance();
+  terminator();
+  if (!execute || runtime_.error_.message[0] != '\0')
+    return {FlowKind::Normal, runtime_.undefined()};
+
+  Value imported = runtime_.requireModule(path, sourceOffset_);
+  if (runtime_.error_.message[0] != '\0')
+    return {FlowKind::Normal, runtime_.undefined()};
+  if (kind == Kind::SideEffect)
+    return {FlowKind::Normal, imported};
+
+  if (kind == Kind::Default) {
+    Value value = imported;
+    if (detail::tagOf(imported) == detail::Tag::Object &&
+        runtime_.findProperty(imported, "default", 7) != 0) {
+      value = runtime_.objectGet(imported, "default", 7);
+    }
+    runtime_.defineBinding(
+        Runtime::NameRef{source_ + local.start,
+                         static_cast<uint16_t>(local.length), sourceOffset_},
+        value, true);
+  } else if (kind == Kind::Namespace) {
+    runtime_.defineBinding(
+        Runtime::NameRef{source_ + local.start,
+                         static_cast<uint16_t>(local.length), sourceOffset_},
+        imported, true);
+  } else {
+    detail::Lexer scan(source_, named.begin, named.end);
+    detail::Token importedName = scan.next();
+    while (importedName.type != T::End &&
+           runtime_.error_.message[0] == '\0') {
+      detail::Token localName = importedName;
+      detail::Token next = scan.next();
+      if (next.type == T::As) {
+        localName = scan.next();
+        next = scan.next();
+      }
+      const Value value = runtime_.getProperty(
+          imported, source_ + importedName.start, importedName.length);
+      if (runtime_.error_.message[0] == '\0') {
+        runtime_.defineBinding(
+            Runtime::NameRef{source_ + localName.start,
+                             static_cast<uint16_t>(localName.length),
+                             sourceOffset_},
+            value, true);
+      }
+      if (next.type != T::Comma)
+        break;
+      importedName = scan.next();
+    }
+  }
+  return {FlowKind::Normal, imported};
+}
+
+inline Parser::Flow Parser::exportStatement(bool execute) {
+  using T = detail::TokenType;
+  if (!moduleTopLevel()) {
+    syntax(ErrorCode{242});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  advance(); // export
+
+  if (accept(T::Default)) {
+    Value value = assignment(execute).value;
+    terminator();
+    if (execute && runtime_.error_.message[0] == '\0')
+      runtime_.setModuleExport(sourceOffset_, "default", 7, value);
+    return {FlowKind::Normal, value};
+  }
+
+  if (token_.type == T::Const || token_.type == T::Let) {
+    const bool constant = token_.type == T::Const;
+    advance();
+    if (!identifierToken(token_.type)) {
+      syntax(ErrorCode{244});
+      return {FlowKind::Normal, runtime_.undefined()};
+    }
+    const detail::Token name = token_;
+    advance();
+    Value value = runtime_.undefined();
+    const bool initialized = accept(T::Assign);
+    if (initialized)
+      value = assignment(execute).value;
+    else if (constant)
+      syntax(ErrorCode{74});
+    if (token_.type == T::Comma)
+      syntax(ErrorCode{244});
+    terminator();
+    if (execute && runtime_.error_.message[0] == '\0' &&
+        runtime_.defineBinding(
+            Runtime::NameRef{source_ + name.start,
+                             static_cast<uint16_t>(name.length), sourceOffset_},
+            value, constant)) {
+      runtime_.setModuleExport(sourceOffset_, source_ + name.start,
+                               name.length, value);
+    }
+    return {FlowKind::Normal, value};
+  }
+
+  if (token_.type == T::Function) {
+    detail::ParameterSpan name;
+    Expression function = traditionalFunction(execute, false, &name);
+    if (name.length == 0) {
+      syntax(ErrorCode{244});
+      return {FlowKind::Normal, runtime_.undefined()};
+    }
+    if (execute && runtime_.error_.message[0] == '\0' &&
+        runtime_.defineBinding(
+            Runtime::NameRef{source_ + name.start, name.length, sourceOffset_},
+            function.value, true)) {
+      runtime_.setModuleExport(sourceOffset_, source_ + name.start,
+                               name.length, function.value);
+    }
+    accept(T::Semicolon);
+    return {FlowKind::Normal, function.value};
+  }
+
+  if (accept(T::LeftBrace)) {
+    while (token_.type != T::RightBrace && token_.type != T::End &&
+           runtime_.error_.message[0] == '\0') {
+      if (!identifierToken(token_.type)) {
+        syntax(ErrorCode{244});
+        break;
+      }
+      const detail::Token local = token_;
+      detail::Token exported = local;
+      advance();
+      if (accept(T::As)) {
+        if (!identifierToken(token_.type)) {
+          syntax(ErrorCode{244});
+          break;
+        }
+        exported = token_;
+        advance();
+      }
+      if (execute) {
+        const Runtime::NameRef reference{
+            source_ + local.start, static_cast<uint16_t>(local.length),
+            sourceOffset_};
+        const int binding = runtime_.findBinding(reference);
+        if (binding < 0) {
+          runtime_.setError(detail::ErrorKind::ReferenceError, ErrorCode{61},
+                            source_, local.start);
+        } else {
+          runtime_.setModuleExport(sourceOffset_, source_ + exported.start,
+                                   exported.length,
+                                   runtime_.bindings_[binding].value);
+        }
+      }
+      if (!accept(T::Comma))
+        break;
+    }
+    expect(T::RightBrace, ErrorCode{244});
+    terminator();
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+
+  syntax(ErrorCode{244});
+  return {FlowKind::Normal, runtime_.undefined()};
 }
 
 inline Parser::Flow Parser::ifStatement(bool execute) {
@@ -6530,6 +7095,29 @@ inline Parser::Flow Parser::tryStatement(bool execute) {
   return result;
 }
 
+inline Value Runtime::executeModule(detail::ModulePayload &module) {
+  const char *source = sourceData(module.source);
+  const size_t length = sourceLength(module.source);
+  if (source == nullptr) {
+    setError(ErrorCode{239}, nullptr, 0);
+    cacheModuleFailure(module);
+    return undefined();
+  }
+  const uint32_t savedSource = activeSource_;
+  activeSource_ = module.source;
+  Parser parser(*this, module.source, 0, static_cast<uint32_t>(length));
+  const Parser::Flow flow = parser.program(true);
+  activeSource_ = savedSource;
+  if (flow.kind != Parser::FlowKind::Normal && error_.message[0] == '\0')
+    setError(ErrorCode{84}, source, 0);
+  if (error_.message[0] != '\0') {
+    cacheModuleFailure(module);
+    return undefined();
+  }
+  module.state = 1;
+  return moduleExports(module);
+}
+
 inline RunResult Runtime::eval(const char *source, size_t length) {
   clearError();
   if (!ready_ || source == nullptr || length > UINT32_MAX) {
@@ -6549,8 +7137,11 @@ inline RunResult Runtime::eval(const char *source, size_t length) {
   }
   stepsRemaining_ = options_.maxSteps;
   running_ = true;
+  const uint32_t savedSource = activeSource_;
+  activeSource_ = sourceBlock;
   Parser parser(*this, sourceBlock, 0, static_cast<uint32_t>(length));
   Parser::Flow flow = parser.program(true);
+  activeSource_ = savedSource;
   if (flow.kind != Parser::FlowKind::Normal && error_.message[0] == '\0') {
     setError(ErrorCode{84}, sourceData(sourceBlock), 0);
   }
@@ -6560,6 +7151,39 @@ inline RunResult Runtime::eval(const char *source, size_t length) {
   collectGarbage();
   return {error_.message[0] == '\0',
           error_.message[0] == '\0' ? lastResult_ : undefined()};
+}
+
+inline RunResult Runtime::evalModule(const char *source, size_t length,
+                                     const char *path) {
+  clearError();
+  if (!ready_ || source == nullptr || path == nullptr || path[0] == '\0' ||
+      length > UINT32_MAX) {
+    setError(ErrorCode{232}, nullptr, 0);
+    return {false, undefined()};
+  }
+  if (running_ || moduleHead_ != 0) {
+    setError(ErrorCode{245}, nullptr, 0);
+    return {false, undefined()};
+  }
+  collectGarbage();
+  Value sourceValue = makeTextBlock(detail::BlockKind::Source,
+                                    detail::Tag::Source, source, length);
+  Value pathValue = makeString(path);
+  const uint32_t sourceBlock = sourceOffset(sourceValue);
+  if (sourceBlock == 0 || error_.message[0] != '\0')
+    return {false, undefined()};
+  detail::ModulePayload *module = createModule(pathValue, sourceBlock);
+  if (module == nullptr)
+    return {false, undefined()};
+  entrySource_ = sourceBlock;
+  stepsRemaining_ = options_.maxSteps;
+  running_ = true;
+  Value result = executeModule(*module);
+  lastResult_ = result;
+  running_ = false;
+  collectGarbage();
+  return {error_.message[0] == '\0',
+          error_.message[0] == '\0' ? result : undefined()};
 }
 
 inline RunResult Runtime::call(const char *name, const Value *args,
@@ -6790,6 +7414,7 @@ inline Value Runtime::callValue(Value function, Value receiver,
   const uint16_t savedBindingCount = bindingCount_;
   const uint16_t savedFrameBase = frameBase_;
   const uint16_t savedScopeDepth = scopeDepth_;
+  const uint32_t savedActiveSource = activeSource_;
   const Value *savedCallArguments = callArguments_;
   const size_t savedCallArgumentCount = callArgumentCount_;
   Value asyncPromise = undefined();
@@ -6801,6 +7426,7 @@ inline Value Runtime::callValue(Value function, Value receiver,
   }
   frameBase_ = bindingCount_;
   scopeDepth_ = 0;
+  activeSource_ = functionData->source;
   callArguments_ = args;
   callArgumentCount_ = argc;
   callDepth_++;
@@ -6852,6 +7478,7 @@ inline Value Runtime::callValue(Value function, Value receiver,
   bindingCount_ = savedBindingCount;
   frameBase_ = savedFrameBase;
   scopeDepth_ = savedScopeDepth;
+  activeSource_ = savedActiveSource;
   callArguments_ = savedCallArguments;
   callArgumentCount_ = savedCallArgumentCount;
   callDepth_--;
@@ -6901,6 +7528,10 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
   };
 
   switch (function) {
+  case B::Require:
+    if (argc != 1)
+      return fail(ErrorCode{234});
+    return requireModule(argument(0), activeSource_);
   case B::SetConstructor: {
     Value set = makeSet();
     const Value source = argument(0);
