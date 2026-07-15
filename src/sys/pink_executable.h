@@ -2,6 +2,8 @@
 #define PINK_EXECUTABLE_H
 
 #include "sys/app_runtime.h"
+#include "sys/agentfiesta/pink_api.h"
+#include "sys/pink_app_metadata.h"
 #include <FS.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -9,7 +11,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL; // "PINK"
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 13;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 16;
 /// Oldest .pink ABI version this firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 /// Size in bytes of PinkExecutableHeader.
@@ -125,7 +127,19 @@ enum PinkFeature : uint32_t {
   PINK_FEATURE_GPIO = 1U << 4U,
   PINK_FEATURE_SENSORS = 1U << 5U,
   PINK_FEATURE_WIFI_SCAN = 1U << 6U,
+  PINK_FEATURE_AGENTFIESTA = 1U << 7U,
+  PINK_FEATURE_RETURNABLE_JS = 1U << 8U,
 };
+
+enum PinkFileAuthorization : uint8_t {
+  PINK_AUTHORIZE_FILE_WRITE = 1U << 0U,
+  PINK_AUTHORIZE_FILE_DELETE = 1U << 1U,
+};
+
+/// Callback for one transient entry returned by fileList. Returning false
+/// stops enumeration, allowing callers to enforce their own visit bounds.
+typedef bool (*PinkDirectoryEntryHandler)(const char *name, bool directory,
+                                          uint32_t size, void *context);
 
 struct PinkImageTransform {
   float a = 1.0f;
@@ -134,6 +148,68 @@ struct PinkImageTransform {
   float d = 1.0f;
   float tx = 0.0f;
   float ty = 0.0f;
+};
+
+struct PinkSpriteFrame {
+  uint16_t x = 0;
+  uint16_t y = 0;
+  uint16_t width = 0;
+  uint16_t height = 0;
+
+  bool valid() const {
+    return width != 0U && height != 0U &&
+           static_cast<uint32_t>(x) + width <= 0x7fffU &&
+           static_cast<uint32_t>(y) + height <= 0x7fffU;
+  }
+};
+
+/// Uniform, row-major spritesheet description. Rows and columns are zero-based.
+struct PinkSpritesheet {
+  uint16_t frameWidth = 0;
+  uint16_t frameHeight = 0;
+  uint16_t frameCount = 0;
+  uint16_t rowCount = 0;
+
+  static PinkSpritesheet defineSpritesheet(uint16_t width, uint16_t height,
+                                           uint16_t frames,
+                                           uint16_t rows) {
+    PinkSpritesheet sheet;
+    if (width == 0U || height == 0U || frames == 0U || rows == 0U ||
+        rows > frames) {
+      return sheet;
+    }
+    const uint32_t columns =
+        (static_cast<uint32_t>(frames) + rows - 1U) / rows;
+    if (columns * width > 0x7fffU ||
+        static_cast<uint32_t>(rows) * height > 0x7fffU) {
+      return sheet;
+    }
+    sheet.frameWidth = width;
+    sheet.frameHeight = height;
+    sheet.frameCount = frames;
+    sheet.rowCount = rows;
+    return sheet;
+  }
+
+  uint16_t columnCount() const {
+    return frameCount != 0U && rowCount != 0U
+               ? static_cast<uint16_t>(
+                     (static_cast<uint32_t>(frameCount) + rowCount - 1U) /
+                     rowCount)
+               : 0U;
+  }
+
+  PinkSpriteFrame spriteAt(uint16_t row, uint16_t column) const {
+    const uint16_t columns = columnCount();
+    const uint32_t index = static_cast<uint32_t>(row) * columns + column;
+    if (frameWidth == 0U || frameHeight == 0U || row >= rowCount ||
+        column >= columns || index >= frameCount) {
+      return {};
+    }
+    return {static_cast<uint16_t>(column * frameWidth),
+            static_cast<uint16_t>(row * frameHeight), frameWidth,
+            frameHeight};
+  }
 };
 
 struct PinkSensorSnapshot {
@@ -268,7 +344,67 @@ struct PinkHost {
       const uint8_t *data, size_t size, const char *format, int16_t x,
       int16_t y, int16_t w, int16_t h, uint8_t dither, bool scaleToFit,
       uint8_t cacheEntries, const PinkImageTransform *transform);
+  /// ABI 14: versioned AgentFiesta service table. The pointer is present in
+  /// offline builds; AI submissions then return UNSUPPORTED.
+  const PinkAgentFiestaApi *agentFiesta;
+  /// ABI 15: grants paths inside /misc/agentfiesta/<app-name>/. Passing a null
+  /// path during a touch event arms one exact /bin/js/*.js export grant; the
+  /// later non-null call consumes it.
+  int8_t (*authorizeFile)(const char *path, uint8_t operations);
+  /// ABI 15: takes ownership of a PSRAM state blob on success, launches one
+  /// source path, and restores the blob to this .pink app on MENU-long.
+  int8_t (*launchPocketInkJsReturnable)(const char *sourcePath,
+                                        uint8_t *ownedState,
+                                        size_t stateSize);
+  /// ABI 15: enumerates one directory without exposing provider internals.
+  int8_t (*fileList)(const char *path, PinkDirectoryEntryHandler handler,
+                     void *context);
+  /// ABI 16: draws one native-size spritesheet cell before affine transforms.
+  int8_t (*drawSpritePath)(const char *path, const PinkSpriteFrame *frame,
+                           int16_t x, int16_t y, uint8_t dither,
+                           uint8_t cacheEntries,
+                           const PinkImageTransform *transform);
+  int8_t (*drawSpriteBuffer)(const uint8_t *data, size_t size,
+                             const char *format,
+                             const PinkSpriteFrame *frame, int16_t x,
+                             int16_t y, uint8_t dither, uint8_t cacheEntries,
+                             const PinkImageTransform *transform);
 };
+
+inline bool pinkSpritesSupported(const PinkHost *host) {
+  return host != nullptr && host->abiVersion >= 16U &&
+         host->hostSize >=
+             offsetof(PinkHost, drawSpriteBuffer) +
+                 sizeof(PinkHost::drawSpriteBuffer) &&
+         host->drawSpritePath != nullptr && host->drawSpriteBuffer != nullptr;
+}
+
+inline int8_t pinkDrawSpritePath(
+    const PinkHost *host, const char *path, const PinkSpriteFrame &frame,
+    int16_t x, int16_t y, uint8_t dither = 1U, uint8_t cacheEntries = 0U,
+    const PinkImageTransform *transform = nullptr) {
+  if (!frame.valid()) {
+    return PINK_API_ERROR;
+  }
+  return pinkSpritesSupported(host)
+             ? host->drawSpritePath(path, &frame, x, y, dither, cacheEntries,
+                                    transform)
+             : static_cast<int8_t>(PINK_API_UNSUPPORTED);
+}
+
+inline int8_t pinkDrawSpriteBuffer(
+    const PinkHost *host, const uint8_t *data, size_t size, const char *format,
+    const PinkSpriteFrame &frame, int16_t x, int16_t y,
+    uint8_t dither = 1U, uint8_t cacheEntries = 0U,
+    const PinkImageTransform *transform = nullptr) {
+  if (!frame.valid()) {
+    return PINK_API_ERROR;
+  }
+  return pinkSpritesSupported(host)
+             ? host->drawSpriteBuffer(data, size, format, &frame, x, y,
+                                      dither, cacheEntries, transform)
+             : static_cast<int8_t>(PINK_API_UNSUPPORTED);
+}
 
 /// Copyable description of one installed executable's static periodic hook.
 struct PinkExecutablePeriodicTask {
@@ -310,8 +446,30 @@ bool pinkExecutableLaunchById(const char *id);
 bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
                               size_t idSize, char *label, size_t labelSize,
                               char *icon, size_t iconSize);
+/// Returnable-test variant that rejects and cleans up a failed executable load.
+bool pinkExecutableLaunchPathChecked(const char *path, AppDefinition *out,
+                                     char *id, size_t idSize, char *label,
+                                     size_t labelSize, char *icon,
+                                     size_t iconSize);
 /// Stops the active .pink app and releases its loaded image.
 void pinkExecutableStop();
+
+/// Restores one opaque state blob through PINK_EVENT_RESTORE_STATE.
+void pinkExecutableRestoreState(const uint8_t *data, size_t size);
+
+/// One-entry mailbox used while a .pink owner is unloaded for a PocketInkJS
+/// test. The mailbox owns the state blob after a successful queue operation.
+bool returnablePocketInkJsQueue(const char *ownerPath, const char *sourcePath,
+                                uint8_t *ownedState, size_t stateSize);
+bool returnablePocketInkJsRequested();
+bool returnablePocketInkJsTakeSource(char *out, size_t outSize);
+bool returnablePocketInkJsReturnPending();
+bool returnablePocketInkJsOwnerPath(char *out, size_t outSize);
+bool returnablePocketInkJsState(const uint8_t *&data, size_t &size);
+/// Appends only the first bounded PocketInkJS diagnostic to the returned state.
+bool returnablePocketInkJsSetError(const char *error);
+void returnablePocketInkJsFinish();
+
 /// Counts installed executables with valid static periodic metadata.
 size_t pinkExecutablePeriodicTaskCount();
 /// Copies one installed static periodic task by periodic-task index.

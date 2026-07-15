@@ -143,6 +143,8 @@ private:
   void redrawActiveScreenPartial();
   bool handleScreenTouch(const TouchPoint &point);
   bool returnToFilesAfterLaunch();
+  bool launchPendingReturnablePocketInkJs();
+  bool returnFromReturnablePocketInkJs();
   void render();
   void showQuickSettingsActionFeedback(PowerDialogAction action);
   void requestScreenshot();

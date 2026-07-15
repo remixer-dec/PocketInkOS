@@ -1,5 +1,6 @@
 #include "sys/pink_executable.h"
 #include "sys/pink_library.h"
+#include "sys/agentfiesta/agentfiesta.h"
 #include "sys/debug_logging.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <esp_heap_caps.h>
+#include <esp_rom_sys.h>
 #include <stdio.h>
 #include <new>
 
@@ -30,9 +32,13 @@
 namespace {
 
 static const uint16_t kPinkPathCapacity = 192;
-static const uint8_t kPinkLabelCapacity = 8;
+static const uint8_t kPinkLabelCapacity = PINK_APP_LABEL_CAPACITY;
+static const uint8_t kPinkIconCapacity = PINK_APP_ICON_CAPACITY;
 static const uint8_t kPinkIdCapacity = 16;
 static const size_t kPinkMemorySize = 4096;
+static const size_t kReturnableJsPathCapacity = 288U;
+static const size_t kReturnableJsMaxStateBytes = 256U * 1024U;
+static const uint32_t kReturnableJsResultMagic = 0x52534a50UL; // "PJSR"
 static const size_t kPinkMaxRelocations = 4096;
 static const size_t kPinkLibraryMaxCodeBytes = 64U * 1024U;
 static const size_t kPinkLibraryMaxRodataBytes = 512U * 1024U;
@@ -48,6 +54,8 @@ struct PinkExecutableEntry {
   char *id = nullptr;
   char *path = nullptr;
   char *label = nullptr;
+  char *icon = nullptr;
+  bool iconFont = false;
   MenuCategory category = MENU_APPS;
   PeriodicTaskSchedule periodic;
   uint32_t packedPeriodicSchedule = 0;
@@ -57,6 +65,22 @@ struct PinkScanContext {
   size_t next = 0;
   const char *directory = nullptr;
   MenuCategory category = MENU_APPS;
+};
+
+struct ReturnableJsResultTrailer {
+  uint32_t magic = kReturnableJsResultMagic;
+  uint16_t version = 1;
+  uint16_t size = sizeof(ReturnableJsResultTrailer);
+  char error[120] = {};
+};
+
+struct ReturnableJsState {
+  char ownerPath[kReturnableJsPathCapacity] = {};
+  char sourcePath[kReturnableJsPathCapacity] = {};
+  uint8_t *state = nullptr;
+  size_t stateSize = 0;
+  bool launched = false;
+  bool errorSet = false;
 };
 
 PinkExecutableEntry *pinkApps = nullptr;
@@ -69,9 +93,24 @@ char activeAppPath[kPinkPathCapacity] = {};
 uint8_t *activeMemory = nullptr;
 size_t activeMemorySize = 0;
 uint8_t pinkSleepGuardDepth = 0;
+uint8_t pinkCurrentEventType = 0;
+uint8_t pinkFileAuthorizationIntent = 0;
+ReturnableJsState *pendingReturnableJs = nullptr;
 
 class PinkExecutableApp;
 PinkExecutableApp *activePinkApp = nullptr;
+
+bool copyReturnableJsPath(char *out, size_t capacity, const char *path) {
+  if (out == nullptr || capacity == 0 || path == nullptr || path[0] != '/') {
+    return false;
+  }
+  const size_t length = strlen(path);
+  if (length >= capacity) {
+    return false;
+  }
+  memcpy(out, path, length + 1U);
+  return true;
+}
 
 uint32_t hashPath(const char *text) {
   uint32_t hash = 2166136261UL;
@@ -187,6 +226,58 @@ void copyIcon(char *dest, size_t destSize, const char *label) {
   }
 }
 
+bool printableMetadataText(const char *text, size_t capacity) {
+  if (text == nullptr || capacity == 0 || text[0] == '\0' ||
+      memchr(text, '\0', capacity) == nullptr) {
+    return false;
+  }
+  for (size_t i = 0; i < capacity && text[i] != '\0'; i++) {
+    if (text[i] < 0x20 || text[i] > 0x7e) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool validAppMetadata(const PinkExecutableHeader &header,
+                      const PinkAppMetadata &metadata) {
+  return pinkExecutableHeaderSupported(header) &&
+         header.headerSize ==
+             sizeof(PinkExecutableHeader) + sizeof(PinkAppMetadata) &&
+         metadata.magic == PINK_APP_METADATA_MAGIC &&
+         metadata.version == PINK_APP_METADATA_VERSION &&
+         metadata.size == sizeof(PinkAppMetadata) &&
+         printableMetadataText(metadata.label, sizeof(metadata.label)) &&
+         printableMetadataText(metadata.icon, sizeof(metadata.icon));
+}
+
+bool readAppMetadata(const char *path, char *label, size_t labelSize,
+                     char *icon, size_t iconSize, bool &iconFont) {
+  File file = openProviderPath("sd", path);
+  if (!file) {
+    return false;
+  }
+  PinkExecutableHeader header;
+  PinkAppMetadata metadata;
+  const bool read =
+      file.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) ==
+          sizeof(header) &&
+      file.read(reinterpret_cast<uint8_t *>(&metadata), sizeof(metadata)) ==
+          sizeof(metadata);
+  file.close();
+  if (!read || !validAppMetadata(header, metadata)) {
+    return false;
+  }
+  const bool markedIcon = metadata.icon[0] == '@' && metadata.icon[1] != '\0';
+  if (!copyText(label, labelSize, metadata.label) ||
+      !copyText(icon, iconSize,
+                markedIcon ? metadata.icon + 1U : metadata.icon)) {
+    return false;
+  }
+  iconFont = markedIcon;
+  return true;
+}
+
 const char *filenameForPath(const char *path) {
   if (path == nullptr) {
     return "";
@@ -249,6 +340,7 @@ void clearPinkEntries() {
     free(pinkApps[i].id);
     free(pinkApps[i].path);
     free(pinkApps[i].label);
+    free(pinkApps[i].icon);
     pinkApps[i] = PinkExecutableEntry{};
   }
   pinkAppCount = 0;
@@ -321,12 +413,16 @@ bool scanPinkEntry(const FileProviderEntry &entry, void *context) {
 
   char path[kPinkPathCapacity];
   char label[kPinkLabelCapacity];
+  char icon[kPinkIconCapacity];
+  bool iconFont = false;
   char id[kPinkIdCapacity];
   if (!joinPath(path, sizeof(path), scan->directory, entry.name)) {
     return true;
   }
 
   copyLabel(label, sizeof(label), entry.name);
+  copyIcon(icon, sizeof(icon), label);
+  readAppMetadata(path, label, sizeof(label), icon, sizeof(icon), iconFont);
   snprintf(id, sizeof(id), "pink:%08lx",
            static_cast<unsigned long>(hashPath(path)));
 
@@ -334,10 +430,14 @@ bool scanPinkEntry(const FileProviderEntry &entry, void *context) {
   app.id = duplicateText(id);
   app.path = duplicateText(path);
   app.label = duplicateText(label);
-  if (app.id == nullptr || app.path == nullptr || app.label == nullptr) {
+  app.icon = duplicateText(icon);
+  app.iconFont = iconFont;
+  if (app.id == nullptr || app.path == nullptr || app.label == nullptr ||
+      app.icon == nullptr) {
     free(app.id);
     free(app.path);
     free(app.label);
+    free(app.icon);
     app = PinkExecutableEntry{};
     return false;
   }
@@ -491,8 +591,9 @@ void hostLog(const char *message) {
   if (message == nullptr || !debugLoggingEnabled()) {
     return;
   }
-  Serial.print("[pink] ");
-  Serial.println(message);
+  // ROM output remains available while app code runs outside Arduino's
+  // Serial buffering and is the same path used by AI transport diagnostics.
+  esp_rom_printf("[pink] %s\n", message);
 }
 
 bool hostNetworkConnected() { return wifiIsConnected(); }
@@ -694,6 +795,49 @@ int8_t hostDrawImageBufferCached(const uint8_t *data, size_t size,
              : PINK_API_ERROR;
 }
 
+ImageSourceRect imageSourceRect(const PinkSpriteFrame &frame) {
+  ImageSourceRect source;
+  source.x = frame.x;
+  source.y = frame.y;
+  source.width = frame.width;
+  source.height = frame.height;
+  return source;
+}
+
+int8_t hostDrawSpritePath(const char *path, const PinkSpriteFrame *frame,
+                          int16_t x, int16_t y, uint8_t dither,
+                          uint8_t cacheEntries,
+                          const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr || frame == nullptr || !frame->valid()) {
+    return PINK_API_ERROR;
+  }
+  if (appApiReadFile(path, 0, nullptr, 0, nullptr, nullptr) ==
+      AppApiStatus::Error) {
+    return PINK_API_ERROR;
+  }
+  return drawImagePathRegionTransformed(
+             *pinkDrawTarget, "sd", path, imageSourceRect(*frame), x, y,
+             dither, imageTransform(transform), pinkImageCache(cacheEntries))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+int8_t hostDrawSpriteBuffer(const uint8_t *data, size_t size,
+                            const char *format,
+                            const PinkSpriteFrame *frame, int16_t x,
+                            int16_t y, uint8_t dither, uint8_t cacheEntries,
+                            const PinkImageTransform *transform) {
+  if (pinkDrawTarget == nullptr || frame == nullptr || !frame->valid()) {
+    return PINK_API_ERROR;
+  }
+  return drawImageBufferRegionTransformed(
+             *pinkDrawTarget, data, size, format, imageSourceRect(*frame), x,
+             y, dither, imageTransform(transform),
+             pinkImageCache(cacheEntries))
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
 int8_t hostDrawVectorPath(const char *path, int16_t x, int16_t y, int16_t w,
                           int16_t h, const PinkImageTransform *transform) {
   if (pinkDrawTarget == nullptr || path == nullptr) {
@@ -725,6 +869,11 @@ int8_t hostFileRead(const char *path, size_t offset, uint8_t *out,
                     size_t capacity, size_t *outRead, size_t *outFileSize) {
   return apiStatus(
       appApiReadFile(path, offset, out, capacity, outRead, outFileSize));
+}
+
+int8_t hostFileList(const char *path, PinkDirectoryEntryHandler handler,
+                    void *context) {
+  return apiStatus(appApiListDirectory(path, handler, context));
 }
 
 int8_t hostFileWrite(const char *path, const uint8_t *data, size_t size,
@@ -877,12 +1026,253 @@ int8_t hostGetKeyboardInput(const char *initialText, uint8_t layout,
                                           outSize));
 }
 
+int8_t agentStatus(agentfiesta::Status status) {
+  return static_cast<int8_t>(status);
+}
+
+bool validAgentConfig(const PinkAgentFiestaConfig *config) {
+  return config != nullptr &&
+         config->structSize >= sizeof(PinkAgentFiestaConfig) &&
+         config->apiVersion == PINK_AGENTFIESTA_API_VERSION &&
+         (config->options & ~(PINK_AGENTFIESTA_TRANSCRIPTION |
+                              PINK_AGENTFIESTA_VOICE_OUTPUT)) == 0U;
+}
+
+agentfiesta::SessionConfig nativeAgentConfig(
+    const PinkAgentFiestaConfig &config) {
+  agentfiesta::SessionConfig native;
+  native.toolPacks = config.toolPacks;
+  native.systemPromptPath = config.systemPromptPath;
+  native.appPromptPath = config.appPromptPath;
+  native.historyLimit = config.historyLimit;
+  native.modelIndex = config.modelIndex;
+  native.approvalEnabled = config.approvalEnabled != 0;
+  native.transcriptionMode =
+      (config.options & PINK_AGENTFIESTA_TRANSCRIPTION) != 0U;
+  native.voiceOutput =
+      (config.options & PINK_AGENTFIESTA_VOICE_OUTPUT) != 0U;
+  return native;
+}
+
+int8_t hostAgentSessionStart(const PinkAgentFiestaConfig *config) {
+  return validAgentConfig(config)
+             ? agentStatus(agentfiesta::start(activeAppId, activeAppPath,
+                                              nativeAgentConfig(*config)))
+             : static_cast<int8_t>(PINK_AGENTFIESTA_ERROR);
+}
+
+void hostAgentSessionStop() { agentfiesta::stop(activeAppId); }
+
+int8_t hostAgentSessionConfigure(const PinkAgentFiestaConfig *config) {
+  return validAgentConfig(config)
+             ? agentStatus(
+                   agentfiesta::configure(nativeAgentConfig(*config)))
+             : static_cast<int8_t>(PINK_AGENTFIESTA_ERROR);
+}
+
+int8_t hostAgentSubmitText(const char *text) {
+  return agentStatus(agentfiesta::submitText(text));
+}
+
+int8_t hostAgentSubmitWav(const uint8_t *wav, size_t wavBytes,
+                          const char *optionalText) {
+  return agentStatus(agentfiesta::submitWav(wav, wavBytes, optionalText));
+}
+
+int8_t hostAgentUpdate() { return agentStatus(agentfiesta::update()); }
+
+int8_t hostAgentPollEvent(PinkAgentFiestaEvent *event, char *text,
+                          size_t textSize) {
+  if (event == nullptr || event->structSize < sizeof(PinkAgentFiestaEvent)) {
+    return PINK_AGENTFIESTA_ERROR;
+  }
+  agentfiesta::Event native;
+  const agentfiesta::Status status =
+      agentfiesta::pollEvent(native, text, textSize);
+  if (status == agentfiesta::Status::Ok) {
+    event->type = static_cast<uint8_t>(native.type);
+    event->entryType = static_cast<uint8_t>(native.entryType);
+    event->status = static_cast<int8_t>(native.status);
+    event->id = native.id;
+  }
+  return agentStatus(status);
+}
+
+void hostAgentCancel() { agentfiesta::cancel(); }
+
+int8_t hostAgentToolResult(uint32_t callId, const char *result, bool error) {
+  return agentStatus(agentfiesta::provideToolResult(callId, result, error));
+}
+
+void hostAgentDrawFeed(int16_t x, int16_t y, int16_t width, int16_t height) {
+  if (pinkDrawTarget != nullptr) {
+    agentfiesta::drawFeed(*pinkDrawTarget, x, y, width, height);
+  }
+}
+
+void hostAgentScrollFeed(int8_t wrappedLines) {
+  agentfiesta::scrollFeed(wrappedLines);
+}
+
+uint8_t hostAgentHistoryLimit() { return agentfiesta::historyLimit(); }
+
+int8_t hostAgentSetHistoryLimit(uint8_t entries) {
+  return agentStatus(agentfiesta::setHistoryLimit(entries));
+}
+
+bool hostAgentApprovalEnabled() { return agentfiesta::approvalEnabled(); }
+
+void hostAgentSetApprovalEnabled(bool enabled) {
+  agentfiesta::setApprovalEnabled(enabled);
+}
+
+size_t hostAgentSnapshotSize() { return agentfiesta::snapshotSize(); }
+
+int8_t hostAgentSnapshotSave(uint8_t *out, size_t outSize, size_t *written) {
+  if (written == nullptr) {
+    return PINK_AGENTFIESTA_ERROR;
+  }
+  return agentStatus(agentfiesta::saveSnapshot(out, outSize, *written));
+}
+
+int8_t hostAgentSnapshotRestore(const uint8_t *data, size_t size) {
+  return agentStatus(agentfiesta::restoreSnapshot(data, size));
+}
+
+int8_t hostAgentHandoff(const char *targetAppPath, const char *prompt) {
+  return agentStatus(agentfiesta::handoff(targetAppPath, prompt));
+}
+
+int8_t hostAgentRegisterTool(const char *name, const char *description,
+                             const char *parametersJson) {
+  return agentStatus(
+      agentfiesta::registerTool(name, description, parametersJson));
+}
+
+int8_t hostAgentPendingToolName(uint32_t callId, char *out, size_t outSize) {
+  return agentStatus(agentfiesta::pendingToolName(callId, out, outSize));
+}
+
+int8_t hostAuthorizeFile(const char *path, uint8_t operations) {
+  constexpr uint8_t kAllowed =
+      PINK_AUTHORIZE_FILE_WRITE | PINK_AUTHORIZE_FILE_DELETE;
+  if (operations == 0U || (operations & ~kAllowed) != 0U) {
+    return PINK_API_ERROR;
+  }
+
+  if (path == nullptr) {
+    if (pinkCurrentEventType != PINK_EVENT_TOUCH &&
+        pinkCurrentEventType != PINK_EVENT_TOUCH_DOWN) {
+      return PINK_API_DENIED;
+    }
+    pinkFileAuthorizationIntent = operations;
+    return PINK_API_OK;
+  }
+  if (path[0] != '/') {
+    return PINK_API_ERROR;
+  }
+
+  char workspace[288] = "/misc/agentfiesta/";
+  size_t workspaceLength = strlen(workspace);
+  const char *name = strrchr(activeAppPath, '/');
+  name = name != nullptr ? name + 1U : activeAppPath;
+  const char *extension = strrchr(name, '.');
+  const size_t nameLength = extension != nullptr
+                                ? static_cast<size_t>(extension - name)
+                                : strlen(name);
+  bool safeName = nameLength > 0U &&
+                  workspaceLength + nameLength + 1U < sizeof(workspace);
+  for (size_t i = 0; safeName && i < nameLength; i++) {
+    const char value = name[i];
+    safeName = (value >= 'a' && value <= 'z') ||
+               (value >= 'A' && value <= 'Z') ||
+               (value >= '0' && value <= '9') || value == '_' || value == '-';
+  }
+  if (safeName) {
+    memcpy(workspace + workspaceLength, name, nameLength);
+    workspaceLength += nameLength;
+    workspace[workspaceLength++] = '/';
+    workspace[workspaceLength] = '\0';
+  }
+  const bool ownedWorkspace =
+      safeName && strncmp(path, workspace, workspaceLength) == 0 &&
+      path[workspaceLength] != '\0';
+
+  bool explicitExport = false;
+  if (!ownedWorkspace &&
+      (pinkFileAuthorizationIntent & operations) == operations &&
+      strncmp(path, "/bin/js/", 8U) == 0) {
+    const char *fileName = path + 8U;
+    const char *dot = strrchr(fileName, '.');
+    explicitExport = fileName[0] != '\0' && dot != nullptr &&
+                     strcmp(dot, ".js") == 0;
+    for (const char *at = fileName; explicitExport && at < dot; at++) {
+      const char value = *at;
+      explicitExport = (value >= 'a' && value <= 'z') ||
+                       (value >= '0' && value <= '9') || value == '-';
+    }
+    // An outside-workspace attempt consumes the one-shot gesture regardless
+    // of whether its destination passes validation.
+    pinkFileAuthorizationIntent = 0;
+  }
+  if (!ownedWorkspace && !explicitExport) {
+    return PINK_API_DENIED;
+  }
+  if ((operations & PINK_AUTHORIZE_FILE_WRITE) != 0U &&
+      !appApiAuthorizeCapability(AppApiAgentCapability::FileWrite, path)) {
+    return PINK_API_ERROR;
+  }
+  if ((operations & PINK_AUTHORIZE_FILE_DELETE) != 0U &&
+      !appApiAuthorizeCapability(AppApiAgentCapability::FileDelete, path)) {
+    return PINK_API_ERROR;
+  }
+  return PINK_API_OK;
+}
+
+int8_t hostLaunchPocketInkJsReturnable(const char *sourcePath,
+                                       uint8_t *ownedState,
+                                       size_t stateSize) {
+  return returnablePocketInkJsQueue(activeAppPath, sourcePath, ownedState,
+                                    stateSize)
+             ? PINK_API_OK
+             : PINK_API_ERROR;
+}
+
+const PinkAgentFiestaApi pinkAgentFiestaApi = {
+    PINK_AGENTFIESTA_API_VERSION,
+    0,
+    sizeof(PinkAgentFiestaApi),
+    PINK_AGENTFIESTA_MAX_VOICE_MS,
+    hostAgentSessionStart,
+    hostAgentSessionStop,
+    hostAgentSessionConfigure,
+    hostAgentSubmitText,
+    hostAgentSubmitWav,
+    hostAgentUpdate,
+    hostAgentPollEvent,
+    hostAgentCancel,
+    hostAgentToolResult,
+    hostAgentDrawFeed,
+    hostAgentScrollFeed,
+    hostAgentHistoryLimit,
+    hostAgentSetHistoryLimit,
+    hostAgentApprovalEnabled,
+    hostAgentSetApprovalEnabled,
+    hostAgentSnapshotSize,
+    hostAgentSnapshotSave,
+    hostAgentSnapshotRestore,
+    hostAgentHandoff,
+    hostAgentRegisterTool,
+    hostAgentPendingToolName,
+};
+
 uint32_t pinkFeatureFlags() {
   uint32_t flags = PINK_FEATURE_READ_FILES | PINK_FEATURE_WRITE_FILES |
                    PINK_FEATURE_DELETE_FILES | PINK_FEATURE_AUDIO_CAPTURE |
-                   PINK_FEATURE_GPIO | PINK_FEATURE_SENSORS;
+                   PINK_FEATURE_GPIO | PINK_FEATURE_SENSORS |
+                   PINK_FEATURE_RETURNABLE_JS;
 #if ENABLE_NETWORK_APPS
-  flags |= PINK_FEATURE_WIFI_SCAN;
+  flags |= PINK_FEATURE_WIFI_SCAN | PINK_FEATURE_AGENTFIESTA;
 #endif
   return flags;
 }
@@ -954,6 +1344,12 @@ PinkHost makeHost() {
   host.drawVectorString = hostDrawVectorString;
   host.drawImagePathCached = hostDrawImagePathCached;
   host.drawImageBufferCached = hostDrawImageBufferCached;
+  host.agentFiesta = &pinkAgentFiestaApi;
+  host.authorizeFile = hostAuthorizeFile;
+  host.launchPocketInkJsReturnable = hostLaunchPocketInkJsReturnable;
+  host.fileList = hostFileList;
+  host.drawSpritePath = hostDrawSpritePath;
+  host.drawSpriteBuffer = hostDrawSpriteBuffer;
   return host;
 }
 
@@ -966,6 +1362,7 @@ public:
     copyText(appId, sizeof(appId), entry.id);
     copyText(activeAppPath, sizeof(activeAppPath), path);
     copyText(activeAppId, sizeof(activeAppId), appId);
+    pinkFileAuthorizationIntent = 0;
     for (size_t i = 0; i < sizeof(memory); i++) {
       memory[i] = 0;
     }
@@ -1052,6 +1449,8 @@ public:
 
   bool hasActiveSession() const override { return false; }
 
+  bool loaded() const { return entry != nullptr; }
+
   AppEventResult handleButton(uint8_t type) {
     PinkEvent event;
     event.type = type;
@@ -1121,6 +1520,7 @@ private:
     }
     releasePinkSleepGuards();
     pinkImageRenderCache.clear();
+    agentfiesta::stop(activeAppId);
     if (appApiSessionMatches(activeAppId)) {
       appApiEndSession();
     }
@@ -1132,6 +1532,7 @@ private:
     activeAppPath[0] = '\0';
     activeMemory = nullptr;
     activeMemorySize = 0;
+    pinkFileAuthorizationIntent = 0;
     if (activePinkApp == this) {
       activePinkApp = nullptr;
     }
@@ -1197,12 +1598,13 @@ private:
     loadedPeriodicSchedule = header.periodicSchedule;
     entry = reinterpret_cast<PinkEntryPoint>(image.entryPoint);
     if (debugLoggingEnabled()) {
-      Serial.printf("[pink] loaded %s code=%p codeSize=%lu rodata=%p rodataSize=%lu entry=%p relocs=%lu\n",
-                    path, image.code,
-                    static_cast<unsigned long>(header.codeSize), image.rodata,
-                    static_cast<unsigned long>(header.rodataSize),
-                    reinterpret_cast<void *>(entry),
-                    static_cast<unsigned long>(header.relocationCount));
+      esp_rom_printf(
+          "[pink] loaded %s code=%p codeSize=%lu rodata=%p rodataSize=%lu "
+          "entry=%p relocs=%lu\n",
+          path, image.code, static_cast<unsigned long>(header.codeSize),
+          image.rodata, static_cast<unsigned long>(header.rodataSize),
+          reinterpret_cast<void *>(entry),
+          static_cast<unsigned long>(header.relocationCount));
     }
     status[0] = '\0';
   }
@@ -1227,15 +1629,18 @@ private:
     if (debugLoggingEnabled() &&
         (event.type == PINK_EVENT_START || event.type == PINK_EVENT_DRAW ||
          event.type == PINK_EVENT_STOP)) {
-      Serial.printf("[pink] event %u entry=%p\n",
-                    static_cast<unsigned>(event.type),
-                    reinterpret_cast<void *>(entry));
+      esp_rom_printf("[pink] event %u entry=%p\n",
+                     static_cast<unsigned>(event.type),
+                     reinterpret_cast<void *>(entry));
     }
     pinkDrawTarget = gfx;
     event.eventSize = sizeof(PinkEvent);
     event.featureFlags = pinkFeatureFlags();
     PinkHost host = makeHost();
+    const uint8_t previousEventType = pinkCurrentEventType;
+    pinkCurrentEventType = event.type;
     entry(&host, &event);
+    pinkCurrentEventType = previousEventType;
     pinkDrawTarget = nullptr;
   }
 };
@@ -1315,7 +1720,11 @@ bool populatePinkDefinition(const PinkExecutableEntry &entry, AppDefinition *out
   }
   copyText(id, idSize, entry.id);
   copyText(label, labelSize, entry.label);
-  copyIcon(icon, iconSize, label);
+  if (entry.icon != nullptr && entry.icon[0] != '\0') {
+    copyText(icon, iconSize, entry.icon);
+  } else {
+    copyIcon(icon, iconSize, label);
+  }
   *out = AppDefinition{};
   out->id = id;
   out->label = label;
@@ -1323,11 +1732,124 @@ bool populatePinkDefinition(const PinkExecutableEntry &entry, AppDefinition *out
   out->category = entry.category;
   out->runtime = pinkExecutableRuntime();
   out->visible = visiblePinkApp;
+  out->iconFont = entry.iconFont;
   out->behavior = pinkBehavior();
   return true;
 }
 
 } // namespace
+
+bool returnablePocketInkJsQueue(const char *ownerPath, const char *sourcePath,
+                                uint8_t *ownedState, size_t stateSize) {
+  if (pendingReturnableJs != nullptr || ownedState == nullptr ||
+      stateSize == 0 || stateSize > kReturnableJsMaxStateBytes) {
+    return false;
+  }
+  void *memory = psram::allocate(sizeof(ReturnableJsState));
+  if (memory == nullptr) {
+    return false;
+  }
+  ReturnableJsState *prepared = new (memory) ReturnableJsState();
+  if (!copyReturnableJsPath(prepared->ownerPath, sizeof(prepared->ownerPath),
+                            ownerPath) ||
+      !copyReturnableJsPath(prepared->sourcePath,
+                            sizeof(prepared->sourcePath), sourcePath)) {
+    prepared->~ReturnableJsState();
+    psram::release(prepared);
+    return false;
+  }
+  prepared->state = ownedState;
+  prepared->stateSize = stateSize;
+  pendingReturnableJs = prepared;
+  return true;
+}
+
+bool returnablePocketInkJsRequested() {
+  return pendingReturnableJs != nullptr && !pendingReturnableJs->launched;
+}
+
+bool returnablePocketInkJsTakeSource(char *out, size_t outSize) {
+  if (!returnablePocketInkJsRequested() || out == nullptr || outSize == 0) {
+    return false;
+  }
+  const size_t length = strlen(pendingReturnableJs->sourcePath);
+  if (length >= outSize) {
+    return false;
+  }
+  memcpy(out, pendingReturnableJs->sourcePath, length + 1U);
+  pendingReturnableJs->launched = true;
+  return true;
+}
+
+bool returnablePocketInkJsReturnPending() {
+  return pendingReturnableJs != nullptr && pendingReturnableJs->launched;
+}
+
+bool returnablePocketInkJsOwnerPath(char *out, size_t outSize) {
+  if (pendingReturnableJs == nullptr || out == nullptr || outSize == 0) {
+    return false;
+  }
+  const size_t length = strlen(pendingReturnableJs->ownerPath);
+  if (length >= outSize) {
+    return false;
+  }
+  memcpy(out, pendingReturnableJs->ownerPath, length + 1U);
+  return true;
+}
+
+bool returnablePocketInkJsState(const uint8_t *&data, size_t &size) {
+  data = nullptr;
+  size = 0;
+  if (pendingReturnableJs == nullptr || pendingReturnableJs->state == nullptr) {
+    return false;
+  }
+  data = pendingReturnableJs->state;
+  size = pendingReturnableJs->stateSize;
+  return true;
+}
+
+bool returnablePocketInkJsSetError(const char *error) {
+  if (pendingReturnableJs == nullptr || pendingReturnableJs->state == nullptr ||
+      error == nullptr || error[0] == '\0') {
+    return false;
+  }
+  if (pendingReturnableJs->errorSet) {
+    return true;
+  }
+  if (pendingReturnableJs->stateSize >
+      kReturnableJsMaxStateBytes - sizeof(ReturnableJsResultTrailer)) {
+    return false;
+  }
+  const size_t nextSize =
+      pendingReturnableJs->stateSize + sizeof(ReturnableJsResultTrailer);
+  uint8_t *next = static_cast<uint8_t *>(psram::allocate(nextSize));
+  if (next == nullptr) {
+    return false;
+  }
+  memcpy(next, pendingReturnableJs->state, pendingReturnableJs->stateSize);
+  ReturnableJsResultTrailer trailer;
+  const size_t length = strlen(error);
+  const size_t copied = length < sizeof(trailer.error) - 1U
+                            ? length
+                            : sizeof(trailer.error) - 1U;
+  memcpy(trailer.error, error, copied);
+  memcpy(next + pendingReturnableJs->stateSize, &trailer, sizeof(trailer));
+  psram::release(pendingReturnableJs->state);
+  pendingReturnableJs->state = next;
+  pendingReturnableJs->stateSize = nextSize;
+  pendingReturnableJs->errorSet = true;
+  return true;
+}
+
+void returnablePocketInkJsFinish() {
+  if (pendingReturnableJs == nullptr) {
+    return;
+  }
+  psram::release(pendingReturnableJs->state);
+  pendingReturnableJs->~ReturnableJsState();
+  psram::release(pendingReturnableJs);
+  pendingReturnableJs = nullptr;
+}
 
 bool pinkExecutableHeaderSupported(const PinkExecutableHeader &header) {
   return header.magic == PINK_EXECUTABLE_MAGIC &&
@@ -1558,6 +2080,8 @@ bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
 
   copyLabel(label, labelSize, filenameForPath(path));
   copyIcon(icon, iconSize, label);
+  bool iconFont = false;
+  readAppMetadata(path, label, labelSize, icon, iconSize, iconFont);
   snprintf(id, idSize, "pink:%08lx",
            static_cast<unsigned long>(hashPath(path)));
 
@@ -1565,6 +2089,8 @@ bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
   entry.id = id;
   entry.path = const_cast<char *>(path);
   entry.label = label;
+  entry.icon = icon;
+  entry.iconFont = iconFont;
   entry.category = MENU_APPS;
   pinkApp.launch(entry);
 
@@ -1575,7 +2101,23 @@ bool pinkExecutableLaunchPath(const char *path, AppDefinition *out, char *id,
   out->category = MENU_APPS;
   out->runtime = pinkExecutableRuntime();
   out->visible = visiblePinkApp;
+  out->iconFont = iconFont;
   out->behavior = pinkBehavior();
+  return true;
+}
+
+bool pinkExecutableLaunchPathChecked(const char *path, AppDefinition *out,
+                                     char *id, size_t idSize, char *label,
+                                     size_t labelSize, char *icon,
+                                     size_t iconSize) {
+  if (!pinkExecutableLaunchPath(path, out, id, idSize, label, labelSize, icon,
+                                iconSize)) {
+    return false;
+  }
+  if (!pinkApp.loaded()) {
+    pinkExecutableStop();
+    return false;
+  }
   return true;
 }
 
@@ -1593,6 +2135,12 @@ bool pinkExecutableLaunchById(const char *id) {
 }
 
 void pinkExecutableStop() { pinkApp.stop(); }
+
+void pinkExecutableRestoreState(const uint8_t *data, size_t size) {
+  if (data != nullptr && size > 0U) {
+    pinkApp.restoreContext(data, size);
+  }
+}
 
 size_t pinkExecutablePeriodicTaskCount() {
   size_t count = 0;

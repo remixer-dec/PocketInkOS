@@ -117,6 +117,24 @@ AppApiStatus abiStatus(const ServiceResult &result) {
   return AppApiStatus::Error;
 }
 
+PermissionKind permissionKind(AppApiAgentCapability capability) {
+  switch (capability) {
+  case AppApiAgentCapability::FileWrite:
+    return PermissionKind::FileWrite;
+  case AppApiAgentCapability::FileDelete:
+    return PermissionKind::FileDelete;
+  case AppApiAgentCapability::Gpio:
+    return PermissionKind::Gpio;
+  case AppApiAgentCapability::WifiScan:
+    return PermissionKind::WifiScan;
+  case AppApiAgentCapability::SystemConfig:
+    return PermissionKind::SystemConfig;
+  case AppApiAgentCapability::None:
+    return PermissionKind::AgentAction;
+  }
+  return PermissionKind::AgentAction;
+}
+
 } // namespace
 
 bool appApiBeginSession(const char *appId) {
@@ -162,6 +180,43 @@ bool appApiUpdateOnMainCore() {
                                        std::memory_order_release);
   }
   return session->modals.update();
+}
+
+AppApiStatus appApiRequestAgentAction(const char *action,
+                                      AppApiAgentCapability capability,
+                                      const char *resource) {
+  if (session == nullptr || action == nullptr || action[0] == '\0') {
+    return AppApiStatus::Error;
+  }
+  const ServiceResult preflight =
+      session->permissions.request(PermissionKind::AgentAction, action);
+  if (preflight.state != ServiceState::Ok) {
+    return abiStatus(preflight);
+  }
+  if (capability == AppApiAgentCapability::None) {
+    return AppApiStatus::Ok;
+  }
+  return session->permissions.grant(permissionKind(capability), resource)
+             ? AppApiStatus::Ok
+             : AppApiStatus::Error;
+}
+
+AppApiStatus appApiRequestCapability(AppApiAgentCapability capability,
+                                     const char *resource) {
+  if (session == nullptr) {
+    return AppApiStatus::Error;
+  }
+  if (capability == AppApiAgentCapability::None) {
+    return AppApiStatus::Ok;
+  }
+  return abiStatus(
+      session->permissions.request(permissionKind(capability), resource));
+}
+
+bool appApiAuthorizeCapability(AppApiAgentCapability capability,
+                               const char *resource) {
+  return session != nullptr && capability != AppApiAgentCapability::None &&
+         session->permissions.grant(permissionKind(capability), resource);
 }
 
 bool appApiOverlayActive() {

@@ -5,6 +5,7 @@
 #include "shell/shell_menu_layout.h"
 #include "shell/shell_context.h"
 #include "sys/services/battery_monitor.h"
+#include "sys/agentfiesta/agentfiesta.h"
 #include "sys/ext_app_api/app_api.h"
 #include "sys/services/device_clock.h"
 #include "sys/services/environment_monitor.h"
@@ -94,6 +95,10 @@ void ShellController::storeActiveDefinition(const AppDefinition &definition) {
 
 void ShellController::switchTo(Screen next, ActiveApp *nextApp,
                                const AppDefinition *nextDefinition) {
+  if (filesLaunchReturnOwner != nullptr &&
+      activeApp == filesLaunchReturnOwner && nextApp != activeApp) {
+    filesLaunchReturnOwner = nullptr;
+  }
   const bool sameDefinition =
       sameAppDefinition(activeDefinition, nextDefinition);
   const AppDefinition *previousDefinition = activeDefinition;
@@ -229,8 +234,16 @@ void ShellController::handleMenuButton() {
     launchMenuButtonApp();
     return;
   }
+  if (activeApp == PocketInkJSAppRuntime() &&
+      returnablePocketInkJsReturnPending()) {
+    returnFromReturnablePocketInkJs();
+    return;
+  }
   if (activeDefinition != nullptr &&
       handleAppEvent(activeDefinition->behavior.onMenu)) {
+    return;
+  }
+  if (returnToFilesAfterLaunch()) {
     return;
   }
   if (textInput.toggleCaps(screen)) {
@@ -273,6 +286,11 @@ void ShellController::handleMenuLongButton() {
     return;
   }
   if (confirmQuit) {
+    return;
+  }
+  if (activeApp == PocketInkJSAppRuntime() &&
+      returnablePocketInkJsReturnPending()) {
+    returnFromReturnablePocketInkJs();
     return;
   }
   if (activeDefinition != nullptr &&
@@ -551,6 +569,62 @@ bool ShellController::handlePendingFilesPinkLaunch() {
   return true;
 }
 
+bool ShellController::launchPendingReturnablePocketInkJs() {
+  if (!returnablePocketInkJsRequested()) {
+    return false;
+  }
+  char path[288] = {};
+  AppCatalogEntry app;
+  if (!returnablePocketInkJsTakeSource(path, sizeof(path))) {
+    returnablePocketInkJsFinish();
+    dirty = true;
+    return true;
+  }
+
+  // The opaque state is already in PSRAM, so release the owner before the VM
+  // asks for its workspace. A failed launch immediately reconstructs it.
+  pinkExecutableStop();
+  char launchError[120] = {};
+  if (!PocketInkJSAppLaunchTestPath(path, &app.definition, app.id,
+                                    sizeof(app.id), app.label,
+                                    sizeof(app.label), app.icon,
+                                    sizeof(app.icon), launchError,
+                                    sizeof(launchError))) {
+    returnablePocketInkJsSetError(
+        launchError[0] != '\0' ? launchError : "Test failed");
+    returnFromReturnablePocketInkJs();
+    dirty = true;
+    return true;
+  }
+  switchTo(SCREEN_APP, app.definition.runtime, &app.definition);
+  return true;
+}
+
+bool ShellController::returnFromReturnablePocketInkJs() {
+  char path[288] = {};
+  const uint8_t *state = nullptr;
+  size_t stateSize = 0;
+  if (!returnablePocketInkJsOwnerPath(path, sizeof(path)) ||
+      !returnablePocketInkJsState(state, stateSize)) {
+    returnablePocketInkJsFinish();
+    return false;
+  }
+
+  PocketInkJSAppStop();
+  AppCatalogEntry app;
+  if (!pinkExecutableLaunchPathChecked(
+          path, &app.definition, app.id, sizeof(app.id), app.label,
+          sizeof(app.label), app.icon, sizeof(app.icon))) {
+    returnablePocketInkJsFinish();
+    return false;
+  }
+  switchTo(SCREEN_APP, app.definition.runtime, &app.definition);
+  pinkExecutableRestoreState(state, stateSize);
+  returnablePocketInkJsFinish();
+  dirty = true;
+  return true;
+}
+
 void ShellController::drawActiveScreen() {
   if (activeApp != nullptr) {
     activeApp->draw(display);
@@ -773,6 +847,9 @@ bool ShellController::updateActiveApp() {
   if (applyAppEventResult(activeApp->consumePendingEvent())) {
     handled = true;
   }
+  if (launchPendingReturnablePocketInkJs()) {
+    return true;
+  }
   const bool overlayActive = appApiOverlayActive();
   if (overlayActive != appOverlayVisible) {
     appOverlayVisible = overlayActive;
@@ -780,9 +857,13 @@ bool ShellController::updateActiveApp() {
     handled = true;
   }
   char requestedApp[24];
-  if (appApiTakeOpenAppRequest(requestedApp, sizeof(requestedApp)) &&
-      launchAppById(requestedApp)) {
-    handled = true;
+  if (appApiTakeOpenAppRequest(requestedApp, sizeof(requestedApp))) {
+    if (launchAppById(requestedApp)) {
+      handled = true;
+    } else {
+      agentfiesta::failHandoff("Agent handoff target is not installed");
+      dirty = true;
+    }
   }
   return handled;
 }

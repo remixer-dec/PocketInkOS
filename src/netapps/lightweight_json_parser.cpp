@@ -72,7 +72,9 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
         if (c == 'u') {
           appendSanitized(token, sizeof(token), tokenLen, '?');
           unicodeRemaining = 4;
-        } else if (c == 'n' || c == 'r' || c == 't') {
+        } else if (c == 'n') {
+          appendSanitized(token, sizeof(token), tokenLen, '\n');
+        } else if (c == 'r' || c == 't') {
           appendSanitized(token, sizeof(token), tokenLen, ' ');
         } else {
           appendSanitized(token, sizeof(token), tokenLen, c);
@@ -260,7 +262,7 @@ void LightweightJsonParser::appendSanitized(char *out, int outSize, int &len,
     return;
   }
   unsigned char byte = static_cast<unsigned char>(value);
-  if (byte < 32) {
+  if (value != '\n' && byte < 32) {
     value = ' ';
   } else if (byte >= 127) {
     value = '?';

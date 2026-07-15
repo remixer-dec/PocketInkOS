@@ -21,6 +21,10 @@ const char *permissionTitle(PermissionKind kind) {
     return "ALLOW GPIO?";
   case PermissionKind::WifiScan:
     return "SCAN WI-FI?";
+  case PermissionKind::AgentAction:
+    return "AGENT ACTION?";
+  case PermissionKind::SystemConfig:
+    return "CHANGE SETTING?";
   }
   return "ALLOW?";
 }
@@ -74,6 +78,22 @@ ServiceResult PermissionService::request(PermissionKind kind,
     hasPrompt = true;
   }
   return ServiceResult::pending();
+}
+
+bool PermissionService::grant(PermissionKind kind, const char *resource) {
+  const char *key = resource != nullptr ? resource : "";
+  const Record *existing = find(kind, key);
+  if (existing != nullptr) {
+    return existing->decision == PermissionDecision::Granted;
+  }
+  if (storageExhausted || !ensureCapacity()) {
+    return false;
+  }
+  Record &record = records[recordCount++];
+  record.kind = kind;
+  record.decision = PermissionDecision::Granted;
+  copyText(record.resource, sizeof(record.resource), key);
+  return true;
 }
 
 bool PermissionService::promptActive() const { return hasPrompt; }
@@ -137,7 +157,9 @@ void PermissionService::drawPrompt(Adafruit_GFX &gfx,
   gfx.setTextColor(1);
   drawCentered(gfx, permissionTitle(prompt.kind), 58, 2);
   if (prompt.kind == PermissionKind::FileWrite ||
-      prompt.kind == PermissionKind::FileDelete) {
+      prompt.kind == PermissionKind::FileDelete ||
+      prompt.kind == PermissionKind::SystemConfig ||
+      prompt.kind == PermissionKind::AgentAction) {
     const char *name = strrchr(prompt.resource, '/');
     name = name != nullptr ? name + 1 : prompt.resource;
     const size_t length = strlen(name);

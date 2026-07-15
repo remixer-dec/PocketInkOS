@@ -57,6 +57,7 @@ constexpr size_t kPocketInkJSPsramReserveBytes = 512U * 1024U;
 constexpr size_t kPocketInkJSAllocationHeadroomBytes = 32U * 1024U;
 constexpr size_t kPocketInkJSMaxSourceBytes = 96U * 1024U;
 constexpr size_t kPocketInkJSMaxHttpBytes = 64U * 1024U;
+constexpr size_t kPocketInkJSModulePathCapacity = 256;
 constexpr uint32_t kPocketInkJSHttpTimeoutMs = 8000;
 constexpr uint8_t kPocketInkJSMaxTimers = 16;
 constexpr size_t kPocketInkJSJobsPerUpdate = 32;
@@ -69,6 +70,111 @@ constexpr UBaseType_t kPocketInkJSExecutorPriority = 1;
 constexpr BaseType_t kPocketInkJSExecutorCore = 1;
 constexpr size_t kIdCapacity = 20;
 constexpr size_t kStatusCapacity = 96;
+
+bool resolvePocketInkJSModule(const char *importer, const char *request,
+                              char *out, size_t capacity, void *) {
+  if (importer == nullptr || request == nullptr || out == nullptr ||
+      capacity < 5 || capacity > kPocketInkJSModulePathCapacity ||
+      (request[0] != '/' &&
+       !(request[0] == '.' && request[1] == '/') &&
+       !(request[0] == '.' && request[1] == '.' && request[2] == '/'))) {
+    return false;
+  }
+
+  char combined[kPocketInkJSModulePathCapacity];
+  int combinedLength = 0;
+  if (request[0] == '/') {
+    combinedLength = snprintf(combined, sizeof(combined), "%s", request);
+  } else {
+    const char *slash = strrchr(importer, '/');
+    const size_t directory =
+        slash != nullptr ? static_cast<size_t>(slash - importer) : 0;
+    combinedLength = snprintf(combined, sizeof(combined), "%.*s/%s",
+                              static_cast<int>(directory), importer, request);
+  }
+  if (combinedLength <= 0 ||
+      static_cast<size_t>(combinedLength) >= sizeof(combined)) {
+    return false;
+  }
+
+  size_t written = 0;
+  out[written++] = '/';
+  size_t at = combined[0] == '/' ? 1U : 0U;
+  while (combined[at] != '\0') {
+    while (combined[at] == '/')
+      at++;
+    const size_t begin = at;
+    while (combined[at] != '\0' && combined[at] != '/')
+      at++;
+    const size_t length = at - begin;
+    if (length == 0 || (length == 1 && combined[begin] == '.'))
+      continue;
+    if (length == 12 &&
+        memcmp(combined + begin, "node_modules", 12) == 0) {
+      return false;
+    }
+    if (length == 2 && combined[begin] == '.' &&
+        combined[begin + 1U] == '.') {
+      if (written > 1) {
+        written--;
+        while (written > 1 && out[written - 1U] != '/')
+          written--;
+      }
+      continue;
+    }
+    if (written > 1 && out[written - 1U] != '/') {
+      if (written + 1U >= capacity)
+        return false;
+      out[written++] = '/';
+    }
+    if (length >= capacity - written)
+      return false;
+    memcpy(out + written, combined + begin, length);
+    written += length;
+  }
+
+  size_t lastSlash = 0;
+  size_t lastDot = SIZE_MAX;
+  for (size_t i = 0; i < written; i++) {
+    if (out[i] == '/')
+      lastSlash = i;
+    else if (out[i] == '.')
+      lastDot = i;
+  }
+  if (lastDot == SIZE_MAX || lastDot < lastSlash) {
+    if (written + 3U >= capacity)
+      return false;
+    memcpy(out + written, ".js", 3);
+    written += 3U;
+  } else if (written - lastDot != 3U || out[lastDot + 1U] != 'j' ||
+             out[lastDot + 2U] != 's') {
+    return false;
+  }
+  out[written] = '\0';
+  return true;
+}
+
+bool readPocketInkJSModule(const char *path, char *output,
+                           size_t *inOutBytes, void *) {
+  if (path == nullptr || inOutBytes == nullptr)
+    return false;
+  File file = openProviderPath("sd", path);
+  if (!file || file.isDirectory())
+    return false;
+  const size_t bytes = file.size();
+  if (output == nullptr) {
+    *inOutBytes = bytes;
+    return true;
+  }
+  if (*inOutBytes < bytes)
+    return false;
+  if (bytes > 0 &&
+      file.read(reinterpret_cast<uint8_t *>(output), bytes) != bytes) {
+    return false;
+  }
+  *inOutBytes = bytes;
+  return true;
+}
 
 ImageRenderCachePool PocketInkJSImageCache;
 
@@ -806,6 +912,147 @@ PocketInkJS::Value apiStatusValue(PocketInkJS::Runtime &runtime, AppApiStatus st
   return runtime.number(static_cast<int8_t>(status));
 }
 
+bool spritesheetInteger(PocketInkJS::Runtime &runtime,
+                        PocketInkJS::Value value, uint16_t &out) {
+  if (!runtime.isNumber(value)) {
+    return false;
+  }
+  const double number = runtime.toNumber(value);
+  if (!std::isfinite(number) || number <= 0.0 || number > UINT16_MAX ||
+      std::floor(number) != number) {
+    return false;
+  }
+  out = static_cast<uint16_t>(number);
+  return true;
+}
+
+bool copyObjectProperties(PocketInkJS::Runtime &runtime,
+                          PocketInkJS::Value source,
+                          PocketInkJS::Value destination) {
+  const size_t count = runtime.objectPropertyCount(source);
+  for (size_t i = 0; i < count; i++) {
+    PocketInkJS::Value key;
+    PocketInkJS::Value value;
+    if (!runtime.objectPropertyAt(source, i, &key, &value)) {
+      return false;
+    }
+    const PocketInkJS::StringView name = runtime.stringView(key);
+    if (!runtime.objectSet(destination, name.data, name.size, value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+PocketInkJS::Value nativeUiDefineSpritesheet(PocketInkJS::Runtime &runtime,
+                                              const PocketInkJS::Value *args,
+                                              size_t argc, void *) {
+  if (argc != 4U) {
+    return runtime.fail(
+        "ui.defineSpritesheet expects width, height, frame count, and row count");
+  }
+  uint16_t frameWidth = 0;
+  uint16_t frameHeight = 0;
+  uint16_t frameCount = 0;
+  uint16_t rowCount = 0;
+  if (!spritesheetInteger(runtime, args[0], frameWidth) ||
+      !spritesheetInteger(runtime, args[1], frameHeight) ||
+      !spritesheetInteger(runtime, args[2], frameCount) ||
+      !spritesheetInteger(runtime, args[3], rowCount)) {
+    return runtime.fail("invalid spritesheet dimensions");
+  }
+  const PinkSpritesheet sheet = PinkSpritesheet::defineSpritesheet(
+      frameWidth, frameHeight, frameCount, rowCount);
+  if (sheet.columnCount() == 0U) {
+    return runtime.fail("invalid spritesheet layout");
+  }
+
+  PocketInkJS::Value result = runtime.makeObject();
+  const PocketInkJS::Value ui = runtime.get("ui");
+  const PocketInkJS::Value spriteAt = runtime.objectGet(ui, "__spriteAt");
+  if (runtime.isUndefined(result) || runtime.isUndefined(spriteAt) ||
+      !runtime.objectSet(result, "frameWidth", runtime.number(frameWidth)) ||
+      !runtime.objectSet(result, "frameHeight", runtime.number(frameHeight)) ||
+      !runtime.objectSet(result, "frameCount", runtime.number(frameCount)) ||
+      !runtime.objectSet(result, "rowCount", runtime.number(rowCount)) ||
+      !runtime.objectSet(result, "columnCount",
+                         runtime.number(sheet.columnCount())) ||
+      !runtime.objectSet(result, "spriteAt", spriteAt)) {
+    return runtime.undefined();
+  }
+  return result;
+}
+
+PocketInkJS::Value nativeUiSpriteAt(PocketInkJS::Runtime &runtime,
+                                    PocketInkJS::Value receiver,
+                                    const PocketInkJS::Value *args,
+                                    size_t argc, void *) {
+  if ((argc != 2U && argc != 3U) ||
+      runtime.typeOf(receiver) != PocketInkJS::ValueType::Object) {
+    return runtime.fail("spriteAt expects row, column, and optional options");
+  }
+  uint16_t frameWidth = 0;
+  uint16_t frameHeight = 0;
+  uint16_t frameCount = 0;
+  uint16_t rowCount = 0;
+  uint16_t row = 0;
+  uint16_t column = 0;
+  if (!spritesheetInteger(runtime, runtime.objectGet(receiver, "frameWidth"),
+                          frameWidth) ||
+      !spritesheetInteger(runtime, runtime.objectGet(receiver, "frameHeight"),
+                          frameHeight) ||
+      !spritesheetInteger(runtime, runtime.objectGet(receiver, "frameCount"),
+                          frameCount) ||
+      !spritesheetInteger(runtime, runtime.objectGet(receiver, "rowCount"),
+                          rowCount) ||
+      !runtime.isNumber(args[0]) || !runtime.isNumber(args[1]) ||
+      !std::isfinite(runtime.toNumber(args[0])) ||
+      !std::isfinite(runtime.toNumber(args[1])) ||
+      runtime.toNumber(args[0]) < 0.0 || runtime.toNumber(args[1]) < 0.0 ||
+      runtime.toNumber(args[0]) > UINT16_MAX ||
+      runtime.toNumber(args[1]) > UINT16_MAX ||
+      std::floor(runtime.toNumber(args[0])) != runtime.toNumber(args[0]) ||
+      std::floor(runtime.toNumber(args[1])) != runtime.toNumber(args[1])) {
+    return runtime.fail("invalid sprite coordinates");
+  }
+  row = static_cast<uint16_t>(runtime.toNumber(args[0]));
+  column = static_cast<uint16_t>(runtime.toNumber(args[1]));
+  const PinkSpritesheet sheet = PinkSpritesheet::defineSpritesheet(
+      frameWidth, frameHeight, frameCount, rowCount);
+  const PinkSpriteFrame frame = sheet.spriteAt(row, column);
+  if (!frame.valid()) {
+    return runtime.fail("sprite coordinates are outside the sheet");
+  }
+  if (argc == 3U &&
+      runtime.typeOf(args[2]) != PocketInkJS::ValueType::Object &&
+      runtime.typeOf(args[2]) != PocketInkJS::ValueType::Undefined) {
+    return runtime.fail("sprite options must be an object");
+  }
+
+  PocketInkJS::Value result = runtime.makeObject();
+  if (runtime.isUndefined(result) ||
+      (argc == 3U && runtime.typeOf(args[2]) == PocketInkJS::ValueType::Object &&
+       !copyObjectProperties(runtime, args[2], result))) {
+    return runtime.undefined();
+  }
+  if (runtime.isUndefined(runtime.objectGet(result, "cache")) &&
+      !runtime.objectSet(
+          result, "cache",
+          runtime.number(frameCount < 32U ? frameCount : 32U))) {
+    return runtime.undefined();
+  }
+  if (!runtime.objectSet(result, "sourceX", runtime.number(frame.x)) ||
+      !runtime.objectSet(result, "sourceY", runtime.number(frame.y)) ||
+      !runtime.objectSet(result, "sourceWidth", runtime.number(frame.width)) ||
+      !runtime.objectSet(result, "sourceHeight", runtime.number(frame.height)) ||
+      !runtime.objectSet(result, "width", runtime.number(frame.width)) ||
+      !runtime.objectSet(result, "height", runtime.number(frame.height)) ||
+      !runtime.objectSet(result, "scaleToFit", runtime.boolean(false))) {
+    return runtime.undefined();
+  }
+  return result;
+}
+
 double imageOptionNumber(PocketInkJS::Runtime &runtime, PocketInkJS::Value options,
                          const char *key, double fallback) {
   if (runtime.typeOf(options) != PocketInkJS::ValueType::Object) {
@@ -820,7 +1067,9 @@ double imageOptionNumber(PocketInkJS::Runtime &runtime, PocketInkJS::Value optio
 bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int16_t &x,
                   int16_t &y, int16_t &w, int16_t &h, uint8_t &dither,
                   bool &fit, ImageTransform &transform,
-                  uint8_t *cacheEntries = nullptr) {
+                  uint8_t *cacheEntries = nullptr,
+                  ImageSourceRect *source = nullptr,
+                  bool *hasSource = nullptr) {
   if (runtime.typeOf(options) != PocketInkJS::ValueType::Undefined &&
       runtime.typeOf(options) != PocketInkJS::ValueType::Object) {
     return false;
@@ -832,6 +1081,9 @@ bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int
   dither = toU8(imageOptionNumber(runtime, options, "dither", 1));
   if (cacheEntries != nullptr) {
     *cacheEntries = 0;
+  }
+  if (hasSource != nullptr) {
+    *hasSource = false;
   }
   if (runtime.typeOf(options) == PocketInkJS::ValueType::Object) {
     const PocketInkJS::Value fitValue = runtime.objectGet(options, "scaleToFit");
@@ -881,6 +1133,47 @@ bool imageOptions(PocketInkJS::Runtime &runtime, PocketInkJS::Value options, int
       transform.ty = static_cast<float>(
           imageOptionNumber(runtime, options, "ty", transform.ty));
     }
+
+    if (source != nullptr && hasSource != nullptr) {
+      const char *keys[] = {"sourceX", "sourceY", "sourceWidth",
+                            "sourceHeight"};
+      double values[4] = {};
+      bool any = false;
+      for (size_t i = 0; i < 4; i++) {
+        const PocketInkJS::Value value = runtime.objectGet(options, keys[i]);
+        if (runtime.typeOf(value) == PocketInkJS::ValueType::Undefined) {
+          continue;
+        }
+        any = true;
+        values[i] = runtime.toNumber(value);
+        if (!runtime.isNumber(value) || !std::isfinite(values[i]) ||
+            values[i] < 0.0 || values[i] > INT16_MAX ||
+            std::floor(values[i]) != values[i]) {
+          return false;
+        }
+      }
+      if (any) {
+        for (size_t i = 0; i < 4; i++) {
+          if (runtime.typeOf(runtime.objectGet(options, keys[i])) ==
+              PocketInkJS::ValueType::Undefined) {
+            return false;
+          }
+        }
+        source->x = static_cast<uint32_t>(values[0]);
+        source->y = static_cast<uint32_t>(values[1]);
+        source->width = static_cast<uint32_t>(values[2]);
+        source->height = static_cast<uint32_t>(values[3]);
+        if (source->width == 0U || source->height == 0U ||
+            source->x + source->width > INT16_MAX ||
+            source->y + source->height > INT16_MAX ||
+            w != static_cast<int16_t>(source->width) ||
+            h != static_cast<int16_t>(source->height)) {
+          return false;
+        }
+        fit = false;
+        *hasSource = true;
+      }
+    }
   } else {
     fit = true;
   }
@@ -912,8 +1205,11 @@ PocketInkJS::Value nativeUiImagePath(PocketInkJS::Runtime &runtime,
   uint8_t cacheEntries = 0;
   bool fit = true;
   ImageTransform transform;
+  ImageSourceRect source;
+  bool hasSource = false;
   if (!imageOptions(runtime, argc == 2 ? args[1] : runtime.undefined(), x, y,
-                    w, h, dither, fit, transform, &cacheEntries)) {
+                    w, h, dither, fit, transform, &cacheEntries, &source,
+                    &hasSource)) {
     return runtime.fail("invalid image options");
   }
   ImageRenderCachePool *cache = nullptr;
@@ -921,9 +1217,13 @@ PocketInkJS::Value nativeUiImagePath(PocketInkJS::Runtime &runtime,
       PocketInkJSImageCache.setCapacity(cacheEntries)) {
     cache = &PocketInkJSImageCache;
   }
-  return runtime.boolean(drawImagePathTransformed(
-      *PocketInkJSDrawTarget, "sd", path, x, y, w, h, dither, fit, transform,
-      cache));
+  return runtime.boolean(
+      hasSource
+          ? drawImagePathRegionTransformed(*PocketInkJSDrawTarget, "sd", path,
+                                           source, x, y, dither, transform,
+                                           cache)
+          : drawImagePathTransformed(*PocketInkJSDrawTarget, "sd", path, x, y,
+                                     w, h, dither, fit, transform, cache));
 }
 
 PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
@@ -949,8 +1249,11 @@ PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
   uint8_t cacheEntries = 0;
   bool fit = true;
   ImageTransform transform;
+  ImageSourceRect source;
+  bool hasSource = false;
   if (!imageOptions(runtime, argc == 3 ? args[2] : runtime.undefined(), x, y,
-                    w, h, dither, fit, transform, &cacheEntries)) {
+                    w, h, dither, fit, transform, &cacheEntries, &source,
+                    &hasSource)) {
     return runtime.fail("invalid image options");
   }
   const PocketInkJS::StringView data = runtime.stringView(args[0]);
@@ -959,9 +1262,16 @@ PocketInkJS::Value nativeUiImageBuffer(PocketInkJS::Runtime &runtime,
       PocketInkJSImageCache.setCapacity(cacheEntries)) {
     cache = &PocketInkJSImageCache;
   }
-  return runtime.boolean(drawImageBufferTransformed(
-      *PocketInkJSDrawTarget, reinterpret_cast<const uint8_t *>(data.data),
-      data.size, format, x, y, w, h, dither, fit, transform, cache));
+  return runtime.boolean(
+      hasSource
+          ? drawImageBufferRegionTransformed(
+                *PocketInkJSDrawTarget,
+                reinterpret_cast<const uint8_t *>(data.data), data.size,
+                format, source, x, y, dither, transform, cache)
+          : drawImageBufferTransformed(
+                *PocketInkJSDrawTarget,
+                reinterpret_cast<const uint8_t *>(data.data), data.size,
+                format, x, y, w, h, dither, fit, transform, cache));
 }
 
 PocketInkJS::Value nativeUiVectorPath(PocketInkJS::Runtime &runtime,
@@ -3559,6 +3869,10 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Returns: void
       //JS/ Args: color (number)
       {"ui.fillScreen", nativeUiFillScreen},
+      //JS/ Defines a uniform row-major spritesheet. Rows and columns are zero-based.
+      //JS/ Returns: object - call sheet.spriteAt(row, column, options?) for image options
+      //JS/ Args: frameWidth (number), frameHeight (number), frameCount (number), rowCount (number)
+      {"ui.defineSpritesheet", nativeUiDefineSpritesheet},
       //JS/ Draws an image loaded from a file path with optional position and transform options.
       //JS/ Returns: void
       //JS/ Args: path (string), options? (object)
@@ -3612,6 +3926,9 @@ bool PocketInkJSApp::installBindings() {
     if (!runtime->bind(binding.path, binding.function)) {
       return false;
     }
+  }
+  if (!runtime->bindMethod("ui.__spriteAt", nativeUiSpriteAt)) {
+    return false;
   }
   //JS/ Alias: fs.promises.readFile - Async file read (Promise).
   //JS/ Args: path (string), encoding? (string)
@@ -3740,7 +4057,7 @@ void PocketInkJSApp::load() {
     return;
   }
   PocketInkJS::Options options;
-  options.maxBindings = 192;
+  options.maxBindings = 512;
   options.maxNatives = 96;
   options.maxHostRoots = 48;
   options.maxCallDepth = 24;
@@ -3748,6 +4065,9 @@ void PocketInkJSApp::load() {
   options.nowMilliseconds = PocketInkJSNowMilliseconds;
   options.awaitPending = awaitPendingPromise;
   options.awaitUserData = this;
+  options.resolveModule = resolvePocketInkJSModule;
+  options.readModule = readPocketInkJSModule;
+  options.moduleUserData = this;
 #if POCKETINKJS_USE_LIGHTWEIGHT_JSON_PARSER
   options.jsonParse = parsePocketInkJSJson;
 #endif
@@ -3759,7 +4079,8 @@ void PocketInkJSApp::load() {
     releaseRuntime();
     return;
   }
-  const PocketInkJS::RunResult evaluated = runtime->eval(source, sourceBytes);
+  const PocketInkJS::RunResult evaluated =
+      runtime->evalModule(source, sourceBytes, path);
   heap_caps_free(source);
   if (!evaluated.ok) {
     setRuntimeError();

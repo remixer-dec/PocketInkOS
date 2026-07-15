@@ -30,6 +30,17 @@ enum class AppApiGpioMode : uint8_t {
   Output = 2,
 };
 
+/// Capability classes an approved AgentFiesta action can satisfy exactly once
+/// without opening a second platform prompt.
+enum class AppApiAgentCapability : uint8_t {
+  None,
+  FileWrite,
+  FileDelete,
+  Gpio,
+  WifiScan,
+  SystemConfig,
+};
+
 /// Bounded Wi-Fi scan entry copied out of the platform network stack.
 struct AppApiWifiNetwork {
   /// Null-terminated network name, up to the IEEE 802.11 limit.
@@ -52,6 +63,14 @@ void appApiEndSession();
 bool appApiSessionMatches(const char *appId);
 /// Performs deferred hardware work from the shell/main core.
 bool appApiUpdateOnMainCore();
+
+AppApiStatus appApiRequestAgentAction(const char *action,
+                                      AppApiAgentCapability capability,
+                                      const char *resource);
+AppApiStatus appApiRequestCapability(AppApiAgentCapability capability,
+                                     const char *resource);
+bool appApiAuthorizeCapability(AppApiAgentCapability capability,
+                               const char *resource);
 
 /// Shell-owned overlay hooks for permission prompts and the file picker.
 bool appApiOverlayActive();
@@ -116,7 +135,8 @@ size_t appApiWifiNetworkCount();
 bool appApiWifiNetworkAt(size_t index, AppApiWifiNetwork &out);
 
 /// Simplified capture operation. The system pumps recording while Pending and
-/// returns a session-owned WAV buffer at End.
+/// returns a session-owned WAV buffer at End. Repeating an active request with
+/// maxDurationMs zero stops it early; poll with zero until End.
 AppApiStatus appApiCaptureWav(uint32_t maxDurationMs, const uint8_t **data,
                               size_t *size);
 AppApiStatus appApiCapturePcm16(uint32_t maxDurationMs, const uint8_t **data,

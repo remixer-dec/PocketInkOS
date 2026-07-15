@@ -14,7 +14,14 @@
 namespace ext_app_api {
 
 /// Capability classes that require explicit user consent.
-enum class PermissionKind : uint8_t { FileWrite, FileDelete, Gpio, WifiScan };
+enum class PermissionKind : uint8_t {
+  FileWrite,
+  FileDelete,
+  Gpio,
+  WifiScan,
+  AgentAction,
+  SystemConfig,
+};
 /// Stored or pending answer to one capability request.
 enum class PermissionDecision : int8_t { Denied = -1, Pending = 0, Granted = 1 };
 
@@ -23,6 +30,9 @@ class PermissionService {
 public:
   /// Returns a remembered decision or queues a prompt for a new resource.
   ServiceResult request(PermissionKind kind, const char *resource);
+  /// Records an exact grant after a broader user action authorized the same
+  /// operation, avoiding a duplicate underlying capability prompt.
+  bool grant(PermissionKind kind, const char *resource);
   /// Reports whether an unresolved request needs shell-owned prompt UI.
   bool promptActive() const;
   /// Draws the current capability and resource prompt for the named app.

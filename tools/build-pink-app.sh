@@ -6,7 +6,7 @@ SRC="${1:-$ROOT/examples/pink/tetris/tetris.cpp}"
 OUT="${2:-$ROOT/build/pink/tetris.pink}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/pink/$(basename "${SRC%.*}")}"
 LINKER="${PINK_LINKER:-$ROOT/tools/pink_app.ld}"
-ABI_VERSION=13
+ABI_VERSION=16
 MAX_IMAGE_BYTES="${PINK_MAX_IMAGE_BYTES:-$((64 * 1024))}"
 
 usage() {
@@ -340,6 +340,24 @@ if library_section is not None:
     if end > len(elf_bytes) or library_section["size"] != 88:
         raise SystemExit("PinkLibraryManifest metadata must be exactly 88 bytes")
     header_extension = elf_bytes[start:end]
+
+app_metadata_section = sections.get(".pink_app_metadata")
+if app_metadata_section is not None:
+    if library_section is not None:
+        raise SystemExit("a .pink image cannot be both an app and a library")
+    elf_bytes = elf.read_bytes()
+    start = app_metadata_section["offset"]
+    end = start + app_metadata_section["size"]
+    if end > len(elf_bytes) or app_metadata_section["size"] != 32:
+        raise SystemExit("PinkAppMetadata must be exactly 32 bytes")
+    header_extension = elf_bytes[start:end]
+    magic, version, metadata_size = struct.unpack_from("<IHH", header_extension)
+    label = header_extension[8:24].split(b"\0", 1)[0]
+    icon = header_extension[24:32].split(b"\0", 1)[0]
+    if magic != 0x444D4150 or version != 1 or metadata_size != 32:
+        raise SystemExit("invalid PinkAppMetadata header")
+    if not label or not icon or any(value < 0x20 or value > 0x7E for value in label + icon):
+        raise SystemExit("PinkAppMetadata label and icon must be printable ASCII")
 
 text = sections.get(".text")
 if text is None or text["size"] != len(code):

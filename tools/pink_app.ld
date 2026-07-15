@@ -24,6 +24,12 @@ SECTIONS
     KEEP(*(.pink_metadata))
   }
 
+  /* Optional launcher label/icon copied into the executable header. */
+  .pink_app_metadata : ALIGN(4)
+  {
+    KEEP(*(.pink_app_metadata))
+  }
+
   /* Optional build-only typed-library manifest. Like periodic metadata, the
      packer moves this into the extended file header instead of runtime RAM. */
   .pink_library : ALIGN(4)
