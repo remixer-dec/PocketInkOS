@@ -98,6 +98,9 @@ struct Options {
   uint16_t maxHostRoots = 32;
   /// Maximum object offsets held by one garbage-collection traversal.
   uint16_t maxGcWork = 256;
+  /// Maximum cached lexer tokens; rounded down to a power of two. Zero disables
+  /// caching. Entries live in the caller-owned workspace, not internal RAM.
+  uint16_t maxCachedTokens = 128;
   /// Maximum nested JavaScript/native calls.
   uint8_t maxCallDepth = 12;
   /// Maximum arguments accepted by one call expression.
@@ -430,6 +433,23 @@ struct NativeRecord {
   } callback = {};
   void *userData = nullptr;
 };
+
+// Cached lexer output stays in the caller-owned workspace. The compact entry
+// deliberately stores the token type as a byte so Runtime need not depend on
+// the parser's Token declaration.
+struct LexerCacheEntry {
+  double number = 0;
+  uint32_t source = 0;
+  uint32_t position = 0;
+  uint32_t end = 0;
+  uint32_t nextPosition = 0;
+  uint32_t tokenStart = 0;
+  uint32_t tokenLength = 0;
+  uint8_t tokenType = 0;
+  uint8_t newlineBefore = 0;
+  uint8_t reserved[6] = {};
+};
+static_assert(sizeof(LexerCacheEntry) == 40U);
 
 enum class BuiltinObject : uint8_t {
   Math,
@@ -842,6 +862,23 @@ private:
     uint32_t owner = 0;
   };
 
+  struct BindingCacheEntry {
+    const char *name = nullptr;
+    uint32_t owner = 0;
+    uint16_t bindingCount = 0;
+    uint16_t frameBase = 0;
+    uint16_t length = 0;
+    int16_t index = -1;
+  };
+
+  struct PropertyCacheEntry {
+    uint32_t object = 0;
+    uint32_t identity = 0;
+    uint32_t property = 0;
+  };
+
+  static constexpr size_t kLookupCacheEntries = 4;
+
   uint8_t *workspace_ = nullptr;
   size_t workspaceBytes_ = 0;
   Options options_ = {};
@@ -851,10 +888,12 @@ private:
   Value *hostRoots_ = nullptr;
   uint8_t *hostRootUsed_ = nullptr;
   uint32_t *gcWork_ = nullptr;
+  detail::LexerCacheEntry *lexerCache_ = nullptr;
   uint8_t *heap_ = nullptr;
   uint32_t heapCapacity_ = 0;
   uint32_t heapUsed_ = 0;
   uint32_t peakHeapUsed_ = 0;
+  uint32_t allocationDebt_ = 0;
   uint32_t promiseJobHead_ = 0;
   uint32_t promiseJobTail_ = 0;
   uint32_t moduleHead_ = 0;
@@ -867,11 +906,13 @@ private:
   uint16_t temporaryRootCount_ = 0;
   uint16_t frameBase_ = 0;
   uint16_t scopeDepth_ = 0;
+  uint16_t lexerCacheMask_ = 0;
   uint8_t callDepth_ = 0;
   uint8_t parseDepth_ = 0;
   uint8_t moduleCount_ = 0;
   uint32_t stepsRemaining_ = 0;
   uint32_t randomState_ = 0x91e10da5U;
+  uint32_t nextObjectIdentity_ = 1;
   Value lastResult_ = {};
   uint32_t processEnv_ = 0;
   uint32_t processArgv_ = 0;
@@ -884,6 +925,9 @@ private:
   bool exceptionPending_ = false;
   bool ready_ = false;
   bool running_ = false;
+  bool hasFreeBlocks_ = false;
+  mutable BindingCacheEntry bindingCache_[kLookupCacheEntries] = {};
+  mutable PropertyCacheEntry propertyCache_[kLookupCacheEntries] = {};
 
   void initializeWorkspace();
   void clearError() {
@@ -921,6 +965,17 @@ private:
   bool validOffset(uint32_t offset, detail::BlockKind expected) const;
   uint32_t allocateBlock(detail::BlockKind kind, size_t payloadBytes,
                          bool reportOutOfMemory = true);
+  void collectGarbageIfNeeded() {
+    if (allocationDebt_ != 0)
+      collectGarbage();
+  }
+  void clearLexerCache() {
+    if (lexerCache_ != nullptr) {
+      const size_t count = static_cast<size_t>(lexerCacheMask_) + 1U;
+      for (size_t i = 0; i < count; i++)
+        lexerCache_[i] = detail::LexerCacheEntry{};
+    }
+  }
   void *allocateScratch(ScratchLease &lease, size_t bytes, size_t alignment);
   void releaseScratch(ScratchLease &lease, void *memory);
   void releaseScratch(ScratchLease &lease);
@@ -949,6 +1004,7 @@ private:
   bool reserveCollection(Value collectionValue, size_t capacity);
   bool collectionPush(Value collectionValue, Value value, bool unique);
   bool collectionRemoveAt(Value collectionValue, size_t index, Value *removed);
+  void renewObjectIdentity(detail::ObjectPayload *object);
   detail::Uint8ArrayPayload *uint8ArrayPayload(Value value);
   const detail::Uint8ArrayPayload *uint8ArrayPayload(Value value) const;
   uint8_t *uint8ArrayData(detail::Uint8ArrayPayload *value) const {
@@ -1128,9 +1184,20 @@ inline void Runtime::initializeWorkspace() {
       static_cast<uint8_t *>(take(sizeof(uint8_t) * options_.maxHostRoots));
   gcWork_ = static_cast<uint32_t *>(
       take(sizeof(uint32_t) * options_.maxGcWork));
+  uint16_t lexerCacheCount = 0;
+  if (options_.maxCachedTokens > 0) {
+    lexerCacheCount = 1;
+    while (lexerCacheCount <= options_.maxCachedTokens / 2U) {
+      lexerCacheCount = static_cast<uint16_t>(lexerCacheCount * 2U);
+    }
+    lexerCache_ = static_cast<detail::LexerCacheEntry *>(
+        take(sizeof(detail::LexerCacheEntry) * lexerCacheCount));
+    lexerCacheMask_ = static_cast<uint16_t>(lexerCacheCount - 1U);
+  }
   if (bindings_ == nullptr || natives_ == nullptr ||
       temporaryRoots_ == nullptr || hostRoots_ == nullptr ||
-      hostRootUsed_ == nullptr || gcWork_ == nullptr || cursor >= end ||
+      hostRootUsed_ == nullptr || gcWork_ == nullptr ||
+      (lexerCacheCount > 0 && lexerCache_ == nullptr) || cursor >= end ||
       end - cursor < 512 || end - cursor > UINT32_MAX) {
     bindings_ = nullptr;
     setError(ErrorCode{2}, nullptr, 0);
@@ -1326,32 +1393,47 @@ inline uint32_t Runtime::allocateBlock(detail::BlockKind kind,
   const size_t wantedSize = detail::align8(
       sizeof(detail::BlockHeader) + payloadBytes);
   const uint32_t wanted = static_cast<uint32_t>(wantedSize);
+  auto recordAllocation = [this, wanted]() {
+    allocationDebt_ =
+        allocationDebt_ > UINT32_MAX - wanted
+            ? UINT32_MAX
+            : static_cast<uint32_t>(allocationDebt_ + wanted);
+  };
 
-  for (uint32_t offset = 8; offset < heapUsed_;) {
-    detail::BlockHeader *candidate = header(offset);
-    if (candidate->size < sizeof(detail::BlockHeader) ||
-        candidate->size > heapUsed_ - offset) {
-      setError(ErrorCode{5}, nullptr, 0);
-      return 0;
-    }
-    const uint32_t oldSize = candidate->size;
-    if (candidate->kind == detail::BlockKind::Free && oldSize >= wanted) {
-      const uint32_t remainder = oldSize - wanted;
-      candidate->size = wanted;
-      candidate->kind = kind;
-      candidate->marked = 0;
-      candidate->reserved = 0;
-      std::memset(payload(offset), 0, wanted - sizeof(*candidate));
-      if (remainder >= detail::align8(sizeof(detail::BlockHeader) + 8U)) {
-        detail::BlockHeader *tail = header(offset + wanted);
-        *tail = detail::BlockHeader{};
-        tail->size = remainder;
-      } else {
-        candidate->size = oldSize;
+  if (hasFreeBlocks_) {
+    bool sawFreeBlock = false;
+    for (uint32_t offset = 8; offset < heapUsed_;) {
+      detail::BlockHeader *candidate = header(offset);
+      if (candidate->size < sizeof(detail::BlockHeader) ||
+          candidate->size > heapUsed_ - offset) {
+        setError(ErrorCode{5}, nullptr, 0);
+        return 0;
       }
-      return offset;
+      const uint32_t oldSize = candidate->size;
+      if (candidate->kind == detail::BlockKind::Free) {
+        sawFreeBlock = true;
+      }
+      if (candidate->kind == detail::BlockKind::Free && oldSize >= wanted) {
+        const uint32_t remainder = oldSize - wanted;
+        candidate->size = wanted;
+        candidate->kind = kind;
+        candidate->marked = 0;
+        candidate->reserved = 0;
+        std::memset(payload(offset), 0, wanted - sizeof(*candidate));
+        if (remainder >= detail::align8(sizeof(detail::BlockHeader) + 8U)) {
+          detail::BlockHeader *tail = header(offset + wanted);
+          *tail = detail::BlockHeader{};
+          tail->size = remainder;
+          hasFreeBlocks_ = true;
+        } else {
+          candidate->size = oldSize;
+        }
+        recordAllocation();
+        return offset;
+      }
+      offset += oldSize;
     }
-    offset += oldSize;
+    hasFreeBlocks_ = sawFreeBlock;
   }
 
   if (wanted > heapCapacity_ - heapUsed_) {
@@ -1369,6 +1451,7 @@ inline uint32_t Runtime::allocateBlock(detail::BlockKind kind,
   if (heapUsed_ > peakHeapUsed_) {
     peakHeapUsed_ = heapUsed_;
   }
+  recordAllocation();
   return offset;
 }
 
@@ -1457,6 +1540,7 @@ inline size_t Runtime::scratchAvailable() const {
 }
 
 inline void Runtime::coalesceFreeBlocks() {
+  hasFreeBlocks_ = false;
   uint32_t offset = 8;
   while (offset < heapUsed_) {
     detail::BlockHeader *block = header(offset);
@@ -1482,6 +1566,7 @@ inline void Runtime::coalesceFreeBlocks() {
         heapUsed_ = offset;
         return;
       }
+      hasFreeBlocks_ = true;
     }
     offset += block->size;
   }
@@ -1817,11 +1902,22 @@ inline Value Runtime::toStringValue(Value value) {
   return result;
 }
 
+inline void Runtime::renewObjectIdentity(detail::ObjectPayload *object) {
+  if (object == nullptr)
+    return;
+  object->reserved = nextObjectIdentity_++;
+  if (nextObjectIdentity_ == 0)
+    nextObjectIdentity_ = 1;
+}
+
 inline Value Runtime::makeObject() {
   const uint32_t offset = allocateBlock(detail::BlockKind::Object,
                                         sizeof(detail::ObjectPayload));
-  return offset != 0 ? detail::boxed(detail::Tag::Object, offset)
-                     : undefined();
+  if (offset == 0)
+    return undefined();
+  renewObjectIdentity(
+      static_cast<detail::ObjectPayload *>(payload(offset)));
+  return detail::boxed(detail::Tag::Object, offset);
 }
 
 inline Value Runtime::makeArray(size_t reserve) {
@@ -1868,7 +1964,11 @@ inline Value Runtime::makeUint8Array(size_t length) {
 inline Value Runtime::makeMap() {
   const uint32_t offset = allocateBlock(detail::BlockKind::Map,
                                         sizeof(detail::ObjectPayload));
-  return offset != 0 ? detail::boxed(detail::Tag::Map, offset) : undefined();
+  if (offset == 0)
+    return undefined();
+  renewObjectIdentity(
+      static_cast<detail::ObjectPayload *>(payload(offset)));
+  return detail::boxed(detail::Tag::Map, offset);
 }
 
 inline Value Runtime::makePromise() {
@@ -2115,7 +2215,8 @@ inline bool Runtime::collectionRemoveAt(Value collectionValue, size_t index,
 inline int Runtime::findProperty(Value object, const char *key,
                                  size_t keyLength) const {
   const detail::Tag tag = detail::tagOf(object);
-  if (tag != detail::Tag::Object && tag != detail::Tag::Map) {
+  if ((tag != detail::Tag::Object && tag != detail::Tag::Map) ||
+      key == nullptr) {
     return 0;
   }
   const detail::BlockKind kind = tag == detail::Tag::Map
@@ -2128,12 +2229,31 @@ inline int Runtime::findProperty(Value object, const char *key,
   }
   const detail::ObjectPayload *objectData =
       static_cast<const detail::ObjectPayload *>(payload(objectOffset));
+  const uint32_t keyEnds =
+      keyLength > 0
+          ? (static_cast<uint32_t>(static_cast<uint8_t>(key[0])) << 8U) |
+                static_cast<uint8_t>(key[keyLength - 1U])
+          : 0;
+  PropertyCacheEntry &cached = propertyCache_[
+      ((objectOffset >> 3U) ^ static_cast<uint32_t>(keyLength) ^ keyEnds) &
+      (kLookupCacheEntries - 1U)];
+  if (cached.object == objectOffset &&
+      cached.identity == objectData->reserved &&
+      validOffset(cached.property, detail::BlockKind::Property)) {
+    const StringView cachedKey =
+        stringView(propertyPayload(cached.property)->key);
+    if (cachedKey.size == keyLength && cachedKey.data != nullptr &&
+        std::memcmp(cachedKey.data, key, keyLength) == 0) {
+      return static_cast<int>(cached.property);
+    }
+  }
   uint32_t current = objectData->firstProperty;
   while (current != 0 && validOffset(current, detail::BlockKind::Property)) {
     const detail::PropertyPayload *property = propertyPayload(current);
     const StringView propertyKey = stringView(property->key);
     if (propertyKey.size == keyLength && propertyKey.data != nullptr &&
         std::memcmp(propertyKey.data, key, keyLength) == 0) {
+      cached = PropertyCacheEntry{objectOffset, objectData->reserved, current};
       return static_cast<int>(current);
     }
     current = property->next;
@@ -2228,6 +2348,8 @@ inline bool Runtime::deleteProperty(Value object, const char *key,
         std::memcmp(propertyKey.data, key, keyLength) == 0) {
       *link = property->next;
       header(current)->kind = detail::BlockKind::Free;
+      hasFreeBlocks_ = true;
+      renewObjectIdentity(objectData);
       return true;
     }
     link = &property->next;
@@ -2351,10 +2473,32 @@ inline int Runtime::findBinding(NameRef name) const {
     return binding.name != nullptr && binding.nameLength == name.length &&
            std::memcmp(binding.name, name.data, name.length) == 0;
   };
+  const size_t cacheSlot =
+      ((reinterpret_cast<uintptr_t>(name.data) >> 2U) ^ name.owner ^
+       name.length) &
+      (kLookupCacheEntries - 1U);
+  BindingCacheEntry &cached = bindingCache_[cacheSlot];
+  if (cached.name == name.data && cached.owner == name.owner &&
+      cached.length == name.length && cached.bindingCount == bindingCount_ &&
+      cached.frameBase == frameBase_ && cached.index >= 0 &&
+      static_cast<uint16_t>(cached.index) < bindingCount_) {
+    const detail::Binding &binding = bindings_[cached.index];
+    const uint32_t requester = name.owner != 0 ? name.owner : entrySource_;
+    const bool local = frameBase_ != 0 && cached.index >= frameBase_;
+    if (matches(binding) &&
+        (local || !isModuleSource(binding.nameOwner) ||
+         binding.nameOwner == requester)) {
+      return cached.index;
+    }
+  }
   if (frameBase_ != 0) {
     for (size_t i = bindingCount_; i > frameBase_; i--) {
       if (matches(bindings_[i - 1U])) {
-        return static_cast<int>(i - 1U);
+        const int found = static_cast<int>(i - 1U);
+        cached = BindingCacheEntry{
+            name.data, name.owner, bindingCount_, frameBase_, name.length,
+            static_cast<int16_t>(found)};
+        return found;
       }
     }
   }
@@ -2366,7 +2510,11 @@ inline int Runtime::findBinding(NameRef name) const {
     if (matches(binding) &&
         (!isModuleSource(binding.nameOwner) ||
          binding.nameOwner == requester)) {
-      return static_cast<int>(i - 1U);
+      const int found = static_cast<int>(i - 1U);
+      cached = BindingCacheEntry{
+          name.data, name.owner, bindingCount_, frameBase_, name.length,
+          static_cast<int16_t>(found)};
+      return found;
     }
   }
   return -1;
@@ -2760,6 +2908,7 @@ inline Value Runtime::requireModule(Value request, uint32_t importerSource) {
                            options_.moduleUserData) ||
       actualBytes > sourceBytes) {
     header(source)->kind = detail::BlockKind::Free;
+    hasFreeBlocks_ = true;
     setError(ErrorCode{239}, nullptr, 0);
     cacheModuleFailure(*module);
     return undefined();
@@ -3809,7 +3958,6 @@ inline RunResult Runtime::drainJobs(size_t maximum) {
     setError(ErrorCode{37}, nullptr, 0);
     return {false, undefined()};
   }
-  collectGarbage();
   stepsRemaining_ = options_.maxSteps;
   running_ = true;
   size_t completed = 0;
@@ -3900,7 +4048,7 @@ inline RunResult Runtime::drainJobs(size_t maximum) {
     completed++;
   }
   running_ = false;
-  collectGarbage();
+  collectGarbageIfNeeded();
   return {error_.message[0] == '\0', number(static_cast<double>(completed))};
 }
 
@@ -4080,6 +4228,7 @@ inline void Runtime::collectGarbage() {
     block->marked = 0;
   }
   coalesceFreeBlocks();
+  allocationDebt_ = 0;
 }
 
 inline MemoryStats Runtime::memoryStats() const {
@@ -4212,10 +4361,51 @@ struct Token {
 
 class Lexer {
 public:
-  Lexer(const char *source, uint32_t begin, uint32_t end)
-      : source_(source), position_(begin), end_(end) {}
+  Lexer(const char *source, uint32_t begin, uint32_t end,
+        LexerCacheEntry *cache = nullptr, uint16_t cacheMask = 0,
+        uint32_t sourceOffset = 0)
+      : source_(source), position_(begin), end_(end), cache_(cache),
+        cacheMask_(cacheMask), sourceOffset_(sourceOffset) {}
 
   Token next() {
+    const uint32_t initialPosition = position_;
+    LexerCacheEntry *entry = nullptr;
+    if (cache_ != nullptr) {
+      const uint32_t hash = sourceOffset_ * UINT32_C(2246822519) ^
+                            initialPosition * UINT32_C(3266489917);
+      entry = &cache_[hash & cacheMask_];
+      if (entry->source == sourceOffset_ &&
+          entry->position == initialPosition &&
+          (entry->end == end_ ||
+           (entry->nextPosition < entry->end &&
+            entry->nextPosition < end_))) {
+        position_ = entry->nextPosition;
+        Token cached;
+        cached.type = static_cast<TokenType>(entry->tokenType);
+        cached.start = entry->tokenStart;
+        cached.length = entry->tokenLength;
+        cached.number = entry->number;
+        cached.newlineBefore = entry->newlineBefore != 0;
+        return cached;
+      }
+    }
+
+    Token token = scanNext();
+    if (entry != nullptr) {
+      entry->number = token.number;
+      entry->source = sourceOffset_;
+      entry->position = initialPosition;
+      entry->end = end_;
+      entry->nextPosition = position_;
+      entry->tokenStart = token.start;
+      entry->tokenLength = token.length;
+      entry->tokenType = static_cast<uint8_t>(token.type);
+      entry->newlineBefore = token.newlineBefore ? 1U : 0U;
+    }
+    return token;
+  }
+
+  Token scanNext() {
     Token token;
     skipTrivia(token.newlineBefore);
     token.start = position_;
@@ -4464,6 +4654,9 @@ private:
   const char *source_ = nullptr;
   uint32_t position_ = 0;
   uint32_t end_ = 0;
+  LexerCacheEntry *cache_ = nullptr;
+  uint16_t cacheMask_ = 0;
+  uint32_t sourceOffset_ = 0;
 
   static bool isIdentifierStart(char c) {
     return c == '_' || c == '$' || (c >= 'a' && c <= 'z') ||
@@ -4483,80 +4676,105 @@ private:
       return static_cast<uint8_t>(c - 'a' + 10);
     return static_cast<uint8_t>(c - 'A' + 10);
   }
-  static bool same(const char *text, uint32_t length, const char *word) {
-    return std::strlen(word) == length && std::memcmp(text, word, length) == 0;
-  }
   static TokenType keyword(const char *text, uint32_t length) {
-    if (same(text, length, "let"))
-      return TokenType::Let;
-    if (same(text, length, "var"))
-      return TokenType::Var;
-    if (same(text, length, "const"))
-      return TokenType::Const;
-    if (same(text, length, "function"))
-      return TokenType::Function;
-    if (same(text, length, "if"))
-      return TokenType::If;
-    if (same(text, length, "else"))
-      return TokenType::Else;
-    if (same(text, length, "while"))
-      return TokenType::While;
-    if (same(text, length, "do"))
-      return TokenType::Do;
-    if (same(text, length, "for"))
-      return TokenType::For;
-    if (same(text, length, "of"))
-      return TokenType::Of;
-    if (same(text, length, "in"))
-      return TokenType::In;
-    if (same(text, length, "return"))
-      return TokenType::Return;
-    if (same(text, length, "break"))
-      return TokenType::Break;
-    if (same(text, length, "continue"))
-      return TokenType::Continue;
-    if (same(text, length, "switch"))
-      return TokenType::Switch;
-    if (same(text, length, "case"))
-      return TokenType::Case;
-    if (same(text, length, "default"))
-      return TokenType::Default;
-    if (same(text, length, "try"))
-      return TokenType::Try;
-    if (same(text, length, "catch"))
-      return TokenType::Catch;
-    if (same(text, length, "throw"))
-      return TokenType::Throw;
-    if (same(text, length, "true"))
-      return TokenType::True;
-    if (same(text, length, "false"))
-      return TokenType::False;
-    if (same(text, length, "null"))
-      return TokenType::Null;
-    if (same(text, length, "undefined"))
-      return TokenType::Undefined;
-    if (same(text, length, "typeof"))
-      return TokenType::Typeof;
-    if (same(text, length, "delete"))
-      return TokenType::Delete;
-    if (same(text, length, "void"))
-      return TokenType::Void;
-    if (same(text, length, "new"))
-      return TokenType::New;
-    if (same(text, length, "async"))
-      return TokenType::Async;
-    if (same(text, length, "await"))
-      return TokenType::Await;
-    if (same(text, length, "instanceof"))
-      return TokenType::Instanceof;
-    if (same(text, length, "import"))
-      return TokenType::Import;
-    if (same(text, length, "export"))
-      return TokenType::Export;
-    if (same(text, length, "from"))
-      return TokenType::From;
-    if (same(text, length, "as"))
-      return TokenType::As;
+    // Identifiers dominate the source interpreter's hot loop. Grouping the
+    // fixed keyword set avoids checking every keyword for ordinary names.
+    switch (length) {
+    case 2:
+      if (text[0] == 'i' && text[1] == 'f')
+        return TokenType::If;
+      if (text[0] == 'd' && text[1] == 'o')
+        return TokenType::Do;
+      if (text[0] == 'o' && text[1] == 'f')
+        return TokenType::Of;
+      if (text[0] == 'i' && text[1] == 'n')
+        return TokenType::In;
+      if (text[0] == 'a' && text[1] == 's')
+        return TokenType::As;
+      break;
+    case 3:
+      if (text[0] == 'l' && std::memcmp(text, "let", 3) == 0)
+        return TokenType::Let;
+      if (text[0] == 'v' && std::memcmp(text, "var", 3) == 0)
+        return TokenType::Var;
+      if (text[0] == 'f' && std::memcmp(text, "for", 3) == 0)
+        return TokenType::For;
+      if (text[0] == 't' && std::memcmp(text, "try", 3) == 0)
+        return TokenType::Try;
+      if (text[0] == 'n' && std::memcmp(text, "new", 3) == 0)
+        return TokenType::New;
+      break;
+    case 4:
+      if (text[0] == 'e' && std::memcmp(text, "else", 4) == 0)
+        return TokenType::Else;
+      if (text[0] == 'c' && std::memcmp(text, "case", 4) == 0)
+        return TokenType::Case;
+      if (text[0] == 't' && std::memcmp(text, "true", 4) == 0)
+        return TokenType::True;
+      if (text[0] == 'n' && std::memcmp(text, "null", 4) == 0)
+        return TokenType::Null;
+      if (text[0] == 'v' && std::memcmp(text, "void", 4) == 0)
+        return TokenType::Void;
+      if (text[0] == 'f' && std::memcmp(text, "from", 4) == 0)
+        return TokenType::From;
+      break;
+    case 5:
+      if (text[0] == 'c' && text[1] == 'o' &&
+          std::memcmp(text, "const", 5) == 0)
+        return TokenType::Const;
+      if (text[0] == 'w' && std::memcmp(text, "while", 5) == 0)
+        return TokenType::While;
+      if (text[0] == 'b' && std::memcmp(text, "break", 5) == 0)
+        return TokenType::Break;
+      if (text[0] == 'c' && text[1] == 'a' &&
+          std::memcmp(text, "catch", 5) == 0)
+        return TokenType::Catch;
+      if (text[0] == 't' && std::memcmp(text, "throw", 5) == 0)
+        return TokenType::Throw;
+      if (text[0] == 'f' && std::memcmp(text, "false", 5) == 0)
+        return TokenType::False;
+      if (text[0] == 'a' && text[1] == 's' &&
+          std::memcmp(text, "async", 5) == 0)
+        return TokenType::Async;
+      if (text[0] == 'a' && text[1] == 'w' &&
+          std::memcmp(text, "await", 5) == 0)
+        return TokenType::Await;
+      break;
+    case 6:
+      if (text[0] == 'r' && std::memcmp(text, "return", 6) == 0)
+        return TokenType::Return;
+      if (text[0] == 's' && std::memcmp(text, "switch", 6) == 0)
+        return TokenType::Switch;
+      if (text[0] == 't' && std::memcmp(text, "typeof", 6) == 0)
+        return TokenType::Typeof;
+      if (text[0] == 'd' && std::memcmp(text, "delete", 6) == 0)
+        return TokenType::Delete;
+      if (text[0] == 'i' && std::memcmp(text, "import", 6) == 0)
+        return TokenType::Import;
+      if (text[0] == 'e' && std::memcmp(text, "export", 6) == 0)
+        return TokenType::Export;
+      break;
+    case 7:
+      if (text[0] == 'd' && std::memcmp(text, "default", 7) == 0)
+        return TokenType::Default;
+      break;
+    case 8:
+      if (text[0] == 'f' && std::memcmp(text, "function", 8) == 0)
+        return TokenType::Function;
+      if (text[0] == 'c' && std::memcmp(text, "continue", 8) == 0)
+        return TokenType::Continue;
+      break;
+    case 9:
+      if (std::memcmp(text, "undefined", 9) == 0)
+        return TokenType::Undefined;
+      break;
+    case 10:
+      if (std::memcmp(text, "instanceof", 10) == 0)
+        return TokenType::Instanceof;
+      break;
+    default:
+      break;
+    }
     return TokenType::Identifier;
   }
 
@@ -4614,7 +4832,9 @@ public:
          uint32_t end, bool functionBody = false, bool loopBody = false,
          bool asyncBody = false, bool switchBody = false)
       : runtime_(runtime), sourceOffset_(sourceOffset),
-        source_(runtime.sourceData(sourceOffset)), lexer_(source_, begin, end),
+        source_(runtime.sourceData(sourceOffset)),
+        lexer_(source_, begin, end, runtime.lexerCache_,
+               runtime.lexerCacheMask_, sourceOffset),
         end_(end), functionBody_(functionBody), loopBody_(loopBody),
         asyncBody_(asyncBody), switchBody_(switchBody) {
     token_ = lexer_.next();
@@ -6736,7 +6956,8 @@ inline Parser::Flow Parser::importStatement(bool execute) {
                          static_cast<uint16_t>(local.length), sourceOffset_},
         imported, true);
   } else {
-    detail::Lexer scan(source_, named.begin, named.end);
+    detail::Lexer scan(source_, named.begin, named.end, runtime_.lexerCache_,
+                       runtime_.lexerCacheMask_, sourceOffset_);
     detail::Token importedName = scan.next();
     while (importedName.type != T::End &&
            runtime_.error_.message[0] == '\0') {
@@ -7504,6 +7725,7 @@ inline RunResult Runtime::eval(const char *source, size_t length) {
     return {false, undefined()};
   }
   collectGarbage();
+  clearLexerCache();
   Value sourceValue = makeTextBlock(detail::BlockKind::Source,
                                     detail::Tag::Source, source, length);
   const uint32_t sourceBlock = sourceOffset(sourceValue);
@@ -7541,6 +7763,7 @@ inline RunResult Runtime::evalModule(const char *source, size_t length,
     return {false, undefined()};
   }
   collectGarbage();
+  clearLexerCache();
   Value sourceValue = makeTextBlock(detail::BlockKind::Source,
                                     detail::Tag::Source, source, length);
   Value pathValue = makeString(path);
@@ -7591,14 +7814,13 @@ inline RunResult Runtime::call(Value function, const Value *args,
       return {false, undefined()};
     }
   }
-  collectGarbage();
   stepsRemaining_ = options_.maxSteps;
   running_ = true;
   Value result = callValue(function, undefined(), args, argc);
   lastResult_ = result;
   running_ = false;
   popRoots(static_cast<uint16_t>(temporaryRootCount_ - rootStart));
-  collectGarbage();
+  collectGarbageIfNeeded();
   return {error_.message[0] == '\0',
           error_.message[0] == '\0' ? result : undefined()};
 }
@@ -7621,10 +7843,10 @@ inline RunResult Runtime::callIfFunction(const char *name, const Value *args,
       return {false, undefined()};
     }
   }
-  collectGarbage();
   Value function = get(name);
   if (!isCallable(function)) {
     popRoots(static_cast<uint16_t>(temporaryRootCount_ - rootStart));
+    collectGarbageIfNeeded();
     return {true, undefined()};
   }
   if (called != nullptr) {
@@ -7636,7 +7858,7 @@ inline RunResult Runtime::callIfFunction(const char *name, const Value *args,
   lastResult_ = result;
   running_ = false;
   popRoots(static_cast<uint16_t>(temporaryRootCount_ - rootStart));
-  collectGarbage();
+  collectGarbageIfNeeded();
   return {error_.message[0] == '\0',
           error_.message[0] == '\0' ? result : undefined()};
 }
@@ -8268,10 +8490,12 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
     auto *map = static_cast<detail::ObjectPayload *>(payload(offset));
     uint32_t property = map->firstProperty;
     map->firstProperty = 0;
+    renewObjectIdentity(map);
     while (property != 0 &&
            validOffset(property, detail::BlockKind::Property)) {
       const uint32_t next = propertyPayload(property)->next;
       header(property)->kind = detail::BlockKind::Free;
+      hasFreeBlocks_ = true;
       property = next;
     }
     return undefined();
