@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstring>
 #include <esp_heap_caps.h>
+#include <esp_rom_sys.h>
 
 #if __has_include(<esp_dsp.h>)
 #include <esp_dsp.h>
@@ -237,8 +238,7 @@ bool hostComplexFft(float *realImag, size_t complexCount, bool inverse) {
 
 void hostLog(const char *message) {
   if (debugLoggingEnabled() && message != nullptr) {
-    Serial.print("[pink-codec] ");
-    Serial.println(message);
+    esp_rom_printf("[pink-codec] %s\n", message);
   }
 }
 
