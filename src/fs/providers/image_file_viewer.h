@@ -10,6 +10,14 @@
 
 extern const FileViewerExtension IMAGE_FILE_VIEWER;
 
+/// One native-pixel rectangle inside a larger raster image.
+struct ImageSourceRect {
+  uint32_t x = 0;
+  uint32_t y = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+};
+
 bool imageTransformPoint(const ImageTransform &transform, int16_t x,
                          int16_t y, int16_t &outX, int16_t &outY);
 
@@ -37,6 +45,20 @@ bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
                               uint8_t dither, bool scaleToFit,
                               const ImageTransform &transform,
                               ImageRenderCachePool *cache = nullptr);
+
+/// Draws one native-size source rectangle before applying the affine matrix.
+/// This keeps spritesheet selection independent from positioning and flipping.
+bool drawImageBufferRegionTransformed(
+    Adafruit_GFX &gfx, const uint8_t *data, size_t size, const char *extension,
+    const ImageSourceRect &source, int16_t imageX, int16_t imageY,
+    uint8_t dither, const ImageTransform &transform,
+    ImageRenderCachePool *cache = nullptr);
+
+bool drawImagePathRegionTransformed(
+    Adafruit_GFX &gfx, const char *providerId, const char *path,
+    const ImageSourceRect &source, int16_t imageX, int16_t imageY,
+    uint8_t dither, const ImageTransform &transform,
+    ImageRenderCachePool *cache = nullptr);
 
 /// Decodes one encoded-image slice from a larger provider file. The encoded
 /// bytes are transient; a supplied cache retains only the rendered 1-bit image.

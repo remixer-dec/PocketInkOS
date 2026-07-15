@@ -16,6 +16,11 @@ void *imageViewerMalloc(size_t bytes) {
   return psram::allocate(bytes);
 }
 
+void *imageViewerHotMalloc(size_t bytes) {
+  // Small control tables are touched for nearly every decoded symbol/pixel.
+  return psram::allocateInternalOrPsram(bytes);
+}
+
 void imageViewerFree(void *ptr) { psram::release(ptr); }
 
 // A lower-priority decoder still has to block briefly so IDLE0 can run.
@@ -24,6 +29,7 @@ void imageDecodeCooperate() { delay(1); }
 } // namespace
 
 #define IPNG_MALLOC imageViewerMalloc
+#define IPNG_HOT_MALLOC imageViewerHotMalloc
 #define IPNG_FREE imageViewerFree
 #define IPNG_COOPERATE() imageDecodeCooperate()
 #define IJPG_MALLOC imageViewerMalloc
@@ -84,6 +90,9 @@ struct RasterDrawTarget {
   Adafruit_GFX *gfx;
   const ImageTransform *transform = nullptr;
   ImageRenderCache *cache = nullptr;
+  const ImageSourceRect *source = nullptr;
+  int16_t originX = 0;
+  int16_t originY = 0;
 };
 
 int readRasterByte(void *user) {
@@ -139,21 +148,76 @@ void resetRasterReader(RasterMemoryReader &reader) {
 void drawRasterPixel(void *user, int16_t x, int16_t y) {
   RasterDrawTarget *target = static_cast<RasterDrawTarget *>(user);
   if (target != nullptr && target->gfx != nullptr) {
+    int32_t drawX = x;
+    int32_t drawY = y;
+    if (target->source != nullptr) {
+      const ImageSourceRect &source = *target->source;
+      if (x < 0 || y < 0 || static_cast<uint32_t>(x) < source.x ||
+          static_cast<uint32_t>(y) < source.y ||
+          static_cast<uint32_t>(x) - source.x >= source.width ||
+          static_cast<uint32_t>(y) - source.y >= source.height) {
+        return;
+      }
+      drawX = static_cast<int32_t>(target->originX) +
+              static_cast<uint32_t>(x) - source.x;
+      drawY = static_cast<int32_t>(target->originY) +
+              static_cast<uint32_t>(y) - source.y;
+    }
     if (target->cache != nullptr) {
-      target->cache->setBlackPixel(x, y);
+      target->cache->setBlackPixel(
+          target->source != nullptr ? drawX - target->originX : drawX,
+          target->source != nullptr ? drawY - target->originY : drawY);
       return;
     }
     if (target->transform == nullptr) {
-      target->gfx->drawPixel(x, y, 1);
+      if (drawX >= INT16_MIN && drawX <= INT16_MAX && drawY >= INT16_MIN &&
+          drawY <= INT16_MAX) {
+        target->gfx->drawPixel(static_cast<int16_t>(drawX),
+                              static_cast<int16_t>(drawY), 1);
+      }
+      return;
+    }
+    if (drawX < INT16_MIN || drawX > INT16_MAX || drawY < INT16_MIN ||
+        drawY > INT16_MAX) {
       return;
     }
     int16_t transformedX = 0;
     int16_t transformedY = 0;
-    if (imageTransformPoint(*target->transform, x, y, transformedX,
+    if (imageTransformPoint(*target->transform, static_cast<int16_t>(drawX),
+                            static_cast<int16_t>(drawY), transformedX,
                             transformedY)) {
       target->gfx->drawPixel(transformedX, transformedY, 1);
     }
   }
+}
+
+bool sourceInsideImage(const RasterDrawTarget &target, uint32_t width,
+                       uint32_t height) {
+  if (target.source == nullptr) {
+    return true;
+  }
+  const ImageSourceRect &source = *target.source;
+  return source.width != 0U && source.height != 0U && source.x < width &&
+         source.y < height && source.width <= width - source.x &&
+         source.height <= height - source.y;
+}
+
+bool sourceDecodeBounds(const ImageSourceRect &source, int16_t &width,
+                        int16_t &height) {
+  if (source.width == 0U || source.height == 0U ||
+      source.x > UINT32_MAX - source.width ||
+      source.y > UINT32_MAX - source.height) {
+    return false;
+  }
+  const uint32_t right = source.x + source.width;
+  const uint32_t bottom = source.y + source.height;
+  if (right > INT16_MAX || bottom > INT16_MAX ||
+      source.width > INT16_MAX || source.height > INT16_MAX) {
+    return false;
+  }
+  width = static_cast<int16_t>(right);
+  height = static_cast<int16_t>(bottom);
+  return true;
 }
 
 char lowerAscii(char value) {
@@ -260,6 +324,13 @@ uint64_t renderCacheKey(uint64_t source, RasterKind kind, int16_t width,
   key = mixCacheKey(key, static_cast<uint16_t>(height));
   key = mixCacheKey(key, dither);
   return mixCacheKey(key, scaleToFit ? 1U : 0U);
+}
+
+uint64_t regionCacheKey(uint64_t key, const ImageSourceRect &source) {
+  key = mixCacheKey(key, source.x);
+  key = mixCacheKey(key, source.y);
+  key = mixCacheKey(key, source.width);
+  return mixCacheKey(key, source.height);
 }
 
 enum class RasterCacheState : uint8_t {
@@ -447,6 +518,9 @@ bool drawRasterPng(Adafruit_GFX &gfx, RasterFileReader &source,
     }
     return false;
   }
+  if (!sourceInsideImage(target, info.width, info.height)) {
+    return false;
+  }
   const uint32_t rowBytes = pngRowBytes(info);
   if (rowBytes == 0 || rowBytes > kMaxPngRowBytes) {
     if (showErrors) {
@@ -517,6 +591,9 @@ bool drawRasterJpeg(Adafruit_GFX &gfx, RasterFileReader &source,
     }
     return false;
   }
+  if (!sourceInsideImage(target, info.width, info.height)) {
+    return false;
+  }
   if (!resetRasterReader(source)) {
     if (showErrors) {
       drawCenteredStatus(gfx, "OPEN FAILED", imageX, imageY, imageW, imageH);
@@ -555,13 +632,16 @@ bool drawRasterJpeg(Adafruit_GFX &gfx, RasterFileReader &source,
 
 bool drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
                     int16_t imageX, int16_t imageY, int16_t imageW,
-                    int16_t imageH, const FileViewerRuntime &runtime) {
+                    int16_t imageH, const FileViewerRuntime &runtime,
+                    bool showErrors = true) {
   size_t size = 0;
   uint8_t *data = readWholeFile(file, kMaxWebpBytes, size);
   if (data == nullptr) {
-    drawCenteredStatus(gfx, file.size() > kMaxWebpBytes ? "TOO LARGE"
-                                                        : "OPEN FAILED",
-                       imageX, imageY, imageW, imageH);
+    if (showErrors) {
+      drawCenteredStatus(gfx, file.size() > kMaxWebpBytes ? "TOO LARGE"
+                                                          : "OPEN FAILED",
+                         imageX, imageY, imageW, imageH);
+    }
     return false;
   }
 
@@ -569,11 +649,17 @@ bool drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
   const iwebp_result infoResult = iwebp_read_info(data, size, &info);
   if (infoResult != IWEBP_OK) {
     imageViewerFree(data);
-    drawCenteredStatus(gfx, infoResult == IWEBP_ERR_UNSUPPORTED_ANIMATION ||
-                                    infoResult == IWEBP_ERR_UNSUPPORTED_CODEC
-                                ? "UNSUPPORTED"
-                                : "DECODE FAILED",
-                       imageX, imageY, imageW, imageH);
+    if (showErrors) {
+      drawCenteredStatus(gfx, infoResult == IWEBP_ERR_UNSUPPORTED_ANIMATION ||
+                                      infoResult == IWEBP_ERR_UNSUPPORTED_CODEC
+                                  ? "UNSUPPORTED"
+                                  : "DECODE FAILED",
+                         imageX, imageY, imageW, imageH);
+    }
+    return false;
+  }
+  if (!sourceInsideImage(target, info.width, info.height)) {
+    imageViewerFree(data);
     return false;
   }
 
@@ -596,13 +682,15 @@ bool drawRasterWebp(Adafruit_GFX &gfx, File &file, RasterDrawTarget &target,
     return true;
   }
 
-  if (result == IWEBP_ERR_MEMORY) {
-    drawCenteredStatus(gfx, "ALLOC FAILED", imageX, imageY, imageW, imageH);
-  } else if (result == IWEBP_ERR_UNSUPPORTED_ANIMATION ||
-             result == IWEBP_ERR_UNSUPPORTED_CODEC) {
-    drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
-  } else {
-    drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
+  if (showErrors) {
+    if (result == IWEBP_ERR_MEMORY) {
+      drawCenteredStatus(gfx, "ALLOC FAILED", imageX, imageY, imageW, imageH);
+    } else if (result == IWEBP_ERR_UNSUPPORTED_ANIMATION ||
+               result == IWEBP_ERR_UNSUPPORTED_CODEC) {
+      drawCenteredStatus(gfx, "UNSUPPORTED", imageX, imageY, imageW, imageH);
+    } else {
+      drawCenteredStatus(gfx, "DECODE FAILED", imageX, imageY, imageW, imageH);
+    }
   }
   return false;
 }
@@ -621,6 +709,9 @@ bool drawRasterWbmp(Adafruit_GFX &gfx, RasterFileReader &source,
                                                    : "DECODE FAILED",
           imageX, imageY, imageW, imageH);
     }
+    return false;
+  }
+  if (!sourceInsideImage(target, info.width, info.height)) {
     return false;
   }
   if (!resetRasterReader(source)) {
@@ -674,6 +765,9 @@ bool drawMemoryPng(Adafruit_GFX &gfx, RasterMemoryReader &source,
     }
     return false;
   }
+  if (!sourceInsideImage(target, info.width, info.height)) {
+    return false;
+  }
   const uint32_t rowBytes = pngRowBytes(info);
   if (rowBytes == 0 || rowBytes > kMaxPngRowBytes) {
     if (showErrors) {
@@ -724,6 +818,9 @@ bool drawMemoryJpeg(Adafruit_GFX &gfx, RasterMemoryReader &source,
     }
     return false;
   }
+  if (!sourceInsideImage(target, info.width, info.height)) {
+    return false;
+  }
   resetRasterReader(source);
   ijpg_reader reader = {&source, readMemoryRasterByte};
   ijpg_render render = {};
@@ -766,6 +863,9 @@ bool drawMemoryWebp(Adafruit_GFX &gfx, const uint8_t *data, size_t size,
                    : "DECODE FAILED",
           imageX, imageY, imageW, imageH);
     }
+    return false;
+  }
+  if (!sourceInsideImage(target, info.width, info.height)) {
     return false;
   }
   iwebp_render render = {};
@@ -812,6 +912,9 @@ bool drawMemoryWbmp(Adafruit_GFX &gfx, RasterMemoryReader &source,
                                                    : "DECODE FAILED",
           imageX, imageY, imageW, imageH);
     }
+    return false;
+  }
+  if (!sourceInsideImage(target, info.width, info.height)) {
     return false;
   }
   resetRasterReader(source);
@@ -1053,6 +1156,115 @@ bool drawImagePathTransformed(Adafruit_GFX &gfx, const char *providerId,
   } else if (kind == RasterKind::Wbmp) {
     decoded = drawRasterWbmp(gfx, source, target, imageX, imageY, imageW,
                              imageH, runtime);
+  }
+  return finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                           imageY, transform);
+}
+
+bool drawImageBufferRegionTransformed(
+    Adafruit_GFX &gfx, const uint8_t *data, size_t size, const char *extension,
+    const ImageSourceRect &sourceRect, int16_t imageX, int16_t imageY,
+    uint8_t dither, const ImageTransform &transform,
+    ImageRenderCachePool *cache) {
+  int16_t decodeWidth = 0;
+  int16_t decodeHeight = 0;
+  if (data == nullptr || size == 0U || extension == nullptr ||
+      extension[0] == '\0' || !validTransform(transform) ||
+      !sourceDecodeBounds(sourceRect, decodeWidth, decodeHeight)) {
+    return false;
+  }
+  const RasterKind kind = rasterKindForExtension(extension);
+  if (kind == RasterKind::Unknown) {
+    return false;
+  }
+
+  RasterMemoryReader source;
+  source.data = data;
+  source.size = size;
+  RasterDrawTarget target = {&gfx, &transform, nullptr, &sourceRect, imageX,
+                             imageY};
+  uint64_t key = renderCacheKey(
+      bufferSourceKey(data, size), kind, static_cast<int16_t>(sourceRect.width),
+      static_cast<int16_t>(sourceRect.height), dither, false);
+  key = regionCacheKey(key, sourceRect);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY,
+      static_cast<int16_t>(sourceRect.width),
+      static_cast<int16_t>(sourceRect.height), transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return true;
+  }
+
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawMemoryJpeg(gfx, source, target, 0, 0, decodeWidth,
+                             decodeHeight, dither, false, false);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawMemoryPng(gfx, source, target, 0, 0, decodeWidth,
+                            decodeHeight, dither, false, false);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawMemoryWebp(gfx, data, size, target, 0, 0, decodeWidth,
+                             decodeHeight, dither, false, false);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawMemoryWbmp(gfx, source, target, 0, 0, decodeWidth,
+                             decodeHeight, false, false);
+  }
+  return finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
+                           imageY, transform);
+}
+
+bool drawImagePathRegionTransformed(
+    Adafruit_GFX &gfx, const char *providerId, const char *path,
+    const ImageSourceRect &sourceRect, int16_t imageX, int16_t imageY,
+    uint8_t dither, const ImageTransform &transform,
+    ImageRenderCachePool *cache) {
+  int16_t decodeWidth = 0;
+  int16_t decodeHeight = 0;
+  if (path == nullptr || path[0] == '\0' || !validTransform(transform) ||
+      !sourceDecodeBounds(sourceRect, decodeWidth, decodeHeight)) {
+    return false;
+  }
+  File file = openProviderPath(providerId != nullptr ? providerId : "sd", path);
+  if (!file || file.isDirectory()) {
+    return false;
+  }
+  const RasterKind kind = rasterKindForFile(file, extensionForPath(path));
+  if (kind == RasterKind::Unknown) {
+    return false;
+  }
+
+  RasterFileReader source = {&file};
+  RasterDrawTarget target = {&gfx, &transform, nullptr, &sourceRect, imageX,
+                             imageY};
+  uint64_t key = renderCacheKey(
+      pathSourceKey(providerId, path, file.size()), kind,
+      static_cast<int16_t>(sourceRect.width),
+      static_cast<int16_t>(sourceRect.height), dither, false);
+  key = regionCacheKey(key, sourceRect);
+  const RasterCacheState cacheState = prepareRasterCache(
+      gfx, target, cache, key, imageX, imageY,
+      static_cast<int16_t>(sourceRect.width),
+      static_cast<int16_t>(sourceRect.height), transform);
+  if (cacheState == RasterCacheState::Hit) {
+    return true;
+  }
+
+  FileViewerRuntime runtime;
+  runtime.imageDither = dither;
+  runtime.imageScaleToFit = false;
+  bool decoded = false;
+  if (kind == RasterKind::Jpeg) {
+    decoded = drawRasterJpeg(gfx, source, target, 0, 0, decodeWidth,
+                             decodeHeight, runtime, false);
+  } else if (kind == RasterKind::Png) {
+    decoded = drawRasterPng(gfx, source, target, 0, 0, decodeWidth,
+                            decodeHeight, runtime, false);
+  } else if (kind == RasterKind::Webp) {
+    decoded = drawRasterWebp(gfx, file, target, 0, 0, decodeWidth,
+                             decodeHeight, runtime, false);
+  } else if (kind == RasterKind::Wbmp) {
+    decoded = drawRasterWbmp(gfx, source, target, 0, 0, decodeWidth,
+                             decodeHeight, runtime, false);
   }
   return finishRasterCache(cacheState, decoded, target.cache, gfx, imageX,
                            imageY, transform);
