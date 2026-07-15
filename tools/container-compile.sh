@@ -117,6 +117,10 @@ fi
 FILES=( \
   "$ROOT/src/sys/app_display.cpp" \
   "$ROOT/src/sys/app_config.cpp" \
+  "$ROOT/src/sys/agentfiesta/openai_transport.cpp" \
+  "$ROOT/src/sys/agentfiesta/feed_store.cpp" \
+  "$ROOT/src/sys/agentfiesta/chat_completion.cpp" \
+  "$ROOT/src/sys/agentfiesta/agentfiesta.cpp" \
   "$ROOT/src/sys/ext_app_api/app_api.cpp" \
   "$ROOT/src/sys/ext_app_api/service_utils.cpp" \
   "$ROOT/src/sys/ext_app_api/permission_service.cpp" \
@@ -239,7 +243,6 @@ fi
 if [[ "$EXTENDED" != "0" ]]; then
   FILES+=( \
     "$ROOT/src/sys/audio/audio.cpp" \
-    "$ROOT/src/apps/voice_notes_app.cpp" \
     "$ROOT/src/fs/providers/audio_file_viewer.cpp")
 fi
 
