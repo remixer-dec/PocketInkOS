@@ -184,6 +184,7 @@ enum class Tag : uint8_t {
   NativeMethod = 14,
   Resolver = 15,
   Date = 16,
+  Error = 17,
 };
 
 static constexpr uint64_t kBoxMask = UINT64_C(0x7ff8000000000000);
@@ -263,6 +264,7 @@ enum class BlockKind : uint8_t {
   Function,
   Promise,
   Date,
+  Error,
   ExternalScratch,
 };
 
@@ -330,6 +332,41 @@ struct DatePayload {
   double milliseconds = 0;
 };
 
+enum class ErrorKind : uint8_t {
+  Error,
+  TypeError,
+  RangeError,
+  ReferenceError,
+  SyntaxError,
+  EvalError,
+  UriError,
+};
+
+inline const char *errorKindName(ErrorKind kind) {
+  switch (kind) {
+  case ErrorKind::TypeError:
+    return "TypeError";
+  case ErrorKind::RangeError:
+    return "RangeError";
+  case ErrorKind::ReferenceError:
+    return "ReferenceError";
+  case ErrorKind::SyntaxError:
+    return "SyntaxError";
+  case ErrorKind::EvalError:
+    return "EvalError";
+  case ErrorKind::UriError:
+    return "URIError";
+  default:
+    return "Error";
+  }
+}
+
+struct ErrorPayload {
+  // Fixed fields avoid allocating an object property chain for every error.
+  Value name = {};
+  Value message = {};
+};
+
 struct ScratchPayload {
   uint32_t next = 0;
   uint32_t dataOffset = 0;
@@ -362,6 +399,13 @@ enum class BuiltinObject : uint8_t {
   Number,
   Boolean,
   Promise,
+  Error,
+  TypeError,
+  RangeError,
+  ReferenceError,
+  SyntaxError,
+  EvalError,
+  UriError,
 };
 
 enum class BuiltinFunction : uint16_t {
@@ -378,6 +422,12 @@ enum class BuiltinFunction : uint16_t {
   MathPow,
   MathSqrt,
   MathTrunc,
+  MathSin,
+  MathCos,
+  MathTan,
+  MathLog,
+  MathExp,
+  MathAtan2,
   MathRandom,
   JsonParse,
   JsonStringify,
@@ -394,6 +444,7 @@ enum class BuiltinFunction : uint16_t {
   ObjectAssign,
   ObjectHasOwn,
   ObjectFromEntries,
+  ObjectDefineProperty,
   ArrayPush,
   ArrayPop,
   ArrayShift,
@@ -463,6 +514,7 @@ enum class BuiltinFunction : uint16_t {
   PromiseThen,
   PromiseCatch,
   PromiseFinally,
+  ErrorToString,
   DateGetTime,
   DateInstanceToIsoString,
   DateGetFullYear,
@@ -748,15 +800,35 @@ private:
   uint32_t stepsRemaining_ = 0;
   uint32_t randomState_ = 0x91e10da5U;
   Value lastResult_ = {};
+  const Value *callArguments_ = nullptr;
+  size_t callArgumentCount_ = 0;
+  // A pending throw reuses error_ as the parser's existing unwind signal.
+  Value exception_ = {};
   Error error_ = {};
+  detail::ErrorKind failureKind_ = detail::ErrorKind::Error;
+  bool exceptionPending_ = false;
   bool ready_ = false;
   bool running_ = false;
 
   void initializeWorkspace();
-  void clearError() { error_ = Error{}; }
+  void clearError() {
+    error_ = Error{};
+    failureKind_ = detail::ErrorKind::Error;
+    exception_ = undefined();
+    exceptionPending_ = false;
+  }
   void setError(const char *message, const char *source, size_t offset);
   void setError(ErrorCode code, const char *source, size_t offset);
+  void setError(detail::ErrorKind kind, const char *message,
+                const char *source, size_t offset);
+  void setError(detail::ErrorKind kind, ErrorCode code, const char *source,
+                size_t offset);
   void setErrorLocation(const char *source, size_t offset);
+  Value makeError(detail::ErrorKind kind, Value message);
+  Value takeFailure();
+  Value raiseException(Value exception, const char *source = nullptr,
+                       size_t offset = 0);
+  const detail::ErrorPayload *errorPayload(Value error) const;
   bool step(const char *source, size_t offset);
 
   detail::BlockHeader *header(uint32_t offset) {
@@ -819,6 +891,10 @@ private:
   Value getProperty(Value receiver, const char *key, size_t keyLength);
   bool setProperty(Value receiver, const char *key, size_t keyLength,
                    Value value);
+  bool deleteProperty(Value object, const char *key, size_t keyLength);
+  bool deleteIndex(Value receiver, NameRef name, int64_t index, bool numeric);
+  bool hasIndex(Value receiver, Value key);
+  bool copyObjectProperties(Value target, Value source);
   bool getIndex(Value receiver, Value key, Value *result, NameRef *name,
                 int64_t *index, bool *numeric);
   bool setIndex(Value receiver, NameRef name, int64_t index, bool numeric,
@@ -964,30 +1040,111 @@ inline void Runtime::initializeWorkspace() {
   heapUsed_ = 8; // Offset zero remains the null link in heap structures.
   peakHeapUsed_ = heapUsed_;
   lastResult_ = undefined();
+  exception_ = undefined();
   randomState_ ^= static_cast<uint32_t>(nowMilliseconds());
   ready_ = true;
 }
 
 inline void Runtime::setError(const char *message, const char *source,
                               size_t offset) {
+  setError(detail::ErrorKind::Error, message, source, offset);
+}
+
+inline void Runtime::setError(detail::ErrorKind kind, const char *message,
+                              const char *source, size_t offset) {
   if (error_.message[0] != '\0') {
     return;
   }
   if (message == nullptr) {
-    setError(ErrorCode{220}, source, offset);
+    setError(kind, ErrorCode{220}, source, offset);
     return;
   }
+  failureKind_ = kind;
   std::snprintf(error_.message, sizeof(error_.message), "%s", message);
   setErrorLocation(source, offset);
 }
 
 inline void Runtime::setError(ErrorCode code, const char *source,
                               size_t offset) {
+  setError(detail::ErrorKind::Error, code, source, offset);
+}
+
+inline void Runtime::setError(detail::ErrorKind kind, ErrorCode code,
+                              const char *source, size_t offset) {
   if (error_.message[0] != '\0') {
     return;
   }
+  failureKind_ = kind;
   formatErrorCode(code, error_.message);
   setErrorLocation(source, offset);
+}
+
+inline const detail::ErrorPayload *Runtime::errorPayload(Value error) const {
+  const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(error));
+  return detail::tagOf(error) == detail::Tag::Error &&
+                 validOffset(offset, detail::BlockKind::Error)
+             ? static_cast<const detail::ErrorPayload *>(payload(offset))
+             : nullptr;
+}
+
+inline Value Runtime::makeError(detail::ErrorKind kind, Value message) {
+  Value text = isUndefined(message) ? makeString("") : toStringValue(message);
+  if (error_.message[0] != '\0')
+    return undefined();
+  Value name = makeString(detail::errorKindName(kind));
+  if (error_.message[0] != '\0')
+    return undefined();
+  const uint32_t offset = allocateBlock(detail::BlockKind::Error,
+                                        sizeof(detail::ErrorPayload));
+  if (offset == 0)
+    return undefined();
+  auto *data = static_cast<detail::ErrorPayload *>(payload(offset));
+  data->name = name;
+  data->message = text;
+  return detail::boxed(detail::Tag::Error, offset);
+}
+
+inline Value Runtime::takeFailure() {
+  if (error_.message[0] == '\0')
+    return undefined();
+  if (exceptionPending_) {
+    const Value exception = exception_;
+    clearError();
+    return exception;
+  }
+  char message[sizeof(error_.message)];
+  std::snprintf(message, sizeof(message), "%s", error_.message);
+  const detail::ErrorKind kind = failureKind_;
+  clearError();
+  return makeError(kind, makeString(message));
+}
+
+inline Value Runtime::raiseException(Value exception, const char *source,
+                                     size_t offset) {
+  if (error_.message[0] != '\0')
+    return undefined();
+  exception_ = exception;
+  exceptionPending_ = true;
+  detail::ErrorKind kind = detail::ErrorKind::Error;
+  if (const detail::ErrorPayload *data = errorPayload(exception)) {
+    const StringView name = stringView(data->name);
+    for (uint8_t i = 0; i <= static_cast<uint8_t>(detail::ErrorKind::UriError);
+         i++) {
+      const auto candidate = static_cast<detail::ErrorKind>(i);
+      const char *candidateName = detail::errorKindName(candidate);
+      const size_t length = std::strlen(candidateName);
+      if (name.size == length &&
+          std::memcmp(name.data, candidateName, length) == 0) {
+        kind = candidate;
+        break;
+      }
+    }
+  }
+  char message[sizeof(error_.message)];
+  if (format(exception, message, sizeof(message)) == 0)
+    formatErrorCode(ErrorCode{225}, message);
+  setError(kind, message, source, offset);
+  return undefined();
 }
 
 inline void Runtime::setErrorLocation(const char *source, size_t offset) {
@@ -1335,6 +1492,7 @@ inline ValueType Runtime::typeOf(Value value) const {
     return ValueType::String;
   case detail::Tag::Object:
   case detail::Tag::Date:
+  case detail::Tag::Error:
     return ValueType::Object;
   case detail::Tag::Promise:
     return ValueType::Promise;
@@ -1492,6 +1650,18 @@ inline size_t Runtime::formatDepth(Value value, char *out, size_t outSize,
   case ValueType::Object:
     if (detail::tagOf(value) == detail::Tag::Date) {
       append("[object Date]", 13);
+    } else if (detail::tagOf(value) == detail::Tag::Error) {
+      const detail::ErrorPayload *data = errorPayload(value);
+      const StringView name =
+          data != nullptr ? stringView(data->name) : StringView{};
+      const StringView message =
+          data != nullptr ? stringView(data->message) : StringView{};
+      append(name.data != nullptr ? name.data : "Error",
+             name.data != nullptr ? name.size : 5U);
+      if (message.size > 0) {
+        append(": ", 2);
+        append(message.data, message.size);
+      }
     } else {
       append("[object Object]", 15);
     }
@@ -1575,12 +1745,10 @@ inline Value Runtime::rejectCurrentError() {
   if (error_.message[0] == '\0') {
     return undefined();
   }
-  char message[sizeof(error_.message)];
-  std::snprintf(message, sizeof(message), "%s", error_.message);
-  clearError();
+  Value failure = takeFailure();
   Value promise = makePromise();
   if (!isUndefined(promise)) {
-    adoptPromise(promise, makeString(message), true);
+    adoptPromise(promise, failure, true);
   }
   return promise;
 }
@@ -1818,8 +1986,88 @@ inline bool Runtime::objectSet(Value object, const char *key, size_t keyLength,
   return true;
 }
 
+inline bool Runtime::deleteProperty(Value object, const char *key,
+                                    size_t keyLength) {
+  if (detail::tagOf(object) != detail::Tag::Object || key == nullptr)
+    return false;
+  const uint32_t objectOffset =
+      static_cast<uint32_t>(detail::payloadOf(object));
+  if (!validOffset(objectOffset, detail::BlockKind::Object))
+    return false;
+  auto *objectData =
+      static_cast<detail::ObjectPayload *>(payload(objectOffset));
+  uint32_t *link = &objectData->firstProperty;
+  while (*link != 0 && validOffset(*link, detail::BlockKind::Property)) {
+    const uint32_t current = *link;
+    detail::PropertyPayload *property = propertyPayload(current);
+    const StringView propertyKey = stringView(property->key);
+    if (propertyKey.size == keyLength && propertyKey.data != nullptr &&
+        std::memcmp(propertyKey.data, key, keyLength) == 0) {
+      *link = property->next;
+      header(current)->kind = detail::BlockKind::Free;
+      return true;
+    }
+    link = &property->next;
+  }
+  return true;
+}
+
+inline bool Runtime::copyObjectProperties(Value target, Value source) {
+  if (detail::tagOf(target) != detail::Tag::Object)
+    return false;
+  const detail::Tag tag = detail::tagOf(source);
+  if (tag == detail::Tag::Null || tag == detail::Tag::Undefined)
+    return true;
+  if (tag == detail::Tag::Object) {
+    const uint32_t offset = static_cast<uint32_t>(detail::payloadOf(source));
+    if (!validOffset(offset, detail::BlockKind::Object))
+      return false;
+    uint32_t property =
+        static_cast<const detail::ObjectPayload *>(payload(offset))
+            ->firstProperty;
+    // Copy directly from the compact linked list. Property order is not
+    // observable by ordinary lookup, and avoiding an index table keeps this
+    // linear and allocation-free apart from the result properties.
+    while (property != 0 &&
+           validOffset(property, detail::BlockKind::Property)) {
+      const detail::PropertyPayload *item = propertyPayload(property);
+      const StringView key = stringView(item->key);
+      if (!objectSet(target, key.data, key.size, item->value))
+        return false;
+      property = item->next;
+    }
+    return true;
+  }
+  if (tag == detail::Tag::Array || tag == detail::Tag::String) {
+    const size_t length = tag == detail::Tag::Array
+                              ? arrayLength(source)
+                              : stringView(source).size;
+    for (size_t i = 0; i < length; i++) {
+      char key[24];
+      const int count = std::snprintf(key, sizeof(key), "%lu",
+                                      static_cast<unsigned long>(i));
+      Value item = tag == detail::Tag::Array
+                       ? arrayAt(source, i)
+                       : makeString(stringView(source).data + i, 1);
+      if (count < 0 || !objectSet(target, key, static_cast<size_t>(count), item))
+        return false;
+    }
+  }
+  return error_.message[0] == '\0';
+}
+
 inline Value Runtime::objectGet(Value object, const char *key,
                                 size_t keyLength) const {
+  if (detail::tagOf(object) == detail::Tag::Error) {
+    const detail::ErrorPayload *data = errorPayload(object);
+    if (data != nullptr && key != nullptr) {
+      if (keyLength == 4 && std::memcmp(key, "name", 4) == 0)
+        return data->name;
+      if (keyLength == 7 && std::memcmp(key, "message", 7) == 0)
+        return data->message;
+    }
+    return undefined();
+  }
   const int found = findProperty(object, key, keyLength);
   return found != 0
              ? propertyPayload(static_cast<uint32_t>(found))->value
@@ -1916,11 +2164,11 @@ inline bool Runtime::defineBinding(NameRef name, Value value, bool constant) {
 
 inline bool Runtime::assignBinding(size_t index, Value value) {
   if (index >= bindingCount_) {
-    setError(ErrorCode{13}, nullptr, 0);
+    setError(detail::ErrorKind::ReferenceError, ErrorCode{13}, nullptr, 0);
     return false;
   }
   if (bindings_[index].constant != 0) {
-    setError(ErrorCode{14}, nullptr, 0);
+    setError(detail::ErrorKind::TypeError, ErrorCode{14}, nullptr, 0);
     return false;
   }
   bindings_[index].value = value;
@@ -1994,6 +2242,32 @@ inline Value Runtime::builtinGlobal(NameRef name) const {
   if (equals("Promise"))
     return detail::boxed(detail::Tag::BuiltinObject,
                          static_cast<uint8_t>(detail::BuiltinObject::Promise));
+  if (equals("Error"))
+    return detail::boxed(detail::Tag::BuiltinObject,
+                         static_cast<uint8_t>(detail::BuiltinObject::Error));
+  if (equals("TypeError"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::TypeError));
+  if (equals("RangeError"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::RangeError));
+  if (equals("ReferenceError"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::ReferenceError));
+  if (equals("SyntaxError"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::SyntaxError));
+  if (equals("EvalError"))
+    return detail::boxed(
+        detail::Tag::BuiltinObject,
+        static_cast<uint8_t>(detail::BuiltinObject::EvalError));
+  if (equals("URIError"))
+    return detail::boxed(detail::Tag::BuiltinObject,
+                         static_cast<uint8_t>(detail::BuiltinObject::UriError));
   return undefined();
 }
 
@@ -2148,6 +2422,12 @@ inline Value Runtime::builtinProperty(detail::BuiltinObject object,
         detail::builtinProperty<7>("pow", B::MathPow),
         detail::builtinProperty<7>("sqrt", B::MathSqrt),
         detail::builtinProperty<7>("trunc", B::MathTrunc),
+        detail::builtinProperty<7>("sin", B::MathSin),
+        detail::builtinProperty<7>("cos", B::MathCos),
+        detail::builtinProperty<7>("tan", B::MathTan),
+        detail::builtinProperty<7>("log", B::MathLog),
+        detail::builtinProperty<7>("exp", B::MathExp),
+        detail::builtinProperty<7>("atan2", B::MathAtan2),
         detail::builtinProperty<7>("random", B::MathRandom),
     };
     return detail::findBuiltinProperty(properties, key, keyLength);
@@ -2176,13 +2456,15 @@ inline Value Runtime::builtinProperty(detail::BuiltinObject object,
     return detail::findBuiltinProperty(properties, key, keyLength);
   }
   case detail::BuiltinObject::Object: {
-    static constexpr detail::BuiltinProperty<12> properties[] = {
-        detail::builtinProperty<12>("keys", B::ObjectKeys),
-        detail::builtinProperty<12>("values", B::ObjectValues),
-        detail::builtinProperty<12>("entries", B::ObjectEntries),
-        detail::builtinProperty<12>("assign", B::ObjectAssign),
-        detail::builtinProperty<12>("hasOwn", B::ObjectHasOwn),
-        detail::builtinProperty<12>("fromEntries", B::ObjectFromEntries),
+    static constexpr detail::BuiltinProperty<15> properties[] = {
+        detail::builtinProperty<15>("keys", B::ObjectKeys),
+        detail::builtinProperty<15>("values", B::ObjectValues),
+        detail::builtinProperty<15>("entries", B::ObjectEntries),
+        detail::builtinProperty<15>("assign", B::ObjectAssign),
+        detail::builtinProperty<15>("hasOwn", B::ObjectHasOwn),
+        detail::builtinProperty<15>("fromEntries", B::ObjectFromEntries),
+        detail::builtinProperty<15>("defineProperty",
+                                    B::ObjectDefineProperty),
     };
     return detail::findBuiltinProperty(properties, key, keyLength);
   }
@@ -2216,6 +2498,13 @@ inline Value Runtime::builtinProperty(detail::BuiltinObject object,
     return detail::findBuiltinProperty(properties, key, keyLength);
   }
   case detail::BuiltinObject::Boolean:
+  case detail::BuiltinObject::Error:
+  case detail::BuiltinObject::TypeError:
+  case detail::BuiltinObject::RangeError:
+  case detail::BuiltinObject::ReferenceError:
+  case detail::BuiltinObject::SyntaxError:
+  case detail::BuiltinObject::EvalError:
+  case detail::BuiltinObject::UriError:
     break;
   }
   return undefined();
@@ -2228,9 +2517,29 @@ inline Value Runtime::getProperty(Value receiver, const char *key,
     return length == keyLength && std::memcmp(key, name, length) == 0;
   };
   using B = detail::BuiltinFunction;
+  if (detail::tagOf(receiver) == detail::Tag::Null ||
+      detail::tagOf(receiver) == detail::Tag::Undefined) {
+    setError(detail::ErrorKind::TypeError,
+             ErrorCode{224}, nullptr, 0);
+    return undefined();
+  }
   switch (detail::tagOf(receiver)) {
   case detail::Tag::Object:
     return objectGet(receiver, key, keyLength);
+  case detail::Tag::Error: {
+    const detail::ErrorPayload *data = errorPayload(receiver);
+    if (data == nullptr)
+      return undefined();
+    if (is("name"))
+      return data->name;
+    if (is("message"))
+      return data->message;
+    if (is("toString"))
+      return detail::boxed(
+          detail::Tag::BuiltinFunction,
+          static_cast<uint16_t>(detail::BuiltinFunction::ErrorToString));
+    return undefined();
+  }
   case detail::Tag::BuiltinObject:
     return builtinProperty(
         static_cast<detail::BuiltinObject>(detail::payloadOf(receiver)), key,
@@ -2368,7 +2677,7 @@ inline bool Runtime::setProperty(Value receiver, const char *key,
   if (detail::tagOf(receiver) == detail::Tag::Object) {
     return objectSet(receiver, key, keyLength, value);
   }
-  setError(ErrorCode{20}, nullptr, 0);
+  setError(detail::ErrorKind::TypeError, ErrorCode{20}, nullptr, 0);
   return false;
 }
 
@@ -2431,6 +2740,58 @@ inline bool Runtime::setIndex(Value receiver, NameRef name, int64_t index,
     return false;
   }
   return setProperty(receiver, name.data, name.length, value);
+}
+
+inline bool Runtime::deleteIndex(Value receiver, NameRef name, int64_t index,
+                                 bool numeric) {
+  if (numeric && detail::tagOf(receiver) == detail::Tag::Array) {
+    detail::CollectionPayload *owner = collection(receiver);
+    detail::ValuesPayload *values =
+        owner != nullptr ? valuesPayload(owner->values) : nullptr;
+    if (index >= 0 && values != nullptr &&
+        static_cast<size_t>(index) < values->length) {
+      valuesData(values)[static_cast<size_t>(index)] = undefined();
+    }
+    return true;
+  }
+  if (detail::tagOf(receiver) == detail::Tag::Object && name.data != nullptr)
+    return deleteProperty(receiver, name.data, name.length);
+  return false;
+}
+
+inline bool Runtime::hasIndex(Value receiver, Value key) {
+  const detail::Tag tag = detail::tagOf(receiver);
+  if (tag != detail::Tag::Object && tag != detail::Tag::Array &&
+      tag != detail::Tag::String && tag != detail::Tag::Set &&
+      tag != detail::Tag::Promise && tag != detail::Tag::Date &&
+      tag != detail::Tag::Error && tag != detail::Tag::BuiltinObject) {
+    setError(detail::ErrorKind::TypeError, ErrorCode{229}, nullptr, 0);
+    return false;
+  }
+  Value keyText = toStringValue(key);
+  if (error_.message[0] != '\0')
+    return false;
+  const StringView text = stringView(keyText);
+  if (tag == detail::Tag::Object)
+    return findProperty(receiver, text.data, text.size) != 0;
+  if (tag != detail::Tag::Array && tag != detail::Tag::String)
+    return !isUndefined(getProperty(receiver, text.data, text.size));
+  if (text.size == 6 && std::memcmp(text.data, "length", 6) == 0)
+    return true;
+  if (text.size == 0)
+    return false;
+  uint64_t index = 0;
+  for (size_t i = 0; i < text.size; i++) {
+    if (text.data[i] < '0' || text.data[i] > '9')
+      return !isUndefined(getProperty(receiver, text.data, text.size));
+    index = index * 10U + static_cast<uint64_t>(text.data[i] - '0');
+    if (index > SIZE_MAX)
+      return false;
+  }
+  const size_t length = tag == detail::Tag::Array
+                            ? arrayLength(receiver)
+                            : stringView(receiver).size;
+  return index < length;
 }
 
 inline Value Runtime::makeFunction(
@@ -2561,6 +2922,13 @@ inline size_t Runtime::valueReferenceCount(Value target, size_t limit) const {
       found(promise->onFulfilled);
       found(promise->onRejected);
       found(promise->child);
+      break;
+    }
+    case detail::BlockKind::Error: {
+      const auto *error = static_cast<const detail::ErrorPayload *>(
+          payload(offset));
+      found(error->name);
+      found(error->message);
       break;
     }
     default:
@@ -2821,10 +3189,7 @@ inline Value Runtime::awaitValue(Value value) {
       return fail(ErrorCode{33});
     }
     if (data->state == 2) {
-      if (isString(data->result)) {
-        return fail(stringView(data->result).data);
-      }
-      return fail(ErrorCode{34});
+      return raiseException(data->result);
     }
     return data->result;
   }
@@ -2933,10 +3298,7 @@ inline RunResult Runtime::drainJobs(size_t maximum) {
                          ? callValue(handler, undefined(), nullptr, 0)
                          : callValue(handler, undefined(), &input, 1);
       if (error_.message[0] != '\0') {
-        char message[sizeof(error_.message)];
-        std::snprintf(message, sizeof(message), "%s", error_.message);
-        clearError();
-        adoptPromise(child, makeString(message), true);
+        adoptPromise(child, takeFailure(), true);
       } else {
         adoptPromise(child, finallyHandler ? input : output,
                      finallyHandler ? rejected : false);
@@ -2978,6 +3340,7 @@ inline void Runtime::markValue(Value value, uint32_t &workCount,
   case detail::Tag::Function:
   case detail::Tag::Promise:
   case detail::Tag::Date:
+  case detail::Tag::Error:
   case detail::Tag::Source:
     markOffset(static_cast<uint32_t>(detail::payloadOf(value)), workCount,
                overflow);
@@ -3025,6 +3388,8 @@ inline void Runtime::collectGarbage() {
   }
   markOffset(promiseJobHead_, workCount, overflow);
   markValue(lastResult_, workCount, overflow);
+  if (exceptionPending_)
+    markValue(exception_, workCount, overflow);
 
   while (workCount > 0 && !overflow) {
     const uint32_t offset = gcWork_[--workCount];
@@ -3072,6 +3437,13 @@ inline void Runtime::collectGarbage() {
       markValue(promise->onRejected, workCount, overflow);
       markValue(promise->child, workCount, overflow);
       markOffset(promise->nextJob, workCount, overflow);
+      break;
+    }
+    case detail::BlockKind::Error: {
+      const auto *error = static_cast<const detail::ErrorPayload *>(
+          payload(offset));
+      markValue(error->name, workCount, overflow);
+      markValue(error->message, workCount, overflow);
       break;
     }
     default:
@@ -3138,6 +3510,7 @@ enum class TokenType : uint8_t {
   LeftBracket,
   RightBracket,
   Comma,
+  Ellipsis,
   Dot,
   Colon,
   Semicolon,
@@ -3157,14 +3530,23 @@ enum class TokenType : uint8_t {
   Return,
   Break,
   Continue,
+  Switch,
+  Case,
+  Default,
+  Try,
+  Catch,
+  Throw,
   True,
   False,
   Null,
   Undefined,
   Typeof,
+  Delete,
+  Void,
   New,
   Async,
   Await,
+  Instanceof,
   Plus,
   Minus,
   Star,
@@ -3358,7 +3740,10 @@ public:
       token.type = TokenType::Comma;
       break;
     case '.':
-      token.type = TokenType::Dot;
+      if (match('.') && match('.'))
+        token.type = TokenType::Ellipsis;
+      else
+        token.type = TokenType::Dot;
       break;
     case ':':
       token.type = TokenType::Colon;
@@ -3499,6 +3884,18 @@ private:
       return TokenType::Break;
     if (same(text, length, "continue"))
       return TokenType::Continue;
+    if (same(text, length, "switch"))
+      return TokenType::Switch;
+    if (same(text, length, "case"))
+      return TokenType::Case;
+    if (same(text, length, "default"))
+      return TokenType::Default;
+    if (same(text, length, "try"))
+      return TokenType::Try;
+    if (same(text, length, "catch"))
+      return TokenType::Catch;
+    if (same(text, length, "throw"))
+      return TokenType::Throw;
     if (same(text, length, "true"))
       return TokenType::True;
     if (same(text, length, "false"))
@@ -3509,12 +3906,18 @@ private:
       return TokenType::Undefined;
     if (same(text, length, "typeof"))
       return TokenType::Typeof;
+    if (same(text, length, "delete"))
+      return TokenType::Delete;
+    if (same(text, length, "void"))
+      return TokenType::Void;
     if (same(text, length, "new"))
       return TokenType::New;
     if (same(text, length, "async"))
       return TokenType::Async;
     if (same(text, length, "await"))
       return TokenType::Await;
+    if (same(text, length, "instanceof"))
+      return TokenType::Instanceof;
     return TokenType::Identifier;
   }
 
@@ -3570,19 +3973,21 @@ public:
 
   Parser(Runtime &runtime, uint32_t sourceOffset, uint32_t begin,
          uint32_t end, bool functionBody = false, bool loopBody = false,
-         bool asyncBody = false)
+         bool asyncBody = false, bool switchBody = false)
       : runtime_(runtime), sourceOffset_(sourceOffset),
         source_(runtime.sourceData(sourceOffset)), lexer_(source_, begin, end),
         end_(end), functionBody_(functionBody), loopBody_(loopBody),
-        asyncBody_(asyncBody) {
+        asyncBody_(asyncBody), switchBody_(switchBody) {
     token_ = lexer_.next();
   }
 
   Flow program(bool execute = true);
   Flow statement(bool execute);
-  Value expression(bool execute = true) { return assignment(execute).value; }
+  Value expression(bool execute = true) { return sequence(execute).value; }
 
 private:
+  friend class Runtime;
+
   class NestingGuard {
   public:
     explicit NestingGuard(Parser &parser);
@@ -3611,6 +4016,7 @@ private:
     uint32_t begin = 0;
     uint32_t end = 0;
   };
+  enum class PatternMode : uint8_t { Validate, Declare, DeclareConst, Assign };
   enum class BinaryPrecedence : uint8_t {
     None,
     LogicalOr,
@@ -3636,6 +4042,8 @@ private:
   bool functionBody_ = false;
   bool loopBody_ = false;
   bool asyncBody_ = false;
+  bool switchBody_ = false;
+  bool allowMissingIdentifier_ = false;
 
   bool advance();
   bool accept(detail::TokenType type);
@@ -3652,14 +4060,21 @@ private:
   Flow whileStatement(bool execute);
   Flow doWhileStatement(bool execute);
   Flow forStatement(bool execute);
+  Flow switchStatement(bool execute);
   Flow returnStatement(bool execute);
+  Flow tryStatement(bool execute);
+  Flow throwStatement(bool execute);
   Span captureStatement();
   Flow executeStatementSpan(Span span, bool loopBody = false);
   Value executeExpressionSpan(Span span);
   bool iterableAt(Value iterable, size_t index, Value *value) const;
   size_t iterableLength(Value iterable) const;
+  bool appendSpread(Value iterable, Value *values, size_t &count,
+                    size_t capacity);
 
   Expression assignment(bool execute);
+  Expression sequence(bool execute);
+  Expression destructuringAssignment(bool execute);
   Expression conditional(bool execute);
   Expression binary(
       bool execute,
@@ -3669,7 +4084,8 @@ private:
   Expression primary(bool execute);
   Expression arrowFunction(bool execute,
                            const detail::ParameterSpan *parameters,
-                           size_t parameterCount);
+                           size_t parameterCount, bool asyncBody = false);
+  Expression asyncArrowFunction(bool execute);
   Expression traditionalFunction(bool execute);
   Expression traditionalFunction(bool execute, bool asyncBody,
                                    detail::ParameterSpan *parsedName);
@@ -3680,6 +4096,10 @@ private:
   Value applyBinary(detail::TokenType operation, Value left, Value right,
                     bool execute);
   bool store(const Reference &reference, Value value);
+  bool patternAssignmentAhead() const;
+  bool pattern(Value value, PatternMode mode, bool execute);
+  bool patternLeaf(Value value, PatternMode mode, bool execute);
+  bool applyPatternSpan(Span span, Value value, PatternMode mode);
   Value currentValue(const Expression &expression) const {
     return expression.value;
   }
@@ -3724,7 +4144,12 @@ inline detail::TokenType Parser::peekType() const {
 
 inline bool Parser::identifierToken(detail::TokenType type) const {
   return type == detail::TokenType::Identifier || type == detail::TokenType::Of ||
-         type == detail::TokenType::In;
+         type == detail::TokenType::In || type == detail::TokenType::Try ||
+         type == detail::TokenType::Catch || type == detail::TokenType::Throw ||
+         type == detail::TokenType::Switch || type == detail::TokenType::Case ||
+         type == detail::TokenType::Default || type == detail::TokenType::Delete ||
+         type == detail::TokenType::Void ||
+         type == detail::TokenType::Instanceof;
 }
 
 inline bool Parser::startsStatement(detail::TokenType type) const {
@@ -3732,6 +4157,7 @@ inline bool Parser::startsStatement(detail::TokenType type) const {
   return type == T::Let || type == T::Const || type == T::If ||
          type == T::While || type == T::Do || type == T::For ||
          type == T::Return || type == T::Break || type == T::Continue ||
+         type == T::Switch || type == T::Try || type == T::Throw ||
          type == T::LeftBrace || type == T::Function || type == T::Async;
 }
 
@@ -3981,7 +4407,7 @@ inline Value Parser::templateLiteral(const detail::Token &token, bool execute) {
 
 inline Parser::Expression Parser::arrowFunction(
     bool execute, const detail::ParameterSpan *parameters,
-    size_t parameterCount) {
+    size_t parameterCount, bool asyncBody) {
   NestingGuard nesting(*this);
   if (!nesting) {
     return {runtime_.undefined()};
@@ -3989,6 +4415,8 @@ inline Parser::Expression Parser::arrowFunction(
   uint32_t bodyStart = token_.start;
   uint32_t bodyEnd = bodyStart;
   bool expressionBody = token_.type != detail::TokenType::LeftBrace;
+  const bool outerAsyncBody = asyncBody_;
+  asyncBody_ = asyncBody;
   if (!expressionBody) {
     advance();
     bodyStart = token_.start;
@@ -4004,13 +4432,65 @@ inline Parser::Expression Parser::arrowFunction(
     assignment(false);
     bodyEnd = token_.start;
   }
+  asyncBody_ = outerAsyncBody;
   Expression result;
   result.value = execute && runtime_.error_.message[0] == '\0'
                      ? runtime_.makeFunction(sourceOffset_, bodyStart, bodyEnd,
                                              parameters, parameterCount,
-                                             expressionBody)
+                                             expressionBody, asyncBody)
                      : runtime_.undefined();
   return result;
+}
+
+inline Parser::Expression Parser::asyncArrowFunction(bool execute) {
+  using T = detail::TokenType;
+  advance(); // async
+  detail::ParameterSpan parameters[16];
+  size_t count = 0;
+  if (token_.newlineBefore) {
+    syntax(ErrorCode{59});
+    return {runtime_.undefined()};
+  }
+  if (identifierToken(token_.type) && peekType() == T::Arrow) {
+    parameters[count++] = {token_.start,
+                           static_cast<uint16_t>(token_.length), 0};
+    advance();
+  } else if (accept(T::LeftParen)) {
+    if (token_.type != T::RightParen) {
+      while (true) {
+        if (count >= sizeof(parameters) / sizeof(parameters[0])) {
+          syntax(ErrorCode{62});
+          break;
+        }
+        const bool rest = accept(T::Ellipsis);
+        const uint32_t begin = token_.start;
+        if (!pattern(runtime_.undefined(), PatternMode::Declare, false)) {
+          syntax(ErrorCode{62});
+          break;
+        }
+        const uint32_t length = token_.start - begin;
+        if (length > UINT16_MAX) {
+          syntax(ErrorCode{62});
+          break;
+        }
+        parameters[count++] = {begin, static_cast<uint16_t>(length),
+                               static_cast<uint16_t>(rest)};
+        if (rest) {
+          if (token_.type != T::RightParen)
+            syntax(ErrorCode{227});
+          break;
+        }
+        if (!accept(T::Comma))
+          break;
+      }
+    }
+    expect(T::RightParen, ErrorCode{53});
+  } else {
+    syntax(ErrorCode{62});
+    return {runtime_.undefined()};
+  }
+  expect(T::Arrow, ErrorCode{60});
+  return arrowFunction(execute, parameters, count, true);
 }
 
 inline Parser::Expression Parser::traditionalFunction(bool execute) {
@@ -4039,19 +4519,32 @@ Parser::traditionalFunction(bool execute, bool asyncBody,
   detail::ParameterSpan parameters[16];
   size_t parameterCount = 0;
   if (token_.type != detail::TokenType::RightParen) {
-    do {
-      if (!identifierToken(token_.type)) {
-        syntax(ErrorCode{51});
-        break;
-      }
+    while (true) {
       if (parameterCount >= sizeof(parameters) / sizeof(parameters[0])) {
         syntax(ErrorCode{52});
         break;
       }
-      parameters[parameterCount++] = {token_.start,
-                                      static_cast<uint16_t>(token_.length), 0};
-      advance();
-    } while (accept(detail::TokenType::Comma));
+      const bool rest = accept(detail::TokenType::Ellipsis);
+      const uint32_t begin = token_.start;
+      if (!pattern(runtime_.undefined(), PatternMode::Declare, false)) {
+        syntax(ErrorCode{51});
+        break;
+      }
+      const uint32_t length = token_.start - begin;
+      if (length > UINT16_MAX) {
+        syntax(ErrorCode{52});
+        break;
+      }
+      parameters[parameterCount++] = {
+          begin, static_cast<uint16_t>(length), static_cast<uint16_t>(rest)};
+      if (rest) {
+        if (token_.type != detail::TokenType::RightParen)
+          syntax(ErrorCode{227});
+        break;
+      }
+      if (!accept(detail::TokenType::Comma))
+        break;
+    }
   }
   expect(detail::TokenType::RightParen, ErrorCode{53});
   if (token_.type != detail::TokenType::LeftBrace) {
@@ -4093,6 +4586,28 @@ inline Parser::Expression Parser::arrayLiteral(bool execute) {
       }
       continue;
     }
+    if (accept(detail::TokenType::Ellipsis)) {
+      Expression spread = assignment(execute);
+      if (execute) {
+        const detail::Tag tag = detail::tagOf(spread.value);
+        if (tag != detail::Tag::Array && tag != detail::Tag::Set &&
+            tag != detail::Tag::String) {
+          runtime_.setError(detail::ErrorKind::TypeError, ErrorCode{226},
+                            source_, token_.start);
+        } else {
+          const size_t length = iterableLength(spread.value);
+          for (size_t i = 0;
+               i < length && runtime_.error_.message[0] == '\0'; i++) {
+            Value item;
+            iterableAt(spread.value, i, &item);
+            runtime_.arrayPush(array, item);
+          }
+        }
+      }
+      if (!accept(detail::TokenType::Comma))
+        break;
+      continue;
+    }
     Expression element = assignment(execute);
     if (execute) {
       runtime_.arrayPush(array, element.value);
@@ -4115,6 +4630,14 @@ inline Parser::Expression Parser::objectLiteral(bool execute) {
   while (token_.type != detail::TokenType::RightBrace &&
          token_.type != detail::TokenType::End &&
          runtime_.error_.message[0] == '\0') {
+    if (accept(detail::TokenType::Ellipsis)) {
+      Expression spread = assignment(execute);
+      if (execute)
+        runtime_.copyObjectProperties(object, spread.value);
+      if (!accept(detail::TokenType::Comma))
+        break;
+      continue;
+    }
     const detail::Token keyToken = token_;
     const char *key = nullptr;
     size_t keyLength = 0;
@@ -4182,6 +4705,9 @@ inline Parser::Expression Parser::primary(bool execute) {
   using T = detail::TokenType;
   Expression result;
   result.value = runtime_.undefined();
+  const bool allowMissing = allowMissingIdentifier_;
+  if (token_.type != T::LeftParen)
+    allowMissingIdentifier_ = false;
   if (token_.type == T::Number) {
     result.value = execute ? runtime_.number(token_.number) : runtime_.undefined();
     advance();
@@ -4224,12 +4750,11 @@ inline Parser::Expression Parser::primary(bool execute) {
     return traditionalFunction(execute);
   }
   if (token_.type == T::Async) {
-    advance();
-    if (token_.type != T::Function) {
-      syntax(ErrorCode{59});
-      return result;
+    if (peekType() == T::Function) {
+      advance();
+      return traditionalFunction(execute, true, nullptr);
     }
-    return traditionalFunction(execute, true, nullptr);
+    return asyncArrowFunction(execute);
   }
   if (identifierToken(token_.type)) {
     const detail::Token nameToken = token_;
@@ -4244,15 +4769,39 @@ inline Parser::Expression Parser::primary(bool execute) {
                           static_cast<uint16_t>(nameToken.length),
                           sourceOffset_};
     const int binding = runtime_.findBinding(name);
+    const bool argumentsName =
+        nameToken.length == 9 &&
+        std::memcmp(source_ + nameToken.start, "arguments", 9) == 0;
     if (execute) {
-      if (binding >= 0) {
+      if (functionBody_ && argumentsName &&
+          (binding < 0 || static_cast<uint16_t>(binding) < runtime_.frameBase_)) {
+        result.value = runtime_.makeArray(runtime_.callArgumentCount_);
+        for (size_t i = 0;
+             i < runtime_.callArgumentCount_ &&
+             runtime_.error_.message[0] == '\0';
+             i++) {
+          runtime_.arrayPush(result.value, runtime_.callArguments_[i]);
+        }
+        if (runtime_.error_.message[0] == '\0' &&
+            runtime_.defineBinding(name, result.value, false)) {
+          const int argumentsBinding = runtime_.findBinding(name);
+          if (argumentsBinding >= 0) {
+            result.reference.kind = ReferenceKind::Binding;
+            result.reference.binding =
+                static_cast<uint16_t>(argumentsBinding);
+          }
+        }
+      } else if (binding >= 0) {
         result.value = runtime_.bindings_[binding].value;
         result.reference.kind = ReferenceKind::Binding;
         result.reference.binding = static_cast<uint16_t>(binding);
       } else {
         result.value = runtime_.builtinGlobal(name);
         if (runtime_.isUndefined(result.value)) {
-          syntax(ErrorCode{61});
+          if (!allowMissing) {
+            runtime_.setError(detail::ErrorKind::ReferenceError,
+                              ErrorCode{61}, source_, nameToken.start);
+          }
         }
       }
     }
@@ -4261,44 +4810,56 @@ inline Parser::Expression Parser::primary(bool execute) {
   }
   if (token_.type == T::LeftParen) {
     detail::Lexer scan = lexer_;
-    detail::Token scanned = scan.next();
-    bool arrow = scanned.type == T::RightParen;
-    if (!arrow) {
-      arrow = scanned.type == T::Identifier || scanned.type == T::Of;
-      while (arrow) {
-        scanned = scan.next();
-        if (scanned.type == T::RightParen) {
-          break;
-        }
-        if (scanned.type != T::Comma) {
-          arrow = false;
-          break;
-        }
-        scanned = scan.next();
-        if (!identifierToken(scanned.type)) {
-          arrow = false;
-          break;
+    bool arrow = false;
+    uint16_t depth = 1;
+    while (depth > 0) {
+      const detail::Token scanned = scan.next();
+      if (scanned.type == T::End || scanned.type == T::Error)
+        break;
+      if (scanned.type == T::LeftParen || scanned.type == T::LeftBracket ||
+          scanned.type == T::LeftBrace) {
+        depth++;
+      } else if (scanned.type == T::RightParen ||
+                 scanned.type == T::RightBracket ||
+                 scanned.type == T::RightBrace) {
+        depth--;
+        if (depth == 0) {
+          arrow = scanned.type == T::RightParen &&
+                  scan.next().type == T::Arrow;
         }
       }
-    }
-    if (arrow) {
-      arrow = scan.next().type == T::Arrow;
     }
     if (arrow) {
       advance(); // (
       detail::ParameterSpan parameters[16];
       size_t count = 0;
       if (token_.type != T::RightParen) {
-        do {
-          if (!identifierToken(token_.type) ||
-              count >= sizeof(parameters) / sizeof(parameters[0])) {
+        while (true) {
+          if (count >= sizeof(parameters) / sizeof(parameters[0])) {
             syntax(ErrorCode{62});
             break;
           }
-          parameters[count++] = {token_.start,
-                                 static_cast<uint16_t>(token_.length), 0};
-          advance();
-        } while (accept(T::Comma));
+          const bool rest = accept(T::Ellipsis);
+          const uint32_t begin = token_.start;
+          if (!pattern(runtime_.undefined(), PatternMode::Declare, false)) {
+            syntax(ErrorCode{62});
+            break;
+          }
+          const uint32_t length = token_.start - begin;
+          if (length > UINT16_MAX) {
+            syntax(ErrorCode{62});
+            break;
+          }
+          parameters[count++] = {begin, static_cast<uint16_t>(length),
+                                 static_cast<uint16_t>(rest)};
+          if (rest) {
+            if (token_.type != T::RightParen)
+              syntax(ErrorCode{227});
+            break;
+          }
+          if (!accept(T::Comma))
+            break;
+        }
       }
       expect(T::RightParen, ErrorCode{53});
       expect(T::Arrow, ErrorCode{60});
@@ -4309,7 +4870,7 @@ inline Parser::Expression Parser::primary(bool execute) {
       return result;
     }
     advance();
-    result = assignment(execute);
+    result = sequence(execute);
     expect(T::RightParen, ErrorCode{53});
     result.reference = Reference{};
     return result;
@@ -4345,7 +4906,7 @@ inline Parser::Expression Parser::postfix(bool execute) {
         continue;
       }
       if (accept(T::LeftBracket)) {
-        Expression keyExpression = assignment(run);
+        Expression keyExpression = sequence(run);
         expect(T::RightBracket, ErrorCode{55});
         const Value receiver = result.value;
         Value propertyValue = runtime_.undefined();
@@ -4371,10 +4932,18 @@ inline Parser::Expression Parser::postfix(bool execute) {
         size_t count = 0;
         if (token_.type != T::RightParen) {
           do {
+            const bool spread = accept(T::Ellipsis);
             Expression argument = assignment(run);
-            if (run && count < sizeof(arguments) / sizeof(arguments[0]))
-              arguments[count] = argument.value;
-            count++;
+            if (run) {
+              if (spread) {
+                appendSpread(argument.value, arguments, count,
+                             sizeof(arguments) / sizeof(arguments[0]));
+              } else if (count < sizeof(arguments) / sizeof(arguments[0])) {
+                arguments[count++] = argument.value;
+              } else {
+                syntax(ErrorCode{64});
+              }
+            }
           } while (accept(T::Comma));
         }
         expect(T::RightParen, ErrorCode{53});
@@ -4422,7 +4991,7 @@ inline Parser::Expression Parser::postfix(bool execute) {
     }
     if (accept(T::LeftBracket)) {
       const bool run = execute && !optionalShortCircuit;
-      Expression keyExpression = assignment(run);
+      Expression keyExpression = sequence(run);
       expect(T::RightBracket, ErrorCode{55});
       const Value receiver = result.value;
       Value propertyValue = runtime_.undefined();
@@ -4449,16 +5018,22 @@ inline Parser::Expression Parser::postfix(bool execute) {
       if (token_.type != T::RightParen) {
         do {
           const bool run = execute && !optionalShortCircuit;
+          const bool spread = accept(T::Ellipsis);
           Expression argument = assignment(run);
           if (run) {
-            if (count >= runtime_.options_.maxCallArguments ||
-                count >= sizeof(arguments) / sizeof(arguments[0])) {
-              syntax(ErrorCode{64});
-              break;
+            if (spread) {
+              if (!appendSpread(argument.value, arguments, count,
+                                sizeof(arguments) / sizeof(arguments[0])))
+                break;
+            } else {
+              if (count >= runtime_.options_.maxCallArguments ||
+                  count >= sizeof(arguments) / sizeof(arguments[0])) {
+                syntax(ErrorCode{64});
+                break;
+              }
+              arguments[count++] = argument.value;
             }
-            arguments[count] = argument.value;
           }
-          count++;
         } while (accept(T::Comma));
       }
       expect(T::RightParen, ErrorCode{53});
@@ -4521,13 +5096,18 @@ inline Parser::Expression Parser::unary(bool execute) {
   }
   if (operation == T::Bang || operation == T::Tilde || operation == T::Plus ||
       operation == T::Minus || operation == T::Typeof ||
+      operation == T::Delete || operation == T::Void ||
       operation == T::PlusPlus || operation == T::MinusMinus) {
     NestingGuard nesting(*this);
     if (!nesting) {
       return {runtime_.undefined()};
     }
     advance();
+    const bool savedAllowMissing = allowMissingIdentifier_;
+    if (operation == T::Typeof || operation == T::Delete)
+      allowMissingIdentifier_ = true;
     Expression operand = unary(execute);
+    allowMissingIdentifier_ = savedAllowMissing;
     if (!execute) {
       return {runtime_.undefined()};
     }
@@ -4539,6 +5119,16 @@ inline Parser::Expression Parser::unary(bool execute) {
       operand.reference = Reference{};
       return operand;
     }
+    if (operation == T::Delete) {
+      if (operand.reference.kind == ReferenceKind::Property) {
+        return {runtime_.boolean(runtime_.deleteIndex(
+            operand.reference.receiver, operand.reference.name,
+            operand.reference.index, operand.reference.numeric))};
+      }
+      return {runtime_.boolean(operand.reference.kind == ReferenceKind::None)};
+    }
+    if (operation == T::Void)
+      return {runtime_.undefined()};
     if (operation == T::Bang)
       return {runtime_.boolean(!runtime_.isTruthy(operand.value))};
     if (operation == T::Tilde)
@@ -4604,6 +5194,8 @@ Parser::binary(bool execute, BinaryPrecedence minimumPrecedence) {
     case T::LessEqual:
     case T::Greater:
     case T::GreaterEqual:
+    case T::In:
+    case T::Instanceof:
       return BinaryPrecedence::Relational;
     case T::ShiftLeft:
     case T::ShiftRight:
@@ -4697,8 +5289,266 @@ inline bool Parser::store(const Reference &reference, Value value) {
   return false;
 }
 
+inline bool Parser::patternAssignmentAhead() const {
+  using T = detail::TokenType;
+  if (token_.type != T::LeftBracket && token_.type != T::LeftBrace)
+    return false;
+  const T closing = token_.type == T::LeftBracket ? T::RightBracket
+                                                   : T::RightBrace;
+  detail::Lexer scan = lexer_;
+  uint16_t depth = 1;
+  while (depth > 0) {
+    const detail::Token next = scan.next();
+    if (next.type == T::End || next.type == T::Error)
+      return false;
+    if (next.type == T::LeftBracket || next.type == T::LeftBrace ||
+        next.type == T::LeftParen) {
+      depth++;
+    } else if (next.type == T::RightBracket || next.type == T::RightBrace ||
+               next.type == T::RightParen) {
+      depth--;
+      if (depth == 0 && next.type != closing)
+        return false;
+    }
+  }
+  return scan.next().type == T::Assign;
+}
+
+inline bool Parser::patternLeaf(Value value, PatternMode mode, bool execute) {
+  using T = detail::TokenType;
+  const bool declaration = mode == PatternMode::Declare ||
+                           mode == PatternMode::DeclareConst;
+  detail::Token name;
+  Expression target;
+  if (declaration) {
+    if (!identifierToken(token_.type)) {
+      syntax(ErrorCode{73});
+      return false;
+    }
+    name = token_;
+    advance();
+  } else if (mode == PatternMode::Assign || mode == PatternMode::Validate) {
+    target = conditional(execute);
+  }
+
+  if (accept(T::Assign)) {
+    const bool useDefault = execute && runtime_.isUndefined(value);
+    Expression fallback = assignment(useDefault);
+    if (useDefault)
+      value = fallback.value;
+  }
+  if (!execute || runtime_.error_.message[0] != '\0')
+    return runtime_.error_.message[0] == '\0';
+
+  if (declaration) {
+    return runtime_.defineBinding(
+        Runtime::NameRef{source_ + name.start,
+                         static_cast<uint16_t>(name.length), sourceOffset_},
+        value, mode == PatternMode::DeclareConst);
+  }
+  return store(target.reference, value);
+}
+
+inline bool Parser::pattern(Value value, PatternMode mode, bool execute) {
+  using T = detail::TokenType;
+  NestingGuard nesting(*this);
+  if (!nesting)
+    return false;
+
+  if (token_.type == T::LeftBracket) {
+    if (execute && detail::tagOf(value) != detail::Tag::Array &&
+        detail::tagOf(value) != detail::Tag::Set &&
+        detail::tagOf(value) != detail::Tag::String) {
+      runtime_.setError(detail::ErrorKind::TypeError,
+                        ErrorCode{222}, source_, token_.start);
+      return false;
+    }
+    advance();
+    size_t index = 0;
+    while (token_.type != T::RightBracket && token_.type != T::End &&
+           runtime_.error_.message[0] == '\0') {
+      if (accept(T::Comma)) {
+        index++;
+        continue;
+      }
+      if (accept(T::Ellipsis)) {
+        Value rest = execute ? runtime_.makeArray() : runtime_.undefined();
+        if (execute) {
+          const size_t length = iterableLength(value);
+          for (size_t i = index;
+               i < length && runtime_.error_.message[0] == '\0'; i++) {
+            Value item;
+            iterableAt(value, i, &item);
+            runtime_.arrayPush(rest, item);
+          }
+        }
+        patternLeaf(rest, mode, execute);
+        if (token_.type != T::RightBracket)
+          syntax(ErrorCode{227});
+        break;
+      }
+      Value element = runtime_.undefined();
+      if (execute)
+        iterableAt(value, index, &element);
+      if (!pattern(element, mode, execute))
+        break;
+      index++;
+      if (!accept(T::Comma))
+        break;
+    }
+    expect(T::RightBracket, ErrorCode{55});
+    return runtime_.error_.message[0] == '\0';
+  }
+
+  if (token_.type == T::LeftBrace) {
+    const ValueType sourceType = runtime_.typeOf(value);
+    if (execute && (sourceType == ValueType::Null ||
+                    sourceType == ValueType::Undefined)) {
+      runtime_.setError(detail::ErrorKind::TypeError,
+                        ErrorCode{223}, source_, token_.start);
+      return false;
+    }
+    detail::Lexer restScan = lexer_;
+    uint16_t restDepth = 1;
+    bool hasRest = false;
+    while (restDepth > 0) {
+      const detail::Token scanned = restScan.next();
+      if (scanned.type == T::End || scanned.type == T::Error)
+        break;
+      if (restDepth == 1 && scanned.type == T::Ellipsis) {
+        hasRest = true;
+        break;
+      }
+      if (scanned.type == T::LeftBrace || scanned.type == T::LeftBracket ||
+          scanned.type == T::LeftParen) {
+        restDepth++;
+      } else if (scanned.type == T::RightBrace ||
+                 scanned.type == T::RightBracket ||
+                 scanned.type == T::RightParen) {
+        restDepth--;
+      }
+    }
+    Value rest = runtime_.undefined();
+    if (execute && hasRest) {
+      rest = runtime_.makeObject();
+      runtime_.copyObjectProperties(rest, value);
+    }
+    advance();
+    while (token_.type != T::RightBrace && token_.type != T::End &&
+           runtime_.error_.message[0] == '\0') {
+      if (accept(T::Ellipsis)) {
+        patternLeaf(rest, mode, execute);
+        if (token_.type != T::RightBrace)
+          syntax(ErrorCode{227});
+        break;
+      }
+      const detail::Token keyToken = token_;
+      const char *key = nullptr;
+      size_t keyLength = 0;
+      char numericKey[32] = {};
+      Value allocatedKey = runtime_.undefined();
+      const bool identifierKey = identifierToken(token_.type);
+      if (identifierKey) {
+        key = source_ + token_.start;
+        keyLength = token_.length;
+      } else if (token_.type == T::String) {
+        if (execute) {
+          allocatedKey = stringLiteral(token_);
+          const StringView text = runtime_.stringView(allocatedKey);
+          key = text.data;
+          keyLength = text.size;
+        }
+      } else if (token_.type == T::Number) {
+        if (execute) {
+          const int length = std::snprintf(numericKey, sizeof(numericKey),
+                                           "%.15g", token_.number);
+          key = numericKey;
+          keyLength = length > 0 ? static_cast<size_t>(length) : 0;
+        }
+      } else {
+        syntax(ErrorCode{56});
+        return false;
+      }
+      advance();
+      Value property = execute ? runtime_.getProperty(value, key, keyLength)
+                               : runtime_.undefined();
+      if (execute && hasRest)
+        runtime_.deleteProperty(rest, key, keyLength);
+      if (accept(T::Colon)) {
+        if (!pattern(property, mode, execute))
+          return false;
+      } else {
+        if (!identifierKey) {
+          syntax(ErrorCode{58});
+          return false;
+        }
+        if (accept(T::Assign)) {
+          const bool useDefault = execute && runtime_.isUndefined(property);
+          Expression fallback = assignment(useDefault);
+          if (useDefault)
+            property = fallback.value;
+        }
+        if (execute && runtime_.error_.message[0] == '\0') {
+          const Runtime::NameRef name{
+              source_ + keyToken.start,
+              static_cast<uint16_t>(keyToken.length), sourceOffset_};
+          if (mode == PatternMode::Declare ||
+              mode == PatternMode::DeclareConst) {
+            runtime_.defineBinding(name, property,
+                                   mode == PatternMode::DeclareConst);
+          } else if (mode == PatternMode::Assign) {
+            const int binding = runtime_.findBinding(name);
+            if (binding < 0) {
+              runtime_.setError(detail::ErrorKind::ReferenceError,
+                                ErrorCode{61}, source_, keyToken.start);
+            } else {
+              runtime_.assignBinding(static_cast<size_t>(binding), property);
+            }
+          }
+        }
+      }
+      if (!accept(T::Comma))
+        break;
+    }
+    expect(T::RightBrace, ErrorCode{49});
+    return runtime_.error_.message[0] == '\0';
+  }
+
+  return patternLeaf(value, mode, execute);
+}
+
+inline bool Parser::applyPatternSpan(Span span, Value value, PatternMode mode) {
+  Parser nested(runtime_, sourceOffset_, span.begin, span.end, functionBody_,
+                loopBody_, asyncBody_);
+  if (!nested.pattern(value, mode, true))
+    return false;
+  if (nested.token_.type != detail::TokenType::End &&
+      runtime_.error_.message[0] == '\0') {
+    nested.syntax(ErrorCode{77});
+  }
+  return runtime_.error_.message[0] == '\0';
+}
+
+inline Parser::Expression Parser::destructuringAssignment(bool execute) {
+  // Reparse the compact source span after evaluating the RHS once. This keeps
+  // swaps correct without retaining an AST or a temporary pattern array.
+  const uint32_t begin = token_.start;
+  pattern(runtime_.undefined(), PatternMode::Validate, false);
+  const Span span{begin, token_.start};
+  expect(detail::TokenType::Assign, ErrorCode{73});
+  Expression right = assignment(execute);
+  if (execute && runtime_.error_.message[0] == '\0')
+    applyPatternSpan(span, right.value, PatternMode::Assign);
+  right.reference = Reference{};
+  return right;
+}
+
 inline Parser::Expression Parser::assignment(bool execute) {
   using T = detail::TokenType;
+  if ((token_.type == T::LeftBracket || token_.type == T::LeftBrace) &&
+      patternAssignmentAhead()) {
+    return destructuringAssignment(execute);
+  }
   Expression left = conditional(execute);
   const T operation = token_.type;
   if (operation != T::Assign && operation != T::PlusAssign &&
@@ -4752,6 +5602,15 @@ inline Parser::Expression Parser::assignment(bool execute) {
   return {value};
 }
 
+inline Parser::Expression Parser::sequence(bool execute) {
+  Expression result = assignment(execute);
+  while (accept(detail::TokenType::Comma)) {
+    result = assignment(execute);
+    result.reference = Reference{};
+  }
+  return result;
+}
+
 inline Value Parser::applyBinary(detail::TokenType operation, Value left,
                                  Value right, bool execute) {
   using T = detail::TokenType;
@@ -4779,6 +5638,81 @@ inline Value Parser::applyBinary(detail::TokenType operation, Value left,
       equal = !std::isnan(x) && !std::isnan(y) && x == y;
     }
     return runtime_.boolean(operation == T::Equal ? equal : !equal);
+  }
+  if (operation == T::In)
+    return runtime_.boolean(runtime_.hasIndex(right, left));
+  if (operation == T::Instanceof) {
+    bool matches = false;
+    bool supported = true;
+    const detail::Tag rightTag = detail::tagOf(right);
+    if (rightTag == detail::Tag::BuiltinFunction &&
+        static_cast<detail::BuiltinFunction>(detail::payloadOf(right)) ==
+            detail::BuiltinFunction::SetConstructor) {
+      matches = detail::tagOf(left) == detail::Tag::Set;
+    } else if (rightTag == detail::Tag::BuiltinObject) {
+      const detail::BuiltinObject constructor =
+          static_cast<detail::BuiltinObject>(detail::payloadOf(right));
+      const detail::Tag leftTag = detail::tagOf(left);
+      switch (constructor) {
+      case detail::BuiltinObject::Array:
+        matches = leftTag == detail::Tag::Array;
+        break;
+      case detail::BuiltinObject::Object:
+        matches = runtime_.typeOf(left) == ValueType::Object ||
+                  runtime_.typeOf(left) == ValueType::Array ||
+                  runtime_.typeOf(left) == ValueType::Set ||
+                  runtime_.typeOf(left) == ValueType::Promise ||
+                  runtime_.typeOf(left) == ValueType::Function;
+        break;
+      case detail::BuiltinObject::String:
+        matches = runtime_.typeOf(left) == ValueType::String;
+        break;
+      case detail::BuiltinObject::Number:
+        matches = runtime_.typeOf(left) == ValueType::Number;
+        break;
+      case detail::BuiltinObject::Boolean:
+        matches = runtime_.typeOf(left) == ValueType::Boolean;
+        break;
+      case detail::BuiltinObject::Promise:
+        matches = leftTag == detail::Tag::Promise;
+        break;
+      case detail::BuiltinObject::Date:
+        matches = leftTag == detail::Tag::Date;
+        break;
+      case detail::BuiltinObject::Error:
+      case detail::BuiltinObject::TypeError:
+      case detail::BuiltinObject::RangeError:
+      case detail::BuiltinObject::ReferenceError:
+      case detail::BuiltinObject::SyntaxError:
+      case detail::BuiltinObject::EvalError:
+      case detail::BuiltinObject::UriError: {
+        matches = leftTag == detail::Tag::Error;
+        if (matches && constructor != detail::BuiltinObject::Error) {
+          const detail::ErrorPayload *data = runtime_.errorPayload(left);
+          const char *expected = detail::errorKindName(
+              static_cast<detail::ErrorKind>(
+                  static_cast<uint8_t>(constructor) -
+                  static_cast<uint8_t>(detail::BuiltinObject::Error)));
+          const StringView name =
+              data != nullptr ? runtime_.stringView(data->name) : StringView{};
+          matches = name.size == std::strlen(expected) &&
+                    std::memcmp(name.data, expected, name.size) == 0;
+        }
+        break;
+      }
+      default:
+        supported = false;
+        break;
+      }
+    } else {
+      supported = false;
+    }
+    if (!supported) {
+      runtime_.setError(detail::ErrorKind::TypeError, ErrorCode{230}, source_,
+                        token_.start);
+      return runtime_.undefined();
+    }
+    return runtime_.boolean(matches);
   }
   if (operation == T::Less || operation == T::LessEqual ||
       operation == T::Greater || operation == T::GreaterEqual) {
@@ -4870,7 +5804,7 @@ inline Parser::Flow Parser::statement(bool execute) {
     if (peekType() == T::Function)
       return functionDeclaration(execute, true);
     {
-      Expression value = assignment(execute);
+      Expression value = sequence(execute);
       terminator();
       return {FlowKind::Normal, value.value};
     }
@@ -4882,12 +5816,18 @@ inline Parser::Flow Parser::statement(bool execute) {
     return doWhileStatement(execute);
   case T::For:
     return forStatement(execute);
+  case T::Switch:
+    return switchStatement(execute);
   case T::Return:
     return returnStatement(execute);
+  case T::Try:
+    return tryStatement(execute);
+  case T::Throw:
+    return throwStatement(execute);
   case T::Break:
     advance();
     terminator();
-    if (execute && !loopBody_) {
+    if (execute && !loopBody_ && !switchBody_) {
       syntax(ErrorCode{70});
       return {FlowKind::Normal, runtime_.undefined()};
     }
@@ -4903,7 +5843,7 @@ inline Parser::Flow Parser::statement(bool execute) {
     return {execute ? FlowKind::Continue : FlowKind::Normal,
             runtime_.undefined()};
   default: {
-    Expression value = assignment(execute);
+    Expression value = sequence(execute);
     terminator();
     return {FlowKind::Normal, value.value};
   }
@@ -4935,6 +5875,24 @@ inline Parser::Flow Parser::declaration(bool execute, bool constant,
                                         bool consumeEnd) {
   advance(); // let / const
   do {
+    if (token_.type == detail::TokenType::LeftBracket ||
+        token_.type == detail::TokenType::LeftBrace) {
+      const uint32_t begin = token_.start;
+      pattern(runtime_.undefined(), constant ? PatternMode::DeclareConst
+                                             : PatternMode::Declare,
+              false);
+      const Span span{begin, token_.start};
+      if (!accept(detail::TokenType::Assign)) {
+        syntax(ErrorCode{74});
+        return {FlowKind::Normal, runtime_.undefined()};
+      }
+      Value value = assignment(execute).value;
+      if (execute && runtime_.error_.message[0] == '\0') {
+        applyPatternSpan(span, value, constant ? PatternMode::DeclareConst
+                                               : PatternMode::Declare);
+      }
+      continue;
+    }
     if (!identifierToken(token_.type)) {
       syntax(ErrorCode{73});
       return {FlowKind::Normal, runtime_.undefined()};
@@ -4990,7 +5948,7 @@ inline Parser::Flow Parser::functionDeclaration(bool execute,
 inline Parser::Flow Parser::ifStatement(bool execute) {
   advance();
   expect(detail::TokenType::LeftParen, ErrorCode{50});
-  Expression condition = assignment(execute);
+  Expression condition = sequence(execute);
   expect(detail::TokenType::RightParen, ErrorCode{53});
   const bool truth = execute && runtime_.isTruthy(condition.value);
   Flow chosen = statement(truth);
@@ -5002,6 +5960,80 @@ inline Parser::Flow Parser::ifStatement(bool execute) {
   }
   return execute ? chosen
                  : Flow{FlowKind::Normal, runtime_.undefined()};
+}
+
+inline Parser::Flow Parser::switchStatement(bool execute) {
+  using T = detail::TokenType;
+  advance();
+  expect(T::LeftParen, ErrorCode{50});
+  const Value discriminant = sequence(execute).value;
+  expect(T::RightParen, ErrorCode{53});
+  expect(T::LeftBrace, ErrorCode{72});
+  const uint32_t bodyBegin = token_.start;
+  uint32_t selected = UINT32_MAX;
+  uint32_t fallback = UINT32_MAX;
+  bool matched = false;
+  bool hasDefault = false;
+
+  while (token_.type != T::RightBrace && token_.type != T::End &&
+         runtime_.error_.message[0] == '\0') {
+    if (accept(T::Case)) {
+      Value candidate = sequence(execute && !matched).value;
+      expect(T::Colon, ErrorCode{58});
+      if (execute && !matched && runtime_.strictEqual(discriminant, candidate)) {
+        matched = true;
+        selected = token_.start;
+      }
+      continue;
+    }
+    if (accept(T::Default)) {
+      if (hasDefault) {
+        syntax(ErrorCode{228});
+        break;
+      }
+      hasDefault = true;
+      expect(T::Colon, ErrorCode{58});
+      fallback = token_.start;
+      continue;
+    }
+    statement(false);
+  }
+  const uint32_t bodyEnd = token_.start;
+  expect(T::RightBrace, ErrorCode{49});
+  if (!execute || runtime_.error_.message[0] != '\0')
+    return {FlowKind::Normal, runtime_.undefined()};
+  if (!matched)
+    selected = fallback;
+  if (selected == UINT32_MAX)
+    return {FlowKind::Normal, runtime_.undefined()};
+
+  const uint16_t marker = runtime_.enterScope();
+  Parser runner(runtime_, sourceOffset_, bodyBegin, bodyEnd, functionBody_,
+                loopBody_, asyncBody_, true);
+  Flow result{FlowKind::Normal, runtime_.undefined()};
+  bool active = false;
+  while (runner.token_.type != T::End &&
+         runtime_.error_.message[0] == '\0') {
+    if (!active && runner.token_.start >= selected)
+      active = true;
+    if (runner.accept(T::Case)) {
+      runner.sequence(false);
+      runner.expect(T::Colon, ErrorCode{58});
+      continue;
+    }
+    if (runner.accept(T::Default)) {
+      runner.expect(T::Colon, ErrorCode{58});
+      continue;
+    }
+    Flow flow = runner.statement(active);
+    if (!active || flow.kind == FlowKind::Normal)
+      continue;
+    if (flow.kind != FlowKind::Break)
+      result = flow;
+    break;
+  }
+  runtime_.leaveScope(marker);
+  return result;
 }
 
 inline Parser::Span Parser::captureStatement() {
@@ -5034,7 +6066,7 @@ inline Parser::Flow Parser::whileStatement(bool execute) {
   advance();
   expect(detail::TokenType::LeftParen, ErrorCode{50});
   const uint32_t conditionBegin = token_.start;
-  assignment(false);
+  sequence(false);
   const Span condition{conditionBegin, token_.start};
   expect(detail::TokenType::RightParen, ErrorCode{53});
   const Span body = captureStatement();
@@ -5065,7 +6097,7 @@ inline Parser::Flow Parser::doWhileStatement(bool execute) {
     return {FlowKind::Normal, runtime_.undefined()};
   }
   const uint32_t conditionBegin = token_.start;
-  assignment(false);
+  sequence(false);
   const Span condition{conditionBegin, token_.start};
   expect(detail::TokenType::RightParen, ErrorCode{53});
   if (token_.type == detail::TokenType::Semicolon) {
@@ -5124,6 +6156,32 @@ inline bool Parser::iterableAt(Value iterable, size_t index, Value *value) const
   return false;
 }
 
+inline bool Parser::appendSpread(Value iterable, Value *values, size_t &count,
+                                 size_t capacity) {
+  const detail::Tag tag = detail::tagOf(iterable);
+  if (tag != detail::Tag::Array && tag != detail::Tag::Set &&
+      tag != detail::Tag::String) {
+    runtime_.setError(detail::ErrorKind::TypeError, ErrorCode{226}, source_,
+                      token_.start);
+    return false;
+  }
+  const size_t length = iterableLength(iterable);
+  if (length > capacity - (count < capacity ? count : capacity) ||
+      length > runtime_.options_.maxCallArguments -
+                   (count < runtime_.options_.maxCallArguments
+                        ? count
+                        : runtime_.options_.maxCallArguments)) {
+    syntax(ErrorCode{64});
+    return false;
+  }
+  for (size_t i = 0; i < length; i++) {
+    if (!iterableAt(iterable, i, &values[count]))
+      return false;
+    count++;
+  }
+  return true;
+}
+
 inline Parser::Flow Parser::forStatement(bool execute) {
   using T = detail::TokenType;
   advance();
@@ -5137,7 +6195,17 @@ inline Parser::Flow Parser::forStatement(bool execute) {
 
   if (declarationInit) {
     advance();
-    if (!identifierToken(token_.type)) {
+    bool destructuringInit = token_.type == T::LeftBracket ||
+                             token_.type == T::LeftBrace;
+    Span destructuringPattern;
+    if (destructuringInit) {
+      destructuringPattern.begin = token_.start;
+      pattern(runtime_.undefined(), declarationConst
+                                        ? PatternMode::DeclareConst
+                                        : PatternMode::Declare,
+              false);
+      destructuringPattern.end = token_.start;
+    } else if (!identifierToken(token_.type)) {
       syntax(ErrorCode{79});
     } else {
       firstName = token_;
@@ -5151,7 +6219,8 @@ inline Parser::Flow Parser::forStatement(bool execute) {
       expect(T::RightParen, ErrorCode{53});
       const Span body = captureStatement();
       int binding = -1;
-      if (execute && hasFirstName && runtime_.error_.message[0] == '\0') {
+      if (execute && !destructuringInit && hasFirstName &&
+          runtime_.error_.message[0] == '\0') {
         runtime_.defineBinding(
             Runtime::NameRef{source_ + firstName.start,
                              static_cast<uint16_t>(firstName.length),
@@ -5163,7 +6232,7 @@ inline Parser::Flow Parser::forStatement(bool execute) {
                              sourceOffset_});
       }
       Flow result{FlowKind::Normal, runtime_.undefined()};
-      if (execute && binding >= 0) {
+      if (execute && (destructuringInit || binding >= 0)) {
         size_t length = iterableLength(iterable);
         if (enumerateKeys) {
           if (detail::tagOf(iterable) == detail::Tag::Object)
@@ -5196,8 +6265,18 @@ inline Parser::Flow Parser::forStatement(bool execute) {
           } else if (!iterableAt(iterable, i, &item)) {
             break;
           }
-          runtime_.bindings_[binding].value = item;
+          uint16_t iterationMarker = runtime_.bindingCount_;
+          if (destructuringInit) {
+            iterationMarker = runtime_.enterScope();
+            applyPatternSpan(destructuringPattern, item,
+                             declarationConst ? PatternMode::DeclareConst
+                                              : PatternMode::Declare);
+          } else {
+            runtime_.bindings_[binding].value = item;
+          }
           Flow flow = executeStatementSpan(body, true);
+          if (destructuringInit)
+            runtime_.leaveScope(iterationMarker);
           if (flow.kind == FlowKind::Return) {
             result = flow;
             break;
@@ -5213,7 +6292,18 @@ inline Parser::Flow Parser::forStatement(bool execute) {
       return result;
     }
 
-    if (hasFirstName) {
+    if (destructuringInit) {
+      if (!accept(T::Assign)) {
+        syntax(ErrorCode{74});
+      } else {
+        Value value = assignment(execute).value;
+        if (execute && runtime_.error_.message[0] == '\0') {
+          applyPatternSpan(destructuringPattern, value,
+                           declarationConst ? PatternMode::DeclareConst
+                                            : PatternMode::Declare);
+        }
+      }
+    } else if (hasFirstName) {
       Value value = runtime_.undefined();
       const bool initialized = accept(T::Assign);
       if (initialized) {
@@ -5311,20 +6401,20 @@ inline Parser::Flow Parser::forStatement(bool execute) {
       runtime_.leaveScope(scopeMarker);
     return result;
   } else if (token_.type != T::Semicolon) {
-    assignment(execute);
+    sequence(execute);
   }
   expect(T::Semicolon, ErrorCode{81});
 
   const uint32_t conditionBegin = token_.start;
   if (token_.type != T::Semicolon) {
-    assignment(false);
+    sequence(false);
   }
   const Span condition{conditionBegin, token_.start};
   expect(T::Semicolon, ErrorCode{81});
 
   const uint32_t incrementBegin = token_.start;
   if (token_.type != T::RightParen) {
-    assignment(false);
+    sequence(false);
   }
   const Span increment{incrementBegin, token_.start};
   expect(T::RightParen, ErrorCode{53});
@@ -5367,10 +6457,77 @@ inline Parser::Flow Parser::returnStatement(bool execute) {
   if (token_.type != detail::TokenType::Semicolon &&
       token_.type != detail::TokenType::RightBrace &&
       token_.type != detail::TokenType::End && !token_.newlineBefore) {
-    value = assignment(execute).value;
+    value = sequence(execute).value;
   }
   terminator();
   return {execute ? FlowKind::Return : FlowKind::Normal, value};
+}
+
+inline Parser::Flow Parser::throwStatement(bool execute) {
+  const uint32_t throwOffset = token_.start;
+  advance();
+  if (token_.newlineBefore || token_.type == detail::TokenType::Semicolon ||
+      token_.type == detail::TokenType::RightBrace ||
+      token_.type == detail::TokenType::End) {
+    syntax(ErrorCode{63});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  Value exception = sequence(execute).value;
+  terminator();
+  if (execute && runtime_.error_.message[0] == '\0')
+    runtime_.raiseException(exception, source_, throwOffset);
+  return {FlowKind::Normal, runtime_.undefined()};
+}
+
+inline Parser::Flow Parser::tryStatement(bool execute) {
+  using T = detail::TokenType;
+  advance();
+  if (token_.type != T::LeftBrace) {
+    syntax(ErrorCode{72});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  const Span tryBody = captureStatement();
+  if (!expect(T::Catch, ErrorCode{73}))
+    return {FlowKind::Normal, runtime_.undefined()};
+
+  detail::Token catchName;
+  bool hasCatchName = false;
+  if (accept(T::LeftParen)) {
+    if (!identifierToken(token_.type)) {
+      syntax(ErrorCode{73});
+      return {FlowKind::Normal, runtime_.undefined()};
+    }
+    catchName = token_;
+    hasCatchName = true;
+    advance();
+    expect(T::RightParen, ErrorCode{53});
+  }
+  if (token_.type != T::LeftBrace) {
+    syntax(ErrorCode{72});
+    return {FlowKind::Normal, runtime_.undefined()};
+  }
+  const Span catchBody = captureStatement();
+  if (!execute || runtime_.error_.message[0] != '\0')
+    return {FlowKind::Normal, runtime_.undefined()};
+
+  Flow result = executeStatementSpan(tryBody);
+  if (runtime_.error_.message[0] == '\0')
+    return result;
+
+  Value exception = runtime_.takeFailure();
+  if (runtime_.error_.message[0] != '\0')
+    return {FlowKind::Normal, runtime_.undefined()};
+  const uint16_t marker = runtime_.enterScope();
+  if (hasCatchName) {
+    runtime_.defineBinding(
+        Runtime::NameRef{source_ + catchName.start,
+                         static_cast<uint16_t>(catchName.length), sourceOffset_},
+        exception, false);
+  }
+  if (runtime_.error_.message[0] == '\0')
+    result = executeStatementSpan(catchBody);
+  runtime_.leaveScope(marker);
+  return result;
 }
 
 inline RunResult Runtime::eval(const char *source, size_t length) {
@@ -5557,6 +6714,19 @@ inline Value Runtime::callValue(Value function, Value receiver,
       return number(argc > 0 ? toNumber(args[0]) : 0.0);
     case detail::BuiltinObject::Boolean:
       return boolean(argc > 0 && isTruthy(args[0]));
+    case detail::BuiltinObject::Error:
+    case detail::BuiltinObject::TypeError:
+    case detail::BuiltinObject::RangeError:
+    case detail::BuiltinObject::ReferenceError:
+    case detail::BuiltinObject::SyntaxError:
+    case detail::BuiltinObject::EvalError:
+    case detail::BuiltinObject::UriError: {
+      const uint8_t first = static_cast<uint8_t>(detail::BuiltinObject::Error);
+      const uint8_t selected = static_cast<uint8_t>(constructor);
+      const detail::ErrorKind kind = static_cast<detail::ErrorKind>(
+          selected >= first ? selected - first : 0U);
+      return makeError(kind, argc > 0 ? args[0] : undefined());
+    }
     case detail::BuiltinObject::Date: {
       double milliseconds = static_cast<double>(nowMilliseconds());
       if (argc == 1) {
@@ -5587,10 +6757,7 @@ inline Value Runtime::callValue(Value function, Value receiver,
           detail::boxed(detail::Tag::Resolver, (offset << 1U) | 1U)};
       callValue(args[0], undefined(), resolverArgs, 2);
       if (error_.message[0] != '\0') {
-        char message[sizeof(error_.message)];
-        std::snprintf(message, sizeof(message), "%s", error_.message);
-        clearError();
-        settlePromise(promise, makeString(message), true);
+        settlePromise(promise, takeFailure(), true);
       }
       return promise;
     }
@@ -5600,7 +6767,8 @@ inline Value Runtime::callValue(Value function, Value receiver,
     }
   }
   if (tag != detail::Tag::Function) {
-    return fail(ErrorCode{92});
+    setError(detail::ErrorKind::TypeError, ErrorCode{92}, nullptr, 0);
+    return undefined();
   }
   if (callDepth_ >= options_.maxCallDepth) {
     return fail(ErrorCode{93});
@@ -5622,6 +6790,8 @@ inline Value Runtime::callValue(Value function, Value receiver,
   const uint16_t savedBindingCount = bindingCount_;
   const uint16_t savedFrameBase = frameBase_;
   const uint16_t savedScopeDepth = scopeDepth_;
+  const Value *savedCallArguments = callArguments_;
+  const size_t savedCallArgumentCount = callArgumentCount_;
   Value asyncPromise = undefined();
   if (functionData->asyncBody != 0) {
     asyncPromise = makePromise();
@@ -5631,6 +6801,8 @@ inline Value Runtime::callValue(Value function, Value receiver,
   }
   frameBase_ = bindingCount_;
   scopeDepth_ = 0;
+  callArguments_ = args;
+  callArgumentCount_ = argc;
   callDepth_++;
   if (functionData->name.length > 0 &&
       functionData->name.start + functionData->name.length <=
@@ -5645,9 +6817,22 @@ inline Value Runtime::callValue(Value function, Value receiver,
       setError(ErrorCode{95}, nullptr, 0);
       break;
     }
-    defineBinding(NameRef{source + parameter.start, parameter.length,
-                          functionData->source},
-                  i < argc ? args[i] : undefined(), false);
+    Parser binder(*this, functionData->source, parameter.start,
+                  parameter.start + parameter.length, true, false,
+                  functionData->asyncBody != 0);
+    Value parameterValue = i < argc ? args[i] : undefined();
+    if (parameter.reserved != 0) {
+      parameterValue = makeArray(argc > i ? argc - i : 0);
+      for (size_t argumentIndex = i;
+           argumentIndex < argc && error_.message[0] == '\0';
+           argumentIndex++) {
+        arrayPush(parameterValue, args[argumentIndex]);
+      }
+    }
+    if (!binder.pattern(parameterValue,
+                        Parser::PatternMode::Declare, true)) {
+      break;
+    }
   }
 
   Value result = undefined();
@@ -5667,13 +6852,12 @@ inline Value Runtime::callValue(Value function, Value receiver,
   bindingCount_ = savedBindingCount;
   frameBase_ = savedFrameBase;
   scopeDepth_ = savedScopeDepth;
+  callArguments_ = savedCallArguments;
+  callArgumentCount_ = savedCallArgumentCount;
   callDepth_--;
   if (functionData->asyncBody != 0) {
     if (error_.message[0] != '\0') {
-      char message[sizeof(error_.message)];
-      std::snprintf(message, sizeof(message), "%s", error_.message);
-      clearError();
-      adoptPromise(asyncPromise, makeString(message), true);
+      adoptPromise(asyncPromise, takeFailure(), true);
     } else {
       adoptPromise(asyncPromise, result, false);
     }
@@ -5691,7 +6875,7 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
   };
   auto requireReceiver = [this, receiver](detail::Tag tag, ErrorCode code) {
     if (detail::tagOf(receiver) != tag) {
-      setError(code, nullptr, 0);
+      setError(detail::ErrorKind::TypeError, code, nullptr, 0);
       return false;
     }
     return true;
@@ -5768,6 +6952,18 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
     return number(std::trunc(toNumber(argument(0))));
   case B::MathSqrt:
     return number(std::sqrt(toNumber(argument(0))));
+  case B::MathSin:
+    return number(std::sin(toNumber(argument(0))));
+  case B::MathCos:
+    return number(std::cos(toNumber(argument(0))));
+  case B::MathTan:
+    return number(std::tan(toNumber(argument(0))));
+  case B::MathLog:
+    return number(std::log(toNumber(argument(0))));
+  case B::MathExp:
+    return number(std::exp(toNumber(argument(0))));
+  case B::MathAtan2:
+    return number(std::atan2(toNumber(argument(0)), toNumber(argument(1))));
   case B::MathPow:
     return number(std::pow(toNumber(argument(0)), toNumber(argument(1))));
   case B::MathMin:
@@ -5951,6 +7147,20 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
       objectSet(result, text.data, text.size, arrayAt(entry, 1));
     }
     return result;
+  }
+  case B::ObjectDefineProperty: {
+    const Value target = argument(0);
+    const Value descriptor = argument(2);
+    if (detail::tagOf(target) != detail::Tag::Object ||
+        detail::tagOf(descriptor) != detail::Tag::Object) {
+      setError(detail::ErrorKind::TypeError, ErrorCode{231}, nullptr, 0);
+      return undefined();
+    }
+    Value keyValue = toStringValue(argument(1));
+    const StringView key = stringView(keyValue);
+    const Value value = objectGet(descriptor, "value", 5);
+    objectSet(target, key.data, key.size, value);
+    return target;
   }
   case B::ArrayPush: {
     if (!requireReceiver(detail::Tag::Array, ErrorCode{102}))
@@ -6415,6 +7625,10 @@ inline Value Runtime::callBuiltin(detail::BuiltinFunction function,
       data->reserved = 1;
     return child;
   }
+  case B::ErrorToString:
+    if (!requireReceiver(detail::Tag::Error, ErrorCode{92}))
+      return undefined();
+    return toStringValue(receiver);
   case B::NumberIsFinite:
     return boolean(isNumber(argument(0)) &&
                    std::isfinite(toNumber(argument(0))));

@@ -119,15 +119,35 @@ owned by the app API session and released when the script exits.
 ## Supported language
 
 The subset includes `let`, `const`, block scope, named functions, arrows,
-`async` functions, arrays, Sets, objects, computed properties, optional
-chaining, nullish coalescing, template literals, common loops and operators,
-Promises, minimal `async`/`await`, `Math`, JSON, Date, and basic type
-constructors.
+`async` functions and arrows, arrays, Sets, objects, computed properties,
+optional chaining, nullish coalescing, template literals, common loops and
+operators, Promises, minimal `async`/`await`, `Math`, JSON, Date, and basic type
+constructors. Array and object destructuring works in declarations,
+assignments, function parameters, classic `for`, and `for...of`. Patterns may
+be nested and use array holes, defaults, object shorthand, aliases, and final
+rest bindings. Spread works in arrays, objects, and calls, and final function
+parameters may be rest parameters. Computed-key patterns remain unsupported;
+defaults apply to leaf bindings, not an entire nested subpattern.
+
+Basic `switch`/`case`/`default`, the comma operator, unary `delete` and `void`,
+the `in` operator for objects/arrays/strings, tag-based `instanceof`, lazy
+function `arguments`, and `typeof` on missing identifiers are supported.
+`Object.defineProperty` accepts descriptor syntax but stores only `value`;
+descriptor flags are intentionally ignored because objects have no prototype
+or property-attribute layer. `arguments` is a snapshot array rather than an
+alias of named parameters, and deleting a dense array index stores `undefined`
+without adding a separate hole bitmap.
+
+`throw` accepts any value. `try...catch` supports a named catch binding or
+`catch { ... }`. `Error`, `TypeError`, `RangeError`, `ReferenceError`,
+`SyntaxError`, `EvalError`, and `URIError` expose `name`, `message`, and
+`toString()`. Thrown values cross function calls and become Promise rejections
+inside async functions, Promise executors, and continuation handlers.
 
 Common collection, object, string, and number helpers are available, including
 `map`, `filter`, `reduce`, `sort`, `splice`, `findIndex`, `flat`,
-`Object.keys/values/entries/assign`, string padding and trimming, and number
-finite/integer checks.
+`Object.keys/values/entries/assign/defineProperty`, string padding and trimming,
+number finite/integer checks, and `Math.sin/cos/tan/log/exp/atan2`.
 
 Function declarations become visible only after execution reaches the
 declaration; there is no separate hoisting pass. Named recursion works, but
@@ -135,9 +155,9 @@ functions do not capture caller locals. Promises currently support one
 continuation branch.
 
 Advanced object-oriented features such as classes, prototypes, and `this`,
-along with closures, exceptions, modules, regex, and multiple Promise
-branches, are unsupported. Async continuations cannot be fully
-suspended, and Unicode support is limited.
+along with closures, `try...finally`, Error stacks/custom properties, modules,
+regex, and multiple Promise branches, are unsupported. Async continuations
+cannot be fully suspended, and Unicode support is limited.
 
 ## JSON parser choices
 
