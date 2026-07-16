@@ -648,6 +648,10 @@ void ShellController::drawActiveScreen() {
 }
 
 void ShellController::redrawActiveScreenPartial() {
+  if (!display.ready()) {
+    dirty = true;
+    return;
+  }
   int16_t x = 0;
   int16_t y = 0;
   int16_t w = EPD_WIDTH;
@@ -659,11 +663,15 @@ void ShellController::redrawActiveScreenPartial() {
   if (hasRegion) {
     display.fillRect(x, y, w, h, 0);
     activeApp->draw(display);
-    display.flushPartial();
+    if (!display.flushPartialAsync()) {
+      display.flushPartial();
+    }
   } else {
     display.clear();
     drawActiveScreen();
-    display.flushPartial();
+    if (!display.flushPartialAsync()) {
+      display.flushPartial();
+    }
   }
   display.unlock();
 }
@@ -773,7 +781,9 @@ void ShellController::render() {
   if (screenshotNoticeVisible) {
     drawShellToast(display, screenshotNotice);
   }
-  display.flush();
+  if (!display.flushAsync()) {
+    display.flush();
+  }
   bool redrawForScreenshotNotice = false;
   if (screenshotPending) {
     const ScreenshotResult result = saveFramebufferScreenshot(display);
@@ -798,7 +808,7 @@ void ShellController::renderIfDirty() {
     screenshotNoticeUntil = 0;
     dirty = true;
   }
-  if (dirty) {
+  if (dirty && display.ready()) {
     render();
   }
 }

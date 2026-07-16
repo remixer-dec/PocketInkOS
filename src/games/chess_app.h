@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <cstdint>
 
+class AppDisplay;
+
 enum class PieceType : uint8_t {
   King,
   Queen,
@@ -60,6 +62,7 @@ static constexpr CaseFontGlyph CASEFONT_PIECES[] = {
 class ChessApp {
 public:
   void reset();
+  void start(AppDisplay &targetDisplay);
   void draw(Adafruit_GFX &gfx);
   bool update();
   bool handleTouch(const TouchPoint &point);
@@ -161,6 +164,7 @@ private:
   bool aiBookEnabled = false;
   unsigned long menuCancelBlockUntilMs = 0;
   SearchWorkspace *searchWorkspace = nullptr;
+  AppDisplay *display = nullptr;
 
   bool ensureSearchWorkspace();
   void releaseSearchWorkspace();

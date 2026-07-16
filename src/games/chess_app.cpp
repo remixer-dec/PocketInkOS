@@ -1,5 +1,6 @@
 #include "games/chess_app.h"
 #include "games/chess_fonts.h"
+#include "sys/app_display.h"
 #include "sys/rtc_context.h"
 #include "sys/psram_allocator.h"
 #include "ui/ui_helpers.h"
@@ -208,7 +209,12 @@ void ChessApp::reset() {
   mode = Mode::Setup;
 }
 
-void ChessApp::release() { releaseSearchWorkspace(); }
+void ChessApp::start(AppDisplay &targetDisplay) { display = &targetDisplay; }
+
+void ChessApp::release() {
+  releaseSearchWorkspace();
+  display = nullptr;
+}
 
 bool ChessApp::ensureSearchWorkspace() {
   if (searchWorkspace != nullptr) {
@@ -700,6 +706,10 @@ bool ChessApp::update() {
   bool changed = false;
   if (mode == Mode::Playing && aiThinking && !alertVisible && !gameOver &&
       !isHumanTurn()) {
+    // Do not start the blocking search until the thinking frame has completed.
+    if (display != nullptr && !display->ready()) {
+      return false;
+    }
     aiThinking = false;
     setHint("");
     Move move = chooseAiMove();

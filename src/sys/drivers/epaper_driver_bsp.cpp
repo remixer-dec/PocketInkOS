@@ -331,10 +331,14 @@ void epaper_driver_display::EPD_Clear() {
 }
 
 void epaper_driver_display::EPD_Display() {
-  int buffer_len = lcd_spi_data.buffer_len;
+  EPD_Display(buffer);
+}
+
+void epaper_driver_display::EPD_Display(const uint8_t *frame) {
+  const int buffer_len = lcd_spi_data.buffer_len;
   EPD_SendCommand(0x24);
-  assert(buffer);
-  writeBytes(buffer, buffer_len);
+  assert(frame);
+  writeBytes(frame, buffer_len);
   EPD_TurnOnDisplay();
 }
 
@@ -349,10 +353,14 @@ void epaper_driver_display::EPD_DisplayRegion(int16_t x, int16_t y, int16_t w,
 }
 
 void epaper_driver_display::EPD_LoadPartBaseImage() {
-  int buffer_len = lcd_spi_data.buffer_len;
+  EPD_LoadPartBaseImage(buffer);
+}
+
+void epaper_driver_display::EPD_LoadPartBaseImage(const uint8_t *frame) {
+  const int buffer_len = lcd_spi_data.buffer_len;
   EPD_SendCommand(0x26);
-  assert(buffer);
-  writeBytes(buffer, buffer_len);
+  assert(frame);
+  writeBytes(frame, buffer_len);
 }
 
 void epaper_driver_display::EPD_LoadPartBothImages() {
@@ -437,9 +445,13 @@ void epaper_driver_display::EPD_ReattachPartial() {
 }
 
 void epaper_driver_display::EPD_DisplayPart() {
+  EPD_DisplayPart(buffer);
+}
+
+void epaper_driver_display::EPD_DisplayPart(const uint8_t *frame) {
   EPD_SendCommand(0x24);
-  assert(buffer);
-  writeBytes(buffer, 5000);
+  assert(frame);
+  writeBytes(frame, lcd_spi_data.buffer_len);
   EPD_TurnOnDisplayPart();
 }
 

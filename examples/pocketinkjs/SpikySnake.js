@@ -42,6 +42,7 @@ let foodY = 0
 let foodEaten = 0
 let spikeHits = 0
 let moveTimer = 0
+let movePending = false
 let swipeStartX = 0
 let swipeStartY = 0
 let trackingSwipe = false
@@ -92,6 +93,7 @@ function resetGame() {
   nextDirection = DIR_RIGHT
   foodEaten = 0
   spikeHits = 0
+  movePending = false
   gameOver = false
 
   const y = Math.floor(ROWS / 2)
@@ -172,6 +174,12 @@ function stepGame() {
   return true
 }
 
+function requestMove() {
+  // Movement is frame-paced: timer ticks collapse while the panel is busy.
+  movePending = true
+  return false
+}
+
 function drawSpike(x, y) {
   const left = BOARD_X + x * CELL
   const top = BOARD_Y + y * CELL
@@ -207,7 +215,7 @@ function onStart() {
   console.log("[snake] start", app.path)
   app.setWakeLock(true)
   resetGame()
-  moveTimer = setInterval(stepGame, MOVE_MS)
+  moveTimer = setInterval(requestMove, MOVE_MS)
 }
 
 function onStop() {
@@ -246,6 +254,12 @@ function onDraw() {
   }
 }
 
+function onUpdate() {
+  if (!movePending || !screen.ready()) return false
+  movePending = false
+  return stepGame()
+}
+
 function onTouchDown(event) {
   swipeStartX = event.x
   swipeStartY = event.y
@@ -262,15 +276,21 @@ function onTouchUp(event) {
   const dy = event.y - swipeStartY
   if (Math.abs(dx) < SWIPE_MIN && Math.abs(dy) < SWIPE_MIN) return false
   if (Math.abs(dx) > Math.abs(dy)) {
-    return setDirection(dx > 0 ? DIR_RIGHT : DIR_LEFT)
+    setDirection(dx > 0 ? DIR_RIGHT : DIR_LEFT)
+    return false
   }
-  return setDirection(dy > 0 ? DIR_DOWN : DIR_UP)
+  setDirection(dy > 0 ? DIR_DOWN : DIR_UP)
+  return false
 }
 
 function onMenu() {
-  return turnLeft()
+  if (gameOver) return resetGame()
+  turnLeft()
+  return false
 }
 
 function onPower() {
-  return turnRight()
+  if (gameOver) return resetGame()
+  turnRight()
+  return false
 }

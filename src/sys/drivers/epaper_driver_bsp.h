@@ -75,11 +75,14 @@ public:
   void EPD_Clear();
   /// Sends the framebuffer using a full display refresh.
   void EPD_Display();
+  /// Sends an immutable caller-owned frame using a full display refresh.
+  void EPD_Display(const uint8_t *frame);
   [[deprecated("EPD_DisplayRegion is not hardware-safe; use EPD_DisplayPart/full-buffer partial refresh")]]
   void EPD_DisplayRegion(int16_t x, int16_t y, int16_t w, int16_t h);
 
   /// Loads the framebuffer as the controller's partial-refresh base image.
   void EPD_LoadPartBaseImage();
+  void EPD_LoadPartBaseImage(const uint8_t *frame);
   /// Loads the framebuffer into both controller image planes.
   void EPD_LoadPartBothImages();
   /// Loads and displays the framebuffer as a new partial-refresh baseline.
@@ -88,6 +91,7 @@ public:
   void EPD_Init_Partial();
   /// Refreshes the panel from the full local buffer using the partial waveform.
   void EPD_DisplayPart();
+  void EPD_DisplayPart(const uint8_t *frame);
   /// Sets one clipped framebuffer pixel to the requested monochrome color.
   void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
   /// Sets one known-in-range pixel black without bounds checks.

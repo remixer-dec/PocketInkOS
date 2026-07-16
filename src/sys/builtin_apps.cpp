@@ -221,6 +221,7 @@ const AppDefinition builtInApps[] = {
         builtInApp("chess", "chess", "C", MENU_GAMES, &chessScreen,
                    []() { chess.reset(); },
                    defaultContextBehavior<ChessApp, chess>()
+                       .withEnter([]() { chess.start(display); })
                        .withMenuBtn(handleChessMenu, handleChessMenuDouble,
                                  handleChessMenuLong)
                        .withPowerBtn(handleChessPower)

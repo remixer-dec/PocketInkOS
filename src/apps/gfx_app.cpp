@@ -474,6 +474,11 @@ bool GfxApp::update() {
   if (!running) {
     return false;
   }
+  // Advance immediately before a render opportunity instead of keeping a
+  // stale dirty frame queued throughout the physical refresh.
+  if (display != nullptr && !display->ready()) {
+    return false;
+  }
   unsigned long now = millis();
   if (lastFrameAt == 0) {
     lastFrameAt = now;

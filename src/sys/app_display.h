@@ -22,6 +22,12 @@ public:
   void flush();
   /// Transfers the full framebuffer using the panel's partial-refresh waveform.
   void flushPartial();
+  /// Starts a refresh on a worker and returns after snapshotting the frame.
+  bool flushAsync();
+  /// Starts a partial refresh on a worker and returns after snapshotting.
+  bool flushPartialAsync();
+  /// True when another frame may be rendered and submitted.
+  bool ready() const;
   void clear();
   void seedPartialBothImages();
   void requestFullRefresh();
@@ -34,9 +40,22 @@ public:
   size_t framebufferSize() const;
 
 private:
+  enum class AsyncRefresh : uint8_t { Full, Partial };
+
   epaper_driver_display driver;
-  bool partialReady = false;
+  std::atomic<bool> partialReady{false};
+  std::atomic<bool> fullRefreshRequested{false};
+  std::atomic<bool> refreshBusy{false};
   std::atomic_flag locked = ATOMIC_FLAG_INIT;
+  uint8_t *refreshFrame = nullptr;
+  TaskHandle_t refreshTask = nullptr;
+  AsyncRefresh pendingRefresh = AsyncRefresh::Full;
+
+  static void refreshTaskMain(void *context);
+  void refreshLoop();
+  bool ensureRefreshWorker();
+  bool startAsyncRefresh();
+  void waitForRefresh();
 };
 
 #endif
