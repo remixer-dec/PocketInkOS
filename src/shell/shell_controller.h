@@ -80,6 +80,8 @@ public:
   void refreshHomeMinuteIfNeeded();
   /// Performs the pending full or partial render work.
   void renderIfDirty();
+  /// Captures a due video frame and surfaces auto-stop or storage failures.
+  void updateVideoRecording();
 
   /// Captures resumable shell state before deep sleep.
   void saveRetainedContextForSleep();
@@ -104,10 +106,9 @@ private:
   unsigned long quitDialogOpenedAt = 0;
   int64_t lastHomeMinute = -1;
   bool screenshotPending = false;
+  bool videoTogglePending = false;
   bool appOverlayVisible = false;
   ActiveApp *filesLaunchReturnOwner = nullptr;
-  char screenshotNotice[24] = {};
-  unsigned long screenshotNoticeUntil = 0;
   QuickSettingsController quickSettings;
 
   static const unsigned long MENU_PRESS_HIGHLIGHT_MS = 180;
@@ -148,7 +149,7 @@ private:
   void render();
   void showQuickSettingsActionFeedback(PowerDialogAction action);
   void requestScreenshot();
-  void showScreenshotNotice(const char *message);
+  void requestVideoToggle();
 
   void prepareForPowerTransition();
   void enterSleepClockDeepSleep();
@@ -159,6 +160,7 @@ private:
   static void renderPowerOffScreenThunk(void *context);
   static void saveRetainedContextThunk(void *context);
   static void requestScreenshotThunk(void *context);
+  static void requestVideoToggleThunk(void *context);
 
   static void restoreLaunchApp(void *context, const AppDefinition &app);
   static void restoreSwitchTo(void *context, Screen screen);

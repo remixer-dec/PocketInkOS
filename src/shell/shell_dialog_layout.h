@@ -28,6 +28,7 @@ enum class PowerDialogAction : uint8_t {
   VolumeMute,
   VolumeUp,
   Screenshot,
+  VideoToggle,
 };
 
 /// Paged groups in the power/quick-settings dialog.
@@ -47,6 +48,7 @@ struct PowerDialogSnapshot {
   uint16_t cpuMhz = 240;
   uint8_t volume = 60;
   bool muted = false;
+  bool recording = false;
 };
 
 /// Renders the power/quick-settings dialog from the supplied snapshot.
@@ -56,8 +58,6 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
 /// Converts a dialog touch into a semantic quick-settings action.
 PowerDialogAction powerDialogHitAction(const TouchPoint &point,
                                        PowerDialogPage page);
-/// Draws a short non-modal status message above the active shell screen.
-void drawShellToast(AppDisplay &display, const char *message);
 /// Draws the final user-visible frame before powering off.
 void drawPowerOffScreen(AppDisplay &display);
 /// Draws the battery-protection screen used before forced sleep/shutdown.

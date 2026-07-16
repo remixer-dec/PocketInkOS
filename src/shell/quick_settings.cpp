@@ -2,6 +2,7 @@
 #include "sys/services/connectivity_service.h"
 #include "sys/services/device_controls.h"
 #include "sys/services/power_control.h"
+#include "sys/video/record.h"
 #include <Arduino.h>
 
 void QuickSettingsController::open(PowerDialogPage nextPage) {
@@ -24,6 +25,7 @@ PowerDialogSnapshot QuickSettingsController::snapshot() const {
   result.cpuMhz = controls.cpuMhz;
   result.volume = controls.volume;
   result.muted = controls.muted;
+  result.recording = videoRecording();
   return result;
 }
 
@@ -55,6 +57,7 @@ PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) 
   case PowerDialogAction::VolumeMute:
   case PowerDialogAction::VolumeUp:
   case PowerDialogAction::Screenshot:
+  case PowerDialogAction::VideoToggle:
     return action;
   }
   return PowerDialogAction::None;
@@ -107,6 +110,11 @@ void QuickSettingsController::runAction(
   case PowerDialogAction::Screenshot:
     if (actions.captureScreenshot != nullptr) {
       actions.captureScreenshot(actions.context);
+    }
+    return;
+  case PowerDialogAction::VideoToggle:
+    if (actions.toggleVideoRecording != nullptr) {
+      actions.toggleVideoRecording(actions.context);
     }
     return;
   case PowerDialogAction::PreviousPage:

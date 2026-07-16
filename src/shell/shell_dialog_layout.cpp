@@ -201,6 +201,9 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
   if (snapshot.page == PowerDialogPage::Screen) {
     drawIconButton(display, POWER_LEFT_BUTTON, ';',
                    pressed == PowerDialogAction::Screenshot);
+    drawIconButton(display, POWER_MIDDLE_BUTTON,
+                   snapshot.recording ? '*' : '\'',
+                   pressed == PowerDialogAction::VideoToggle);
     return;
   }
 
@@ -256,19 +259,11 @@ PowerDialogAction powerDialogHitAction(const TouchPoint &point,
       uiContains(POWER_LEFT_BUTTON, point)) {
     return PowerDialogAction::Screenshot;
   }
-  return PowerDialogAction::None;
-}
-
-void drawShellToast(AppDisplay &display, const char *message) {
-  if (message == nullptr || message[0] == '\0') {
-    return;
+  if (page == PowerDialogPage::Screen &&
+      uiContains(POWER_MIDDLE_BUTTON, point)) {
+    return PowerDialogAction::VideoToggle;
   }
-  static const UiRect TOAST_RECT = {24, 162, 152, 24};
-  display.fillRect(TOAST_RECT.x, TOAST_RECT.y, TOAST_RECT.w, TOAST_RECT.h, 0);
-  display.drawRect(TOAST_RECT.x, TOAST_RECT.y, TOAST_RECT.w, TOAST_RECT.h, 1);
-  display.setTextColor(1);
-  display.setTextSize(1);
-  drawCenteredText(display, message, TOAST_RECT.y + 7);
+  return PowerDialogAction::None;
 }
 
 void drawPowerOffScreen(AppDisplay &display) {

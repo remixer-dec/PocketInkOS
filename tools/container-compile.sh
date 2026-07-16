@@ -183,6 +183,8 @@ FILES=( \
   "$ROOT/src/sys/services/sd_storage.cpp" \
   "$ROOT/src/sys/system_fonts.cpp" \
   "$ROOT/src/shell/screenshot.cpp" \
+  "$ROOT/src/sys/video/avi_encoder.cpp" \
+  "$ROOT/src/sys/video/record.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \
   "$ROOT/src/sys/wake_trace.cpp" \
   "$ROOT/src/games/hangman_app.cpp" \
@@ -200,6 +202,7 @@ FILES=( \
   "$ROOT/src/shell/shell_lockscreen_layout.cpp" \
   "$ROOT/src/shell/shell_menu_layout.cpp" \
   "$ROOT/src/shell/shell_dialog_layout.cpp" \
+  "$ROOT/src/shell/toast.cpp" \
   "$ROOT/src/shell/shell_controller.cpp" \
   "$ROOT/src/shell/quick_settings.cpp" \
   "$ROOT/src/sys/drivers/hw_button.cpp" \

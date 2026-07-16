@@ -25,6 +25,7 @@
 #include "sys/services/connectivity_service.h"
 #include "sys/services/periodic_wake_service.h"
 #include "sys/services/system_stage_service.h"
+#include "sys/video/record.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
 #include "shell/shell_controller.h"
@@ -246,6 +247,7 @@ void renderLowBatteryScreen() {
 }
 
 void prepareForPowerTransition() {
+  videoRecordStop();
   touch.end();
   wifiTurnOff();
   disableWirelessForSleep();
@@ -445,6 +447,7 @@ void loop() {
   }
 
   shell.renderIfDirty();
+  shell.updateVideoRecording();
 
   if (wifiUpdate()) {
     shell.markDirty();

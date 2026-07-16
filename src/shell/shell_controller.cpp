@@ -4,6 +4,7 @@
 #include "shell/shell_home_layout.h"
 #include "shell/shell_menu_layout.h"
 #include "shell/shell_context.h"
+#include "shell/toast.h"
 #include "sys/services/battery_monitor.h"
 #include "sys/agentfiesta/agentfiesta.h"
 #include "sys/ext_app_api/app_api.h"
@@ -15,6 +16,7 @@
 #include "sys/services/power_control.h"
 #include "shell/screenshot.h"
 #include "sys/services/sd_storage.h"
+#include "sys/video/record.h"
 #include "sys/system_config.h"
 #include "sys/drivers/usb_status.h"
 #include <Arduino.h>
@@ -42,6 +44,9 @@ bool ShellController::shouldRedrawForBatteryRefresh() const {
 
 unsigned long
 ShellController::inactivityDeepSleepMs(unsigned long defaultMs) const {
+  if (videoRecording()) {
+    return 0;
+  }
   if (activeDefinition != nullptr &&
       activeDefinition->inactivityDeepSleepMs > 0) {
     return activeDefinition->inactivityDeepSleepMs;
@@ -465,6 +470,7 @@ QuickSettingsActions ShellController::quickSettingsActions() {
   actions.saveRetainedContext = saveRetainedContextThunk;
   actions.enterSleepClock = enterSleepClockDeepSleepThunk;
   actions.captureScreenshot = requestScreenshotThunk;
+  actions.toggleVideoRecording = requestVideoToggleThunk;
   return actions;
 }
 
@@ -775,37 +781,38 @@ void ShellController::render() {
         currentShellData(dateText, sizeof(dateText), timeText, sizeof(timeText));
     drawPowerDialog(display, data.status, quickSettings.snapshot());
   }
-  const bool screenshotNoticeVisible =
-      screenshotNoticeUntil != 0 &&
-      static_cast<long>(millis() - screenshotNoticeUntil) < 0;
-  if (screenshotNoticeVisible) {
-    drawShellToast(display, screenshotNotice);
-  }
+  drawShellToast(display);
   if (!display.flushAsync()) {
     display.flush();
   }
-  bool redrawForScreenshotNotice = false;
+  bool redrawForShellNotice = false;
   if (screenshotPending) {
     const ScreenshotResult result = saveFramebufferScreenshot(display);
     screenshotPending = false;
     const char *message = screenshotResultMessage(result);
     if (message[0] != '\0') {
-      showScreenshotNotice(message);
-      redrawForScreenshotNotice = true;
+      showShellToast(message);
+      redrawForShellNotice = true;
+    }
+  }
+  if (videoTogglePending) {
+    const VideoRecordResult result = videoRecordToggle(display);
+    videoTogglePending = false;
+    const char *message = videoRecordResultMessage(result);
+    if (message[0] != '\0') {
+      showShellToast(message);
+      redrawForShellNotice = true;
     }
   }
   display.unlock();
-  dirty = redrawForScreenshotNotice;
+  dirty = redrawForShellNotice;
   if (screen == SCREEN_HOME) {
     lastHomeMinute = deviceClock.localMinuteIndex();
   }
 }
 
 void ShellController::renderIfDirty() {
-  if (screenshotNoticeUntil != 0 &&
-      static_cast<long>(millis() - screenshotNoticeUntil) >= 0) {
-    screenshotNotice[0] = '\0';
-    screenshotNoticeUntil = 0;
+  if (updateShellToast()) {
     dirty = true;
   }
   if (dirty && display.ready()) {
@@ -834,11 +841,25 @@ void ShellController::requestScreenshot() {
   dirty = true;
 }
 
-void ShellController::showScreenshotNotice(const char *message) {
-  const char *text = message != nullptr ? message : "";
-  strncpy(screenshotNotice, text, sizeof(screenshotNotice) - 1);
-  screenshotNotice[sizeof(screenshotNotice) - 1] = '\0';
-  screenshotNoticeUntil = millis() + 1800;
+void ShellController::requestVideoToggle() {
+  quickSettings.close();
+  videoTogglePending = true;
+  dirty = true;
+}
+
+void ShellController::updateVideoRecording() {
+  if (!videoRecording()) {
+    return;
+  }
+  display.lock();
+  const VideoRecordResult result = videoRecordUpdate(display);
+  display.unlock();
+  if (result == VideoRecordResult::None) {
+    return;
+  }
+  showShellToast(videoRecordResultMessage(result));
+  noteUserActivity();
+  dirty = true;
 }
 
 bool ShellController::updateActiveApp() {
@@ -956,6 +977,10 @@ void ShellController::saveRetainedContextThunk(void *context) {
 
 void ShellController::requestScreenshotThunk(void *context) {
   static_cast<ShellController *>(context)->requestScreenshot();
+}
+
+void ShellController::requestVideoToggleThunk(void *context) {
+  static_cast<ShellController *>(context)->requestVideoToggle();
 }
 
 void ShellController::restoreLaunchApp(void *context,
