@@ -4,6 +4,7 @@
 #include "fs/file_provider.h"
 #include "fs/providers/image_file_viewer.h"
 #include "fs/providers/svg_file_viewer.h"
+#include "sys/app_display.h"
 #include "sys/services/connectivity_service.h"
 #include "sys/ext_app_api/app_api.h"
 #include "sys/services/device_clock.h"
@@ -42,6 +43,8 @@
 #include <freertos/task.h>
 #include <new>
 #include <stdio.h>
+
+extern AppDisplay display;
 
 #if __has_include(<esp_rom_sys.h>)
 #include <esp_rom_sys.h>
@@ -177,6 +180,88 @@ bool readPocketInkJSModule(const char *path, char *output,
 }
 
 ImageRenderCachePool PocketInkJSImageCache;
+
+constexpr uint8_t kPreparedSheetLimit = 8;
+constexpr uint8_t kPreparedSpriteLimit = 96;
+constexpr uint8_t kLayerLimit = 8;
+constexpr uint8_t kSpriteTransformCount = 16;
+constexpr size_t kPreparedPathCapacity = 288;
+
+struct PreparedSheet {
+  ImageRenderCache bitmap;
+  PinkSpritesheet layout;
+  char path[kPreparedPathCapacity] = {};
+};
+
+struct PreparedSprite {
+  ImageRenderCache base;
+  ImageRenderCache *transforms[kSpriteTransformCount] = {};
+  uint8_t scale = 1;
+};
+
+struct PreparedLayer {
+  ImageRenderCache bitmap;
+};
+
+struct PreparedGraphicsState {
+  PreparedSprite sprites[kPreparedSpriteLimit];
+  PreparedSheet sheets[kPreparedSheetLimit];
+  PreparedLayer layers[kLayerLimit];
+  uint8_t spriteCount = 0;
+  uint8_t sheetCount = 0;
+  uint8_t layerCount = 0;
+
+  ~PreparedGraphicsState() {
+    for (uint8_t sprite = 0; sprite < spriteCount; sprite++) {
+      for (uint8_t transform = 0; transform < kSpriteTransformCount;
+           transform++) {
+        ImageRenderCache *cache = sprites[sprite].transforms[transform];
+        if (cache != nullptr) {
+          cache->~ImageRenderCache();
+          psram::release(cache);
+        }
+      }
+    }
+  }
+};
+
+PreparedGraphicsState *PocketInkJSPreparedGraphics = nullptr;
+
+PreparedGraphicsState *preparedGraphics() {
+  if (PocketInkJSPreparedGraphics != nullptr) {
+    return PocketInkJSPreparedGraphics;
+  }
+  void *storage = psram::allocate(sizeof(PreparedGraphicsState));
+  if (storage == nullptr) {
+    return nullptr;
+  }
+  PocketInkJSPreparedGraphics = new (storage) PreparedGraphicsState();
+  return PocketInkJSPreparedGraphics;
+}
+
+void clearPreparedGraphics() {
+  if (PocketInkJSPreparedGraphics == nullptr) {
+    return;
+  }
+  PocketInkJSPreparedGraphics->~PreparedGraphicsState();
+  psram::release(PocketInkJSPreparedGraphics);
+  PocketInkJSPreparedGraphics = nullptr;
+}
+
+class PackedCacheGfx : public Adafruit_GFX {
+public:
+  PackedCacheGfx(ImageRenderCache &nextCache, int16_t width, int16_t height)
+      : Adafruit_GFX(width, height), cache(nextCache) {}
+
+  void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+    if (color != 0U) {
+      cache.setBlackPixel(x, y);
+    }
+  }
+
+private:
+  ImageRenderCache &cache;
+};
 
 class PocketInkJSApp;
 
@@ -720,6 +805,15 @@ PocketInkJS::Value nativeMillis(PocketInkJS::Runtime &runtime, const PocketInkJS
   return runtime.number(static_cast<double>(millis()));
 }
 
+PocketInkJS::Value nativeScreenReady(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *, size_t argc,
+                                     void *) {
+  if (argc != 0) {
+    return runtime.fail(PocketInkJS::ErrorCode{159});
+  }
+  return runtime.boolean(display.ready());
+}
+
 PocketInkJS::Value nativePocketInkJSHeapUsed(PocketInkJS::Runtime &runtime,
                                    const PocketInkJS::Value *, size_t argc,
                                    void *) {
@@ -947,18 +1041,20 @@ bool copyObjectProperties(PocketInkJS::Runtime &runtime,
 PocketInkJS::Value nativeUiDefineSpritesheet(PocketInkJS::Runtime &runtime,
                                               const PocketInkJS::Value *args,
                                               size_t argc, void *) {
-  if (argc != 4U) {
+  const bool pathBound = argc == 5U && runtime.isString(args[0]);
+  if (argc != 4U && !pathBound) {
     return runtime.fail(
-        "ui.defineSpritesheet expects width, height, frame count, and row count");
+        "ui.defineSpritesheet expects optional path, width, height, frame count, and row count");
   }
+  const size_t offset = pathBound ? 1U : 0U;
   uint16_t frameWidth = 0;
   uint16_t frameHeight = 0;
   uint16_t frameCount = 0;
   uint16_t rowCount = 0;
-  if (!spritesheetInteger(runtime, args[0], frameWidth) ||
-      !spritesheetInteger(runtime, args[1], frameHeight) ||
-      !spritesheetInteger(runtime, args[2], frameCount) ||
-      !spritesheetInteger(runtime, args[3], rowCount)) {
+  if (!spritesheetInteger(runtime, args[offset], frameWidth) ||
+      !spritesheetInteger(runtime, args[offset + 1U], frameHeight) ||
+      !spritesheetInteger(runtime, args[offset + 2U], frameCount) ||
+      !spritesheetInteger(runtime, args[offset + 3U], rowCount)) {
     return runtime.fail("invalid spritesheet dimensions");
   }
   const PinkSpritesheet sheet = PinkSpritesheet::defineSpritesheet(
@@ -980,7 +1076,324 @@ PocketInkJS::Value nativeUiDefineSpritesheet(PocketInkJS::Runtime &runtime,
       !runtime.objectSet(result, "spriteAt", spriteAt)) {
     return runtime.undefined();
   }
+  if (pathBound) {
+    PreparedGraphicsState *graphics = preparedGraphics();
+    if (graphics == nullptr) {
+      return runtime.fail("no PSRAM for prepared sprites");
+    }
+    if (graphics->sheetCount >= kPreparedSheetLimit) {
+      return runtime.fail("too many prepared spritesheets");
+    }
+    PreparedSheet &prepared = graphics->sheets[graphics->sheetCount];
+    if (!copyJsString(runtime, args[0], prepared.path,
+                      sizeof(prepared.path))) {
+      return runtime.fail("spritesheet path is too long");
+    }
+    prepared.layout = sheet;
+    graphics->sheetCount++;
+    if (!runtime.objectSet(result, "__preparedSheet",
+                           runtime.number(graphics->sheetCount))) {
+      return runtime.undefined();
+    }
+  }
   return result;
+}
+
+bool preparedHandle(PocketInkJS::Runtime &runtime, PocketInkJS::Value object,
+                    const char *property, uint8_t limit, uint8_t &index) {
+  if (runtime.typeOf(object) != PocketInkJS::ValueType::Object) {
+    return false;
+  }
+  const PocketInkJS::Value value = runtime.objectGet(object, property);
+  if (!runtime.isNumber(value)) {
+    return false;
+  }
+  const double handle = runtime.toNumber(value);
+  if (!std::isfinite(handle) || handle < 1.0 || handle > limit ||
+      std::floor(handle) != handle) {
+    return false;
+  }
+  index = static_cast<uint8_t>(handle - 1.0);
+  return true;
+}
+
+bool decodePreparedSheet(PreparedSheet &sheet, uint8_t sheetIndex) {
+  if (sheet.bitmap.ready()) {
+    return true;
+  }
+  const uint16_t width = static_cast<uint16_t>(
+      sheet.layout.columnCount() * sheet.layout.frameWidth);
+  const uint16_t height =
+      static_cast<uint16_t>(sheet.layout.rowCount * sheet.layout.frameHeight);
+  if (!sheet.bitmap.begin(width, height,
+                          0x7368656574000000ULL | sheetIndex)) {
+    return false;
+  }
+  PackedCacheGfx target(sheet.bitmap, width, height);
+  const ImageTransform identity;
+  if (!drawImagePathTransformed(target, "sd", sheet.path, 0, 0, width,
+                                height, 1, false, identity) ||
+      !sheet.bitmap.finish()) {
+    sheet.bitmap.clear();
+    return false;
+  }
+  return true;
+}
+
+PocketInkJS::Value nativeUiPrepareSprite(PocketInkJS::Runtime &runtime,
+                                         const PocketInkJS::Value *args,
+                                         size_t argc, void *) {
+  if (argc < 3U || argc > 4U) {
+    return runtime.fail(
+        "ui.prepareSprite expects sheet, row, column, and optional options");
+  }
+  PreparedGraphicsState *graphics = preparedGraphics();
+  uint8_t sheetIndex = 0;
+  if (graphics == nullptr ||
+      !preparedHandle(runtime, args[0], "__preparedSheet",
+                      graphics != nullptr ? graphics->sheetCount : 0U,
+                      sheetIndex)) {
+    return runtime.fail("prepareSprite requires a path-bound spritesheet");
+  }
+  if (graphics->spriteCount >= kPreparedSpriteLimit) {
+    return runtime.fail("too many prepared sprites");
+  }
+  const double rowNumber = runtime.toNumber(args[1]);
+  const double columnNumber = runtime.toNumber(args[2]);
+  if (!runtime.isNumber(args[1]) || !runtime.isNumber(args[2]) ||
+      !std::isfinite(rowNumber) || !std::isfinite(columnNumber) ||
+      rowNumber < 0.0 || columnNumber < 0.0 || rowNumber > UINT16_MAX ||
+      columnNumber > UINT16_MAX || std::floor(rowNumber) != rowNumber ||
+      std::floor(columnNumber) != columnNumber) {
+    return runtime.fail("invalid prepared sprite coordinates");
+  }
+  uint8_t scale = 1;
+  if (argc == 4U &&
+      runtime.typeOf(args[3]) != PocketInkJS::ValueType::Undefined) {
+    PocketInkJS::Value scaleValue = args[3];
+    if (runtime.typeOf(args[3]) == PocketInkJS::ValueType::Object) {
+      scaleValue = runtime.objectGet(args[3], "scale");
+    }
+    if (runtime.typeOf(scaleValue) != PocketInkJS::ValueType::Undefined) {
+      const double scaleNumber = runtime.toNumber(scaleValue);
+      if (!runtime.isNumber(scaleValue) || !std::isfinite(scaleNumber) ||
+          scaleNumber < 1.0 || scaleNumber > 4.0 ||
+          std::floor(scaleNumber) != scaleNumber) {
+        return runtime.fail(
+            "prepared sprite scale must be an integer from 1 to 4");
+      }
+      scale = static_cast<uint8_t>(scaleNumber);
+    }
+  }
+  PreparedSheet &sheet = graphics->sheets[sheetIndex];
+  const PinkSpriteFrame frame = sheet.layout.spriteAt(
+      static_cast<uint16_t>(rowNumber), static_cast<uint16_t>(columnNumber));
+  if (!frame.valid()) {
+    return runtime.fail("prepared sprite coordinates are outside the sheet");
+  }
+  if (!decodePreparedSheet(sheet, sheetIndex)) {
+    return runtime.fail("spritesheet decode failed");
+  }
+  PreparedSprite &sprite = graphics->sprites[graphics->spriteCount];
+  const uint64_t frameKey =
+      0x6672616d65000000ULL |
+      (static_cast<uint64_t>(sheetIndex) << 32U) |
+      (static_cast<uint64_t>(frame.y) << 16U) | frame.x;
+  if (!sheet.bitmap.copyRegion(sprite.base, frame.x, frame.y, frame.width,
+                               frame.height, frameKey)) {
+    return runtime.fail("prepared sprite allocation failed");
+  }
+  sprite.scale = scale;
+  graphics->spriteCount++;
+  PocketInkJS::Value result = runtime.makeObject();
+  if (runtime.isUndefined(result) ||
+      !runtime.objectSet(result, "__preparedSprite",
+                         runtime.number(graphics->spriteCount))) {
+    return runtime.undefined();
+  }
+  return result;
+}
+
+ImageRenderCache *preparedSpriteFrame(PreparedSprite &sprite,
+                                      uint8_t transformFlags,
+                                      uint8_t spriteIndex) {
+  if (transformFlags == 0U && sprite.scale == 1U) {
+    return &sprite.base;
+  }
+  ImageRenderCache *&cached = sprite.transforms[transformFlags];
+  if (cached != nullptr) {
+    return cached->ready() ? cached : nullptr;
+  }
+  void *storage = psram::allocate(sizeof(ImageRenderCache));
+  if (storage == nullptr) {
+    return nullptr;
+  }
+  cached = new (storage) ImageRenderCache();
+  const uint64_t key = 0x7472616e73000000ULL |
+                       (static_cast<uint64_t>(spriteIndex) << 8U) |
+                       transformFlags;
+  if (!sprite.base.rasterize(*cached, transformFlags, sprite.scale, key)) {
+    cached->~ImageRenderCache();
+    psram::release(cached);
+    cached = nullptr;
+  }
+  return cached;
+}
+
+PocketInkJS::Value nativeUiCreateLayer(PocketInkJS::Runtime &runtime,
+                                       const PocketInkJS::Value *args,
+                                       size_t argc, void *) {
+  if (argc != 0U && argc != 2U) {
+    return runtime.fail("ui.createLayer expects optional width and height");
+  }
+  uint16_t width = EPD_WIDTH;
+  uint16_t height = EPD_HEIGHT;
+  if (argc == 2U &&
+      (!spritesheetInteger(runtime, args[0], width) ||
+       !spritesheetInteger(runtime, args[1], height) || width > EPD_WIDTH ||
+       height > EPD_HEIGHT)) {
+    return runtime.fail("invalid layer dimensions");
+  }
+  PreparedGraphicsState *graphics = preparedGraphics();
+  if (graphics == nullptr) {
+    return runtime.fail("no PSRAM for layer");
+  }
+  if (graphics->layerCount >= kLayerLimit) {
+    return runtime.fail("too many layers");
+  }
+  PreparedLayer &layer = graphics->layers[graphics->layerCount];
+  if (!layer.bitmap.begin(width, height,
+                          0x6c61796572000000ULL | graphics->layerCount)) {
+    return runtime.fail("layer allocation failed");
+  }
+  graphics->layerCount++;
+  PocketInkJS::Value result = runtime.makeObject();
+  if (runtime.isUndefined(result) ||
+      !runtime.objectSet(result, "__preparedLayer",
+                         runtime.number(graphics->layerCount))) {
+    return runtime.undefined();
+  }
+  return result;
+}
+
+PocketInkJS::Value nativeUiDrawSprite(PocketInkJS::Runtime &runtime,
+                                      const PocketInkJS::Value *args,
+                                      size_t argc, void *) {
+  if (argc < 3U || argc > 5U) {
+    return runtime.fail(
+        "ui.drawSprite expects sprite, x, y, optional transform, and layer");
+  }
+  PreparedGraphicsState *graphics = PocketInkJSPreparedGraphics;
+  uint8_t spriteIndex = 0;
+  if (graphics == nullptr ||
+      !preparedHandle(runtime, args[0], "__preparedSprite",
+                      graphics != nullptr ? graphics->spriteCount : 0U,
+                      spriteIndex)) {
+    return runtime.fail("invalid prepared sprite");
+  }
+  const double xNumber = runtime.toNumber(args[1]);
+  const double yNumber = runtime.toNumber(args[2]);
+  if (!runtime.isNumber(args[1]) || !runtime.isNumber(args[2]) ||
+      !std::isfinite(xNumber) || !std::isfinite(yNumber) ||
+      xNumber < INT16_MIN || xNumber > INT16_MAX || yNumber < INT16_MIN ||
+      yNumber > INT16_MAX || std::floor(xNumber) != xNumber ||
+      std::floor(yNumber) != yNumber) {
+    return runtime.fail("invalid sprite position");
+  }
+  uint8_t flags = 0;
+  PocketInkJS::Value layerValue = runtime.undefined();
+  if (argc >= 4U) {
+    if (runtime.typeOf(args[3]) == PocketInkJS::ValueType::Object) {
+      layerValue = args[3];
+    } else {
+      const double flagNumber = runtime.toNumber(args[3]);
+      if (!runtime.isNumber(args[3]) || !std::isfinite(flagNumber) ||
+          flagNumber < 0.0 || flagNumber > 15.0 ||
+          std::floor(flagNumber) != flagNumber) {
+        return runtime.fail("invalid sprite transform");
+      }
+      flags = static_cast<uint8_t>(flagNumber);
+    }
+  }
+  if (argc == 5U) {
+    layerValue = args[4];
+  }
+  Adafruit_GFX *target = PocketInkJSDrawTarget;
+  PreparedLayer *layer = nullptr;
+  uint8_t layerIndex = 0;
+  if (runtime.typeOf(layerValue) != PocketInkJS::ValueType::Undefined) {
+    if (!preparedHandle(runtime, layerValue, "__preparedLayer",
+                        graphics->layerCount, layerIndex)) {
+      return runtime.fail("invalid sprite layer");
+    }
+    layer = &graphics->layers[layerIndex];
+    if (!layer->bitmap.writable()) {
+      return runtime.fail("cannot draw to a finalized layer");
+    }
+  }
+  PreparedSprite &sprite = graphics->sprites[spriteIndex];
+  ImageRenderCache *frame = preparedSpriteFrame(sprite, flags, spriteIndex);
+  if (frame == nullptr) {
+    return runtime.boolean(false);
+  }
+  const ImageTransform identity;
+  if (layer != nullptr) {
+    PackedCacheGfx layerTarget(layer->bitmap, layer->bitmap.cachedWidth(),
+                               layer->bitmap.cachedHeight());
+    return runtime.boolean(frame->draw(
+        layerTarget, static_cast<int16_t>(xNumber),
+        static_cast<int16_t>(yNumber), identity));
+  }
+  return runtime.boolean(
+      target != nullptr &&
+      frame->draw(*target, static_cast<int16_t>(xNumber),
+                  static_cast<int16_t>(yNumber), identity));
+}
+
+PocketInkJS::Value nativeUiDrawLayer(PocketInkJS::Runtime &runtime,
+                                     const PocketInkJS::Value *args,
+                                     size_t argc, void *) {
+  if (argc < 1U || argc > 3U) {
+    return runtime.fail("ui.drawLayer expects layer and optional x, y");
+  }
+  PreparedGraphicsState *graphics = PocketInkJSPreparedGraphics;
+  uint8_t layerIndex = 0;
+  if (graphics == nullptr ||
+      !preparedHandle(runtime, args[0], "__preparedLayer",
+                      graphics != nullptr ? graphics->layerCount : 0U,
+                      layerIndex)) {
+    return runtime.fail("invalid layer");
+  }
+  int16_t x = 0;
+  int16_t y = 0;
+  if (argc >= 2U) {
+    const double xNumber = runtime.toNumber(args[1]);
+    if (!runtime.isNumber(args[1]) || !std::isfinite(xNumber) ||
+        xNumber < INT16_MIN || xNumber > INT16_MAX ||
+        std::floor(xNumber) != xNumber) {
+      return runtime.fail("invalid layer position");
+    }
+    x = static_cast<int16_t>(xNumber);
+  }
+  if (argc == 3U) {
+    const double yNumber = runtime.toNumber(args[2]);
+    if (!runtime.isNumber(args[2]) || !std::isfinite(yNumber) ||
+        yNumber < INT16_MIN || yNumber > INT16_MAX ||
+        std::floor(yNumber) != yNumber) {
+      return runtime.fail("invalid layer position");
+    }
+    y = static_cast<int16_t>(yNumber);
+  }
+  if (PocketInkJSDrawTarget == nullptr) {
+    return runtime.boolean(false);
+  }
+  PreparedLayer &layer = graphics->layers[layerIndex];
+  if (layer.bitmap.writable() && !layer.bitmap.finish()) {
+    return runtime.boolean(false);
+  }
+  const ImageTransform identity;
+  return runtime.boolean(
+      layer.bitmap.draw(*PocketInkJSDrawTarget, x, y, identity));
 }
 
 PocketInkJS::Value nativeUiSpriteAt(PocketInkJS::Runtime &runtime,
@@ -2745,6 +3158,7 @@ private:
     systemModalPromise = PocketInkJS::kInvalidRoot;
     stopAsyncWorker();
     releaseSleepGuards();
+    clearPreparedGraphics();
     PocketInkJSImageCache.clear();
     if (appApiSessionMatches(appId)) {
       appApiEndSession();
@@ -3644,6 +4058,9 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Returns the number of milliseconds since boot.
       //JS/ Returns: number
       {"time.millis", nativeMillis},
+      //JS/ Reports whether a framebuffer may be rendered and submitted now.
+      //JS/ Returns: boolean
+      {"screen.ready", nativeScreenReady},
       //JS/ Returns the number of heap bytes currently used by the JS runtime.
       //JS/ Returns: number
       {"PocketInkJS.heapUsed", nativePocketInkJSHeapUsed},
@@ -3870,9 +4287,26 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Args: color (number)
       {"ui.fillScreen", nativeUiFillScreen},
       //JS/ Defines a uniform row-major spritesheet. Rows and columns are zero-based.
-      //JS/ Returns: object - call sheet.spriteAt(row, column, options?) for image options
-      //JS/ Args: frameWidth (number), frameHeight (number), frameCount (number), rowCount (number)
+      //JS/ A leading path binds the sheet for prepareSprite; the four-number form remains compatible.
+      //JS/ Returns: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, spriteAt: function, __preparedSheet?: number }
+      //JS/ Args: path? (string), frameWidth (number), frameHeight (number), frameCount (number), rowCount (number)
       {"ui.defineSpritesheet", nativeUiDefineSpritesheet},
+      //JS/ Decodes a path-bound sheet once and prepares one native cached frame.
+      //JS/ Returns: object - { __preparedSprite: number }, Arg sheet: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, spriteAt: function, __preparedSheet: number }, Arg options: object - { scale?: number }
+      //JS/ Args: sheet (object), row (number), column (number), options? ({scale})
+      {"ui.prepareSprite", nativeUiPrepareSprite},
+      //JS/ Draws a prepared sprite with cached flip/quarter-turn transforms.
+      //JS/ Returns: boolean, Arg sprite: object - { __preparedSprite: number }, Arg layer: object - { __preparedLayer: number }
+      //JS/ Args: sprite (object), x (number), y (number), transform? (number), layer? (object)
+      {"ui.drawSprite", nativeUiDrawSprite},
+      //JS/ Allocates a bit-packed static drawing layer (defaults to screen size).
+      //JS/ Returns: object - { __preparedLayer: number }
+      //JS/ Args: width? (number), height? (number)
+      {"ui.createLayer", nativeUiCreateLayer},
+      //JS/ Finalizes and replays a static layer.
+      //JS/ Returns: boolean, Arg layer: object - { __preparedLayer: number }
+      //JS/ Args: layer (object), x? (number), y? (number)
+      {"ui.drawLayer", nativeUiDrawLayer},
       //JS/ Draws an image loaded from a file path with optional position and transform options.
       //JS/ Returns: void
       //JS/ Args: path (string), options? (object)
@@ -3986,6 +4420,11 @@ bool PocketInkJSApp::installBindings() {
          runtime->set("screen.height", runtime->number(EPD_HEIGHT)) &&
          runtime->set("ui.WHITE", runtime->number(0)) &&
          runtime->set("ui.BLACK", runtime->number(1)) &&
+         runtime->set("ui.FLIP_X", runtime->number(1)) &&
+         runtime->set("ui.FLIP_Y", runtime->number(2)) &&
+         runtime->set("ui.ROTATE_90", runtime->number(4)) &&
+         runtime->set("ui.ROTATE_180", runtime->number(8)) &&
+         runtime->set("ui.ROTATE_270", runtime->number(12)) &&
          runtime->set("ui.FONT_DEFAULT", runtime->number(0)) &&
          runtime->set("ui.FONT_ICON_8", runtime->number(1)) &&
          runtime->set("ui.FONT_ICON_12", runtime->number(2)) &&

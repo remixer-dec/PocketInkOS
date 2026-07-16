@@ -10,4 +10,6 @@ inline void vTaskDelay(int) {}
 inline void vTaskDelete(TaskHandle_t) {}
 inline void vTaskResume(TaskHandle_t) {}
 inline void vTaskSuspend(TaskHandle_t) {}
+inline uint32_t ulTaskNotifyTake(BaseType_t, uint32_t) { return 1; }
+inline void xTaskNotifyGive(TaskHandle_t) {}
 inline BaseType_t xTaskCreatePinnedToCore(TaskFunction_t, const char *, uint32_t, void *, UBaseType_t, TaskHandle_t *handle, BaseType_t) { if (handle) *handle = (TaskHandle_t)1; return pdPASS; }

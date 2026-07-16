@@ -114,8 +114,7 @@ void drawPackedByte(Adafruit_GFX &gfx, uint8_t packed, uint16_t byteX,
     if ((packed & (0x80U >> bit)) == 0U) {
       continue;
     }
-    const int32_t sourceX =
-        static_cast<int32_t>(originX) + firstX + bit;
+    const int32_t sourceX = static_cast<int32_t>(originX) + firstX + bit;
     const int32_t sourceY = static_cast<int32_t>(originY) + row;
     if (identity) {
       if (sourceX >= INT16_MIN && sourceX <= INT16_MAX &&
@@ -261,6 +260,167 @@ bool ImageRenderCache::draw(Adafruit_GFX &gfx, int16_t originX,
     }
   }
   return offset == bytes && decodedBytes == rawBytes;
+}
+
+bool ImageRenderCache::visitBlackPixels(PixelVisitor visitor,
+                                        void *context) const {
+  if (!valid || data == nullptr || stride == 0U || visitor == nullptr) {
+    return false;
+  }
+  uint16_t byteX = 0;
+  uint16_t row = 0;
+  size_t decodedBytes = 0;
+  const auto visitByte = [&](uint8_t packed) {
+    if (row < height && packed != 0U) {
+      const uint16_t firstX = static_cast<uint16_t>(byteX * 8U);
+      const uint8_t count =
+          firstX + 8U <= width ? 8U : static_cast<uint8_t>(width - firstX);
+      for (uint8_t bit = 0; bit < count; bit++) {
+        if ((packed & (0x80U >> bit)) != 0U) {
+          visitor(context, static_cast<uint16_t>(firstX + bit), row);
+        }
+      }
+    }
+    decodedBytes++;
+    byteX++;
+    if (byteX == stride) {
+      byteX = 0;
+      row++;
+    }
+  };
+
+  if (!rle) {
+    for (size_t i = 0; i < bytes; i++) {
+      visitByte(data[i]);
+    }
+    return decodedBytes == rawBytes;
+  }
+
+  size_t offset = 0;
+  while (offset < bytes && decodedBytes < rawBytes) {
+    const uint8_t token = data[offset++];
+    const size_t length = static_cast<size_t>(token & 0x7fU) + 1U;
+    if (length > rawBytes - decodedBytes) {
+      return false;
+    }
+    if ((token & 0x80U) != 0U) {
+      if (offset >= bytes) {
+        return false;
+      }
+      const uint8_t repeated = data[offset++];
+      for (size_t i = 0; i < length; i++) {
+        visitByte(repeated);
+      }
+    } else {
+      if (length > bytes - offset) {
+        return false;
+      }
+      for (size_t i = 0; i < length; i++) {
+        visitByte(data[offset++]);
+      }
+    }
+  }
+  return offset == bytes && decodedBytes == rawBytes;
+}
+
+bool ImageRenderCache::copyRegion(ImageRenderCache &output, uint16_t sourceX,
+                                  uint16_t sourceY, uint16_t regionWidth,
+                                  uint16_t regionHeight,
+                                  uint64_t outputKey) const {
+  if (!valid || regionWidth == 0U || regionHeight == 0U || sourceX >= width ||
+      sourceY >= height || regionWidth > width - sourceX ||
+      regionHeight > height - sourceY ||
+      !output.begin(regionWidth, regionHeight, outputKey)) {
+    return false;
+  }
+  struct CopyContext {
+    ImageRenderCache *output;
+    uint16_t x;
+    uint16_t y;
+    uint16_t width;
+    uint16_t height;
+  } context{&output, sourceX, sourceY, regionWidth, regionHeight};
+  const auto copyPixel = [](void *raw, uint16_t x, uint16_t y) {
+    CopyContext *copy = static_cast<CopyContext *>(raw);
+    if (x >= copy->x && y >= copy->y && x - copy->x < copy->width &&
+        y - copy->y < copy->height) {
+      copy->output->setBlackPixel(x - copy->x, y - copy->y);
+    }
+  };
+  if (!visitBlackPixels(copyPixel, &context) || !output.finish()) {
+    output.clear();
+    return false;
+  }
+  return true;
+}
+
+bool ImageRenderCache::rasterize(ImageRenderCache &output,
+                                 uint8_t transformFlags, uint8_t scale,
+                                 uint64_t outputKey) const {
+  if (!valid || scale == 0U || scale > 4U || transformFlags > 15U) {
+    return false;
+  }
+  const uint8_t turns = static_cast<uint8_t>((transformFlags >> 2U) & 3U);
+  const bool swapsAxes = (turns & 1U) != 0U;
+  const uint32_t outputWidth =
+      static_cast<uint32_t>(swapsAxes ? height : width) * scale;
+  const uint32_t outputHeight =
+      static_cast<uint32_t>(swapsAxes ? width : height) * scale;
+  if (outputWidth == 0U || outputHeight == 0U || outputWidth > UINT16_MAX ||
+      outputHeight > UINT16_MAX ||
+      !output.begin(static_cast<uint16_t>(outputWidth),
+                    static_cast<uint16_t>(outputHeight), outputKey)) {
+    return false;
+  }
+  struct TransformContext {
+    ImageRenderCache *output;
+    uint16_t width;
+    uint16_t height;
+    uint8_t flags;
+    uint8_t scale;
+  } context{&output, width, height, transformFlags, scale};
+  const auto transformPixel = [](void *raw, uint16_t sourceX,
+                                 uint16_t sourceY) {
+    TransformContext *transform = static_cast<TransformContext *>(raw);
+    uint16_t x = (transform->flags & 1U) != 0U
+                     ? static_cast<uint16_t>(transform->width - 1U - sourceX)
+                     : sourceX;
+    uint16_t y = (transform->flags & 2U) != 0U
+                     ? static_cast<uint16_t>(transform->height - 1U - sourceY)
+                     : sourceY;
+    uint16_t rotatedX = x;
+    uint16_t rotatedY = y;
+    switch ((transform->flags >> 2U) & 3U) {
+    case 1:
+      rotatedX = static_cast<uint16_t>(transform->height - 1U - y);
+      rotatedY = x;
+      break;
+    case 2:
+      rotatedX = static_cast<uint16_t>(transform->width - 1U - x);
+      rotatedY = static_cast<uint16_t>(transform->height - 1U - y);
+      break;
+    case 3:
+      rotatedX = y;
+      rotatedY = static_cast<uint16_t>(transform->width - 1U - x);
+      break;
+    default:
+      break;
+    }
+    const uint16_t scaledX =
+        static_cast<uint16_t>(rotatedX * transform->scale);
+    const uint16_t scaledY =
+        static_cast<uint16_t>(rotatedY * transform->scale);
+    for (uint8_t dy = 0; dy < transform->scale; dy++) {
+      for (uint8_t dx = 0; dx < transform->scale; dx++) {
+        transform->output->setBlackPixel(scaledX + dx, scaledY + dy);
+      }
+    }
+  };
+  if (!visitBlackPixels(transformPixel, &context) || !output.finish()) {
+    output.clear();
+    return false;
+  }
+  return true;
 }
 
 void ImageRenderCache::clear() {
