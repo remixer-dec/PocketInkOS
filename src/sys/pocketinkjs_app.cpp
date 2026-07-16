@@ -187,9 +187,24 @@ constexpr uint8_t kLayerLimit = 8;
 constexpr uint8_t kSpriteTransformCount = 16;
 constexpr size_t kPreparedPathCapacity = 288;
 
+struct SpritesheetLayout {
+  uint16_t frameWidth = 0;
+  uint16_t frameHeight = 0;
+  uint16_t frameCount = 0;
+  uint16_t rowCount = 0;
+
+  uint16_t columnCount() const {
+    return frameCount != 0U && rowCount != 0U
+               ? static_cast<uint16_t>(
+                     (static_cast<uint32_t>(frameCount) + rowCount - 1U) /
+                     rowCount)
+               : 0U;
+  }
+};
+
 struct PreparedSheet {
   ImageRenderCache bitmap;
-  PinkSpritesheet layout;
+  SpritesheetLayout layout;
   char path[kPreparedPathCapacity] = {};
 };
 
@@ -1020,81 +1035,72 @@ bool spritesheetInteger(PocketInkJS::Runtime &runtime,
   return true;
 }
 
-bool copyObjectProperties(PocketInkJS::Runtime &runtime,
-                          PocketInkJS::Value source,
-                          PocketInkJS::Value destination) {
-  const size_t count = runtime.objectPropertyCount(source);
-  for (size_t i = 0; i < count; i++) {
-    PocketInkJS::Value key;
-    PocketInkJS::Value value;
-    if (!runtime.objectPropertyAt(source, i, &key, &value)) {
-      return false;
-    }
-    const PocketInkJS::StringView name = runtime.stringView(key);
-    if (!runtime.objectSet(destination, name.data, name.size, value)) {
-      return false;
-    }
+PinkSpriteFrame spritesheetFrame(const SpritesheetLayout &sheet, uint16_t row,
+                                 uint16_t column) {
+  const uint16_t columns = sheet.columnCount();
+  const uint32_t index = static_cast<uint32_t>(row) * columns + column;
+  if (sheet.frameWidth == 0U || sheet.frameHeight == 0U ||
+      row >= sheet.rowCount || column >= columns || index >= sheet.frameCount) {
+    return {};
   }
-  return true;
+  return {static_cast<uint16_t>(column * sheet.frameWidth),
+          static_cast<uint16_t>(row * sheet.frameHeight), sheet.frameWidth,
+          sheet.frameHeight};
 }
 
 PocketInkJS::Value nativeUiDefineSpritesheet(PocketInkJS::Runtime &runtime,
                                               const PocketInkJS::Value *args,
                                               size_t argc, void *) {
-  const bool pathBound = argc == 5U && runtime.isString(args[0]);
-  if (argc != 4U && !pathBound) {
+  if (argc != 5U || !runtime.isString(args[0])) {
     return runtime.fail(
-        "ui.defineSpritesheet expects optional path, width, height, frame count, and row count");
+        "ui.defineSpritesheet expects path, width, height, frame count, and row count");
   }
-  const size_t offset = pathBound ? 1U : 0U;
   uint16_t frameWidth = 0;
   uint16_t frameHeight = 0;
   uint16_t frameCount = 0;
   uint16_t rowCount = 0;
-  if (!spritesheetInteger(runtime, args[offset], frameWidth) ||
-      !spritesheetInteger(runtime, args[offset + 1U], frameHeight) ||
-      !spritesheetInteger(runtime, args[offset + 2U], frameCount) ||
-      !spritesheetInteger(runtime, args[offset + 3U], rowCount)) {
+  if (!spritesheetInteger(runtime, args[1], frameWidth) ||
+      !spritesheetInteger(runtime, args[2], frameHeight) ||
+      !spritesheetInteger(runtime, args[3], frameCount) ||
+      !spritesheetInteger(runtime, args[4], rowCount)) {
     return runtime.fail("invalid spritesheet dimensions");
   }
-  const PinkSpritesheet sheet = PinkSpritesheet::defineSpritesheet(
-      frameWidth, frameHeight, frameCount, rowCount);
+  SpritesheetLayout sheet{frameWidth, frameHeight, frameCount, rowCount};
+  if (rowCount > frameCount ||
+      static_cast<uint32_t>(sheet.columnCount()) * frameWidth > 0x7fffU ||
+      static_cast<uint32_t>(rowCount) * frameHeight > 0x7fffU) {
+    sheet = {};
+  }
   if (sheet.columnCount() == 0U) {
     return runtime.fail("invalid spritesheet layout");
   }
 
   PocketInkJS::Value result = runtime.makeObject();
-  const PocketInkJS::Value ui = runtime.get("ui");
-  const PocketInkJS::Value spriteAt = runtime.objectGet(ui, "__spriteAt");
-  if (runtime.isUndefined(result) || runtime.isUndefined(spriteAt) ||
+  if (runtime.isUndefined(result) ||
       !runtime.objectSet(result, "frameWidth", runtime.number(frameWidth)) ||
       !runtime.objectSet(result, "frameHeight", runtime.number(frameHeight)) ||
       !runtime.objectSet(result, "frameCount", runtime.number(frameCount)) ||
       !runtime.objectSet(result, "rowCount", runtime.number(rowCount)) ||
       !runtime.objectSet(result, "columnCount",
-                         runtime.number(sheet.columnCount())) ||
-      !runtime.objectSet(result, "spriteAt", spriteAt)) {
+                         runtime.number(sheet.columnCount()))) {
     return runtime.undefined();
   }
-  if (pathBound) {
-    PreparedGraphicsState *graphics = preparedGraphics();
-    if (graphics == nullptr) {
-      return runtime.fail("no PSRAM for prepared sprites");
-    }
-    if (graphics->sheetCount >= kPreparedSheetLimit) {
-      return runtime.fail("too many prepared spritesheets");
-    }
-    PreparedSheet &prepared = graphics->sheets[graphics->sheetCount];
-    if (!copyJsString(runtime, args[0], prepared.path,
-                      sizeof(prepared.path))) {
-      return runtime.fail("spritesheet path is too long");
-    }
-    prepared.layout = sheet;
-    graphics->sheetCount++;
-    if (!runtime.objectSet(result, "__preparedSheet",
-                           runtime.number(graphics->sheetCount))) {
-      return runtime.undefined();
-    }
+  PreparedGraphicsState *graphics = preparedGraphics();
+  if (graphics == nullptr) {
+    return runtime.fail("no PSRAM for prepared sprites");
+  }
+  if (graphics->sheetCount >= kPreparedSheetLimit) {
+    return runtime.fail("too many prepared spritesheets");
+  }
+  PreparedSheet &prepared = graphics->sheets[graphics->sheetCount];
+  if (!copyJsString(runtime, args[0], prepared.path, sizeof(prepared.path))) {
+    return runtime.fail("spritesheet path is too long");
+  }
+  prepared.layout = sheet;
+  graphics->sheetCount++;
+  if (!runtime.objectSet(result, "__preparedSheet",
+                         runtime.number(graphics->sheetCount))) {
+    return runtime.undefined();
   }
   return result;
 }
@@ -1186,8 +1192,9 @@ PocketInkJS::Value nativeUiPrepareSprite(PocketInkJS::Runtime &runtime,
     }
   }
   PreparedSheet &sheet = graphics->sheets[sheetIndex];
-  const PinkSpriteFrame frame = sheet.layout.spriteAt(
-      static_cast<uint16_t>(rowNumber), static_cast<uint16_t>(columnNumber));
+  const PinkSpriteFrame frame = spritesheetFrame(
+      sheet.layout, static_cast<uint16_t>(rowNumber),
+      static_cast<uint16_t>(columnNumber));
   if (!frame.valid()) {
     return runtime.fail("prepared sprite coordinates are outside the sheet");
   }
@@ -1394,76 +1401,6 @@ PocketInkJS::Value nativeUiDrawLayer(PocketInkJS::Runtime &runtime,
   const ImageTransform identity;
   return runtime.boolean(
       layer.bitmap.draw(*PocketInkJSDrawTarget, x, y, identity));
-}
-
-PocketInkJS::Value nativeUiSpriteAt(PocketInkJS::Runtime &runtime,
-                                    PocketInkJS::Value receiver,
-                                    const PocketInkJS::Value *args,
-                                    size_t argc, void *) {
-  if ((argc != 2U && argc != 3U) ||
-      runtime.typeOf(receiver) != PocketInkJS::ValueType::Object) {
-    return runtime.fail("spriteAt expects row, column, and optional options");
-  }
-  uint16_t frameWidth = 0;
-  uint16_t frameHeight = 0;
-  uint16_t frameCount = 0;
-  uint16_t rowCount = 0;
-  uint16_t row = 0;
-  uint16_t column = 0;
-  if (!spritesheetInteger(runtime, runtime.objectGet(receiver, "frameWidth"),
-                          frameWidth) ||
-      !spritesheetInteger(runtime, runtime.objectGet(receiver, "frameHeight"),
-                          frameHeight) ||
-      !spritesheetInteger(runtime, runtime.objectGet(receiver, "frameCount"),
-                          frameCount) ||
-      !spritesheetInteger(runtime, runtime.objectGet(receiver, "rowCount"),
-                          rowCount) ||
-      !runtime.isNumber(args[0]) || !runtime.isNumber(args[1]) ||
-      !std::isfinite(runtime.toNumber(args[0])) ||
-      !std::isfinite(runtime.toNumber(args[1])) ||
-      runtime.toNumber(args[0]) < 0.0 || runtime.toNumber(args[1]) < 0.0 ||
-      runtime.toNumber(args[0]) > UINT16_MAX ||
-      runtime.toNumber(args[1]) > UINT16_MAX ||
-      std::floor(runtime.toNumber(args[0])) != runtime.toNumber(args[0]) ||
-      std::floor(runtime.toNumber(args[1])) != runtime.toNumber(args[1])) {
-    return runtime.fail("invalid sprite coordinates");
-  }
-  row = static_cast<uint16_t>(runtime.toNumber(args[0]));
-  column = static_cast<uint16_t>(runtime.toNumber(args[1]));
-  const PinkSpritesheet sheet = PinkSpritesheet::defineSpritesheet(
-      frameWidth, frameHeight, frameCount, rowCount);
-  const PinkSpriteFrame frame = sheet.spriteAt(row, column);
-  if (!frame.valid()) {
-    return runtime.fail("sprite coordinates are outside the sheet");
-  }
-  if (argc == 3U &&
-      runtime.typeOf(args[2]) != PocketInkJS::ValueType::Object &&
-      runtime.typeOf(args[2]) != PocketInkJS::ValueType::Undefined) {
-    return runtime.fail("sprite options must be an object");
-  }
-
-  PocketInkJS::Value result = runtime.makeObject();
-  if (runtime.isUndefined(result) ||
-      (argc == 3U && runtime.typeOf(args[2]) == PocketInkJS::ValueType::Object &&
-       !copyObjectProperties(runtime, args[2], result))) {
-    return runtime.undefined();
-  }
-  if (runtime.isUndefined(runtime.objectGet(result, "cache")) &&
-      !runtime.objectSet(
-          result, "cache",
-          runtime.number(frameCount < 32U ? frameCount : 32U))) {
-    return runtime.undefined();
-  }
-  if (!runtime.objectSet(result, "sourceX", runtime.number(frame.x)) ||
-      !runtime.objectSet(result, "sourceY", runtime.number(frame.y)) ||
-      !runtime.objectSet(result, "sourceWidth", runtime.number(frame.width)) ||
-      !runtime.objectSet(result, "sourceHeight", runtime.number(frame.height)) ||
-      !runtime.objectSet(result, "width", runtime.number(frame.width)) ||
-      !runtime.objectSet(result, "height", runtime.number(frame.height)) ||
-      !runtime.objectSet(result, "scaleToFit", runtime.boolean(false))) {
-    return runtime.undefined();
-  }
-  return result;
 }
 
 double imageOptionNumber(PocketInkJS::Runtime &runtime, PocketInkJS::Value options,
@@ -4287,12 +4224,11 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Args: color (number)
       {"ui.fillScreen", nativeUiFillScreen},
       //JS/ Defines a uniform row-major spritesheet. Rows and columns are zero-based.
-      //JS/ A leading path binds the sheet for prepareSprite; the four-number form remains compatible.
-      //JS/ Returns: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, spriteAt: function, __preparedSheet?: number }
-      //JS/ Args: path? (string), frameWidth (number), frameHeight (number), frameCount (number), rowCount (number)
+      //JS/ Returns: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, __preparedSheet: number }
+      //JS/ Args: path (string), frameWidth (number), frameHeight (number), frameCount (number), rowCount (number)
       {"ui.defineSpritesheet", nativeUiDefineSpritesheet},
       //JS/ Decodes a path-bound sheet once and prepares one native cached frame.
-      //JS/ Returns: object - { __preparedSprite: number }, Arg sheet: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, spriteAt: function, __preparedSheet: number }, Arg options: object - { scale?: number }
+      //JS/ Returns: object - { __preparedSprite: number }, Arg sheet: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, __preparedSheet: number }, Arg options: object - { scale?: number }
       //JS/ Args: sheet (object), row (number), column (number), options? ({scale})
       {"ui.prepareSprite", nativeUiPrepareSprite},
       //JS/ Draws a prepared sprite with cached flip/quarter-turn transforms.
@@ -4360,9 +4296,6 @@ bool PocketInkJSApp::installBindings() {
     if (!runtime->bind(binding.path, binding.function)) {
       return false;
     }
-  }
-  if (!runtime->bindMethod("ui.__spriteAt", nativeUiSpriteAt)) {
-    return false;
   }
   //JS/ Alias: fs.promises.readFile - Async file read (Promise).
   //JS/ Args: path (string), encoding? (string)

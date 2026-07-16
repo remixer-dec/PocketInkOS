@@ -163,55 +163,6 @@ struct PinkSpriteFrame {
   }
 };
 
-/// Uniform, row-major spritesheet description. Rows and columns are zero-based.
-struct PinkSpritesheet {
-  uint16_t frameWidth = 0;
-  uint16_t frameHeight = 0;
-  uint16_t frameCount = 0;
-  uint16_t rowCount = 0;
-
-  static PinkSpritesheet defineSpritesheet(uint16_t width, uint16_t height,
-                                           uint16_t frames,
-                                           uint16_t rows) {
-    PinkSpritesheet sheet;
-    if (width == 0U || height == 0U || frames == 0U || rows == 0U ||
-        rows > frames) {
-      return sheet;
-    }
-    const uint32_t columns =
-        (static_cast<uint32_t>(frames) + rows - 1U) / rows;
-    if (columns * width > 0x7fffU ||
-        static_cast<uint32_t>(rows) * height > 0x7fffU) {
-      return sheet;
-    }
-    sheet.frameWidth = width;
-    sheet.frameHeight = height;
-    sheet.frameCount = frames;
-    sheet.rowCount = rows;
-    return sheet;
-  }
-
-  uint16_t columnCount() const {
-    return frameCount != 0U && rowCount != 0U
-               ? static_cast<uint16_t>(
-                     (static_cast<uint32_t>(frameCount) + rowCount - 1U) /
-                     rowCount)
-               : 0U;
-  }
-
-  PinkSpriteFrame spriteAt(uint16_t row, uint16_t column) const {
-    const uint16_t columns = columnCount();
-    const uint32_t index = static_cast<uint32_t>(row) * columns + column;
-    if (frameWidth == 0U || frameHeight == 0U || row >= rowCount ||
-        column >= columns || index >= frameCount) {
-      return {};
-    }
-    return {static_cast<uint16_t>(column * frameWidth),
-            static_cast<uint16_t>(row * frameHeight), frameWidth,
-            frameHeight};
-  }
-};
-
 struct PinkSensorSnapshot {
   uint8_t temperatureValid = 0;
   uint8_t humidityValid = 0;
