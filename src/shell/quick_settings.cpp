@@ -58,6 +58,7 @@ PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) 
   case PowerDialogAction::VolumeUp:
   case PowerDialogAction::Screenshot:
   case PowerDialogAction::VideoToggle:
+  case PowerDialogAction::InvertToggle:
     return action;
   }
   return PowerDialogAction::None;
@@ -115,6 +116,11 @@ void QuickSettingsController::runAction(
   case PowerDialogAction::VideoToggle:
     if (actions.toggleVideoRecording != nullptr) {
       actions.toggleVideoRecording(actions.context);
+    }
+    return;
+  case PowerDialogAction::InvertToggle:
+    if (actions.toggleScreenInversion != nullptr) {
+      actions.toggleScreenInversion(actions.context);
     }
     return;
   case PowerDialogAction::PreviousPage:

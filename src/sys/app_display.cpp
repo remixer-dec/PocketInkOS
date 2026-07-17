@@ -60,7 +60,7 @@ void AppDisplay::drawPixel(int16_t x, int16_t y, uint16_t color) {
   if (x < 0 || x >= EPD_WIDTH || y < 0 || y >= EPD_HEIGHT) {
     return;
   }
-  if (color != 0U) {
+  if ((color != 0U) != inverted) {
     driver.EPD_DrawBlackPixelUnchecked(x, y);
     return;
   }
@@ -72,14 +72,34 @@ void AppDisplay::drawPixel(int16_t x, int16_t y, uint16_t color) {
 // need to set black pixels. Use normal drawPixel() for general UI rendering,
 // white pixels, or any caller that cannot prove the coordinates are in bounds.
 void AppDisplay::drawBlackPixelUnchecked(int16_t x, int16_t y) {
-  driver.EPD_DrawBlackPixelUnchecked(x, y);
+  driver.EPD_DrawColorPixelUnchecked(
+      x, y, inverted ? DRIVER_COLOR_WHITE : DRIVER_COLOR_BLACK);
 }
 
 // Same contract as drawBlackPixelUnchecked(), specialized for dense 2x2 shader
 // writes. The full block must be in bounds before calling.
 void AppDisplay::drawBlackBlock2x2Unchecked(int16_t x, int16_t y) {
-  driver.EPD_DrawBlackBlock2x2Unchecked(x, y);
+  if (!inverted) {
+    driver.EPD_DrawBlackBlock2x2Unchecked(x, y);
+    return;
+  }
+  driver.EPD_DrawColorPixelUnchecked(x, y, DRIVER_COLOR_WHITE);
+  driver.EPD_DrawColorPixelUnchecked(x + 1, y, DRIVER_COLOR_WHITE);
+  driver.EPD_DrawColorPixelUnchecked(x, y + 1, DRIVER_COLOR_WHITE);
+  driver.EPD_DrawColorPixelUnchecked(x + 1, y + 1, DRIVER_COLOR_WHITE);
 }
+
+void AppDisplay::setInverted(bool enabled) {
+  if (inverted == enabled) {
+    return;
+  }
+  inverted = enabled;
+  requestFullRefresh();
+}
+
+void AppDisplay::toggleInverted() { setInverted(!inverted); }
+
+bool AppDisplay::isInverted() const { return inverted; }
 
 void AppDisplay::clear() {
   driver.EPD_Clear();

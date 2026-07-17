@@ -150,6 +150,7 @@ private:
   void showQuickSettingsActionFeedback(PowerDialogAction action);
   void requestScreenshot();
   void requestVideoToggle();
+  void toggleScreenInversion();
 
   void prepareForPowerTransition();
   void enterSleepClockDeepSleep();
@@ -161,6 +162,7 @@ private:
   static void saveRetainedContextThunk(void *context);
   static void requestScreenshotThunk(void *context);
   static void requestVideoToggleThunk(void *context);
+  static void toggleScreenInversionThunk(void *context);
 
   static void restoreLaunchApp(void *context, const AppDefinition &app);
   static void restoreSwitchTo(void *context, Screen screen);

@@ -471,6 +471,7 @@ QuickSettingsActions ShellController::quickSettingsActions() {
   actions.enterSleepClock = enterSleepClockDeepSleepThunk;
   actions.captureScreenshot = requestScreenshotThunk;
   actions.toggleVideoRecording = requestVideoToggleThunk;
+  actions.toggleScreenInversion = toggleScreenInversionThunk;
   return actions;
 }
 
@@ -847,6 +848,11 @@ void ShellController::requestVideoToggle() {
   dirty = true;
 }
 
+void ShellController::toggleScreenInversion() {
+  display.toggleInverted();
+  dirty = true;
+}
+
 void ShellController::updateVideoRecording() {
   if (!videoRecording()) {
     return;
@@ -981,6 +987,10 @@ void ShellController::requestScreenshotThunk(void *context) {
 
 void ShellController::requestVideoToggleThunk(void *context) {
   static_cast<ShellController *>(context)->requestVideoToggle();
+}
+
+void ShellController::toggleScreenInversionThunk(void *context) {
+  static_cast<ShellController *>(context)->toggleScreenInversion();
 }
 
 void ShellController::restoreLaunchApp(void *context,

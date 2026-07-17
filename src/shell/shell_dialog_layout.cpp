@@ -204,6 +204,8 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
     drawIconButton(display, POWER_MIDDLE_BUTTON,
                    snapshot.recording ? '*' : '\'',
                    pressed == PowerDialogAction::VideoToggle);
+    drawIconButton(display, POWER_RIGHT_BUTTON, '-',
+                   pressed == PowerDialogAction::InvertToggle);
     return;
   }
 
@@ -262,6 +264,10 @@ PowerDialogAction powerDialogHitAction(const TouchPoint &point,
   if (page == PowerDialogPage::Screen &&
       uiContains(POWER_MIDDLE_BUTTON, point)) {
     return PowerDialogAction::VideoToggle;
+  }
+  if (page == PowerDialogPage::Screen &&
+      uiContains(POWER_RIGHT_BUTTON, point)) {
+    return PowerDialogAction::InvertToggle;
   }
   return PowerDialogAction::None;
 }

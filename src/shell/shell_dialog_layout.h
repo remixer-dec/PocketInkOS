@@ -29,6 +29,7 @@ enum class PowerDialogAction : uint8_t {
   VolumeUp,
   Screenshot,
   VideoToggle,
+  InvertToggle,
 };
 
 /// Paged groups in the power/quick-settings dialog.

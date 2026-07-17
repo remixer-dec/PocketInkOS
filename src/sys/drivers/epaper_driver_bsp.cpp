@@ -462,7 +462,12 @@ void epaper_driver_display::EPD_DrawColorPixel(uint16_t x, uint16_t y,
     return;
   }
 
-  uint16_t index = y * 25 + (x >> 3); // 25是200/8
+  EPD_DrawColorPixelUnchecked(x, y, color);
+}
+
+void epaper_driver_display::EPD_DrawColorPixelUnchecked(uint16_t x, uint16_t y,
+                                                        uint8_t color) {
+  uint16_t index = y * 25 + (x >> 3); // 25 bytes per 200-pixel row.
   uint8_t bit = 7 - (x & 0x07);
   if (color == DRIVER_COLOR_WHITE) {
     buffer[index] |= (0x01 << bit);
@@ -476,8 +481,7 @@ void epaper_driver_display::EPD_DrawColorPixel(uint16_t x, uint16_t y,
 // normal UI drawing, clipping, or white-pixel writes.
 void epaper_driver_display::EPD_DrawBlackPixelUnchecked(uint16_t x,
                                                         uint16_t y) {
-  uint16_t index = y * 25 + (x >> 3);
-  buffer[index] &= ~(0x01 << (7 - (x & 0x07)));
+  EPD_DrawColorPixelUnchecked(x, y, DRIVER_COLOR_BLACK);
 }
 
 // Same unchecked contract as EPD_DrawBlackPixelUnchecked(); x+1/y+1 must also

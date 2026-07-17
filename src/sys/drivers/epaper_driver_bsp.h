@@ -94,6 +94,8 @@ public:
   void EPD_DisplayPart(const uint8_t *frame);
   /// Sets one clipped framebuffer pixel to the requested monochrome color.
   void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
+  /// Sets one known-in-range pixel without repeating bounds checks.
+  void EPD_DrawColorPixelUnchecked(uint16_t x, uint16_t y, uint8_t color);
   /// Sets one known-in-range pixel black without bounds checks.
   void EPD_DrawBlackPixelUnchecked(uint16_t x, uint16_t y);
   /// Sets a known-in-range 2x2 block black without bounds checks.

@@ -19,6 +19,10 @@ public:
   void drawPixel(int16_t x, int16_t y, uint16_t color) override;
   void drawBlackPixelUnchecked(int16_t x, int16_t y);
   void drawBlackBlock2x2Unchecked(int16_t x, int16_t y);
+  /// Globally swaps logical black and white for subsequent rendering.
+  void setInverted(bool enabled);
+  void toggleInverted();
+  bool isInverted() const;
   void flush();
   /// Transfers the full framebuffer using the panel's partial-refresh waveform.
   void flushPartial();
@@ -47,6 +51,7 @@ private:
   std::atomic<bool> fullRefreshRequested{false};
   std::atomic<bool> refreshBusy{false};
   std::atomic_flag locked = ATOMIC_FLAG_INIT;
+  bool inverted = false;
   uint8_t *refreshFrame = nullptr;
   TaskHandle_t refreshTask = nullptr;
   AsyncRefresh pendingRefresh = AsyncRefresh::Full;

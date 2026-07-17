@@ -19,6 +19,7 @@ struct QuickSettingsActions {
   QuickSettingsCallback enterSleepClock = nullptr;
   QuickSettingsCallback captureScreenshot = nullptr;
   QuickSettingsCallback toggleVideoRecording = nullptr;
+  QuickSettingsCallback toggleScreenInversion = nullptr;
 };
 
 /// Small state machine for the power/quick-settings dialog.
