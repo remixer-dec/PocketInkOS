@@ -14,13 +14,6 @@ struct TouchPoint {
 };
 #endif
 
-/// Touch navigation behavior for compact list controls.
-enum class UiListNavMode : uint8_t {
-  Scroll,
-  Select,
-  Split,
-};
-
 /// Result action from list hit testing.
 enum class UiListTouchAction : uint8_t {
   None,
@@ -68,18 +61,14 @@ inline bool uiListScrollBy(uint16_t &offset, uint16_t itemCount,
 inline UiListTouchResult
 uiListHandleTouch(const TouchPoint &point, uint16_t itemCount,
                   uint8_t visibleCount, int16_t listY, int16_t rowHeight,
-                  int16_t listHeight, int16_t splitX, UiListNavMode mode,
-                  uint16_t &offset) {
+                  int16_t listHeight, int16_t splitX, uint16_t &offset) {
   UiListTouchResult result;
   uiListClampOffset(offset, itemCount, visibleCount);
   if (point.y < listY || point.y >= listY + listHeight || rowHeight <= 0) {
     return result;
   }
 
-  const bool scrollArea =
-      mode == UiListNavMode::Scroll ||
-      (mode == UiListNavMode::Split && point.x >= splitX);
-  if (scrollArea) {
+  if (point.x >= splitX) {
     const int8_t delta = point.y < listY + listHeight / 2 ? -1 : 1;
     if (uiListScrollBy(offset, itemCount, visibleCount, delta)) {
       result.action = UiListTouchAction::Scroll;
@@ -87,9 +76,6 @@ uiListHandleTouch(const TouchPoint &point, uint16_t itemCount,
     return result;
   }
 
-  if (mode != UiListNavMode::Select && mode != UiListNavMode::Split) {
-    return result;
-  }
   const uint8_t row = static_cast<uint8_t>((point.y - listY) / rowHeight);
   if (row >= visibleCount) {
     return result;

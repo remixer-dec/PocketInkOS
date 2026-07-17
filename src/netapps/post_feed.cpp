@@ -31,9 +31,9 @@ void PostFeed::reset() {
   }
   postCount = 0;
   scrollOffset = 0;
+  selectedIndex = -1;
   expandedIndex = -1;
   expandedLineOffset = 0;
-  listMode = MODE_SPLIT;
 }
 
 void PostFeed::release() {
@@ -43,9 +43,9 @@ void PostFeed::release() {
   }
   postCount = 0;
   scrollOffset = 0;
+  selectedIndex = -1;
   expandedIndex = -1;
   expandedLineOffset = 0;
-  listMode = MODE_SPLIT;
 }
 
 bool PostFeed::add(const FeedPost &post) {
@@ -69,24 +69,21 @@ bool PostFeed::handleTouch(const TouchPoint &point) {
     return false;
   }
 
-  UiListNavMode navMode = UiListNavMode::Split;
-  if (listMode == MODE_SCROLL) {
-    navMode = UiListNavMode::Scroll;
-  } else if (listMode == MODE_SELECT) {
-    navMode = UiListNavMode::Select;
-  }
   uint16_t offset = scrollOffset;
   const UiListTouchResult listTouch =
-      uiListHandleTouch(point, postCount, 2, 24, 80, 160, 148, navMode, offset);
+      uiListHandleTouch(point, postCount, 2, 24, 80, 160, 148, offset);
   scrollOffset = static_cast<uint8_t>(offset);
   if (listTouch.action == UiListTouchAction::Scroll) {
+    selectedIndex = -1;
     return true;
   }
   if (listTouch.action == UiListTouchAction::Select &&
       listTouch.index < postCount) {
-    expandedIndex = static_cast<int8_t>(listTouch.index);
-    expandedLineOffset = 0;
-    return true;
+    if (selectedIndex != static_cast<int8_t>(listTouch.index)) {
+      selectedIndex = static_cast<int8_t>(listTouch.index);
+      return true;
+    }
+    return activateSelected();
   }
   return false;
 }
@@ -113,17 +110,14 @@ bool PostFeed::closeExpanded() {
   return true;
 }
 
-void PostFeed::toggleSelectMode() {
-  if (expandedIndex >= 0) {
-    return;
+bool PostFeed::activateSelected() {
+  if (expandedIndex >= 0 || selectedIndex < 0 ||
+      selectedIndex >= static_cast<int8_t>(postCount)) {
+    return false;
   }
-  if (listMode == MODE_SPLIT) {
-    listMode = MODE_SCROLL;
-  } else if (listMode == MODE_SCROLL) {
-    listMode = MODE_SELECT;
-  } else {
-    listMode = MODE_SPLIT;
-  }
+  expandedIndex = selectedIndex;
+  expandedLineOffset = 0;
+  return true;
 }
 
 bool PostFeed::isExpanded() const { return expandedIndex >= 0; }
@@ -135,13 +129,7 @@ void PostFeed::drawList(Adafruit_GFX &gfx, const char *header,
   gfx.print(header);
   drawRightText(gfx, rightHeader, 6);
   gfx.setCursor(82, 188);
-  if (listMode == MODE_SCROLL) {
-    gfx.print("SCROLL");
-  } else if (listMode == MODE_SELECT) {
-    gfx.print("SELECT");
-  } else {
-    gfx.print("SPLIT");
-  }
+  gfx.print("SPLIT");
 
   if (postCount == 0) {
     gfx.setCursor(52, 92);
@@ -156,7 +144,13 @@ void PostFeed::drawList(Adafruit_GFX &gfx, const char *header,
     }
     const FeedPost &post = posts[index];
     int y = 28 + i * 80;
-    gfx.drawLine(4, y - 6, 196, y - 6, 1);
+    const bool selected = index == selectedIndex;
+    if (selected) {
+      gfx.fillRect(2, y - 6, 196, 80, 1);
+      gfx.setTextColor(0);
+    } else {
+      gfx.drawLine(4, y - 6, 196, y - 6, 1);
+    }
     gfx.setCursor(6, y);
     gfx.print(post.score);
     gfx.print(" ");
@@ -164,6 +158,9 @@ void PostFeed::drawList(Adafruit_GFX &gfx, const char *header,
     int lines = drawWrappedText(gfx, post.title, 6, y + 14, 31, 3);
     if (lines < 3 && post.text[0]) {
       drawWrappedText(gfx, post.text, 6, y + 14 + lines * 10, 31, 3 - lines);
+    }
+    if (selected) {
+      gfx.setTextColor(1);
     }
   }
 }

@@ -120,27 +120,13 @@ void *filesAppAlloc(size_t bytes) {
 
 void filesAppFree(void *ptr) { psram::release(ptr); }
 
-struct FilesContextSnapshotV1 {
-  uint8_t version = 1;
-  char path[96] = "/";
-};
-
-struct FilesContextSnapshotV3 {
-  uint8_t version = 3;
-  char path[96] = "/";
-  uint16_t scrollOffset = 0;
-  int16_t selectedIndex = -1;
-  uint8_t mode = 0;
-  uint8_t storageSelected = 0;
-};
-
+constexpr uint8_t kFilesContextFormat = 1;
 struct FilesContextSnapshot {
-  uint8_t version = 5;
+  uint8_t format = kFilesContextFormat;
   char path[FILES_PATH_CAPACITY] = "/";
   char providerId[12] = {};
   uint16_t scrollOffset = 0;
   int16_t selectedIndex = -1;
-  uint8_t mode = 0;
   uint8_t storageSelected = 0;
 };
 
@@ -157,7 +143,6 @@ static const unsigned long kStatusMs = 2000;
 static const unsigned long kPdfProgressRedrawMs = 2000;
 static const uint32_t kPdfBackgroundIndexBudgetUs = 180000;
 static const uint32_t kEpubBackgroundIndexBudgetUs = 180000;
-static const uint8_t kSmallFolderLimit = 8;
 static const int8_t kViewerScrollLines = 4;
 static const int16_t kScrollbarX = 198;
 static const int16_t kScrollbarW = 2;
@@ -583,7 +568,6 @@ void FilesApp::reset() {
   scrollOffset = 0;
   selectedIndex = NO_SELECTION;
   statusUntil = 0;
-  mode = Mode::Select;
   storageSelected = false;
   setStatus("");
   loaded = false;
@@ -730,66 +714,32 @@ size_t FilesApp::saveContext(uint8_t *buffer, size_t capacity) const {
   copyText(snapshot.providerId, sizeof(snapshot.providerId), providerId);
   snapshot.scrollOffset = scrollOffset;
   snapshot.selectedIndex = selectedIndex;
-  snapshot.mode = static_cast<uint8_t>(mode);
   snapshot.storageSelected = storageSelected ? 1 : 0;
   memcpy(buffer, &snapshot, sizeof(snapshot));
   return sizeof(snapshot);
 }
 
 void FilesApp::restoreContext(const uint8_t *buffer, size_t length) {
-  if (buffer == nullptr) {
-    return;
-  }
-
-  if (length == sizeof(FilesContextSnapshotV1)) {
-    FilesContextSnapshotV1 snapshot;
-    memcpy(&snapshot, buffer, sizeof(snapshot));
-    snapshot.path[sizeof(snapshot.path) - 1] = '\0';
-    if (snapshot.version == 1 && snapshot.path[0] == '/') {
-      openDirectory(snapshot.path);
-    }
+  if (buffer == nullptr || length != sizeof(FilesContextSnapshot)) {
     return;
   }
 
   FilesContextSnapshot snapshot;
-  if (length == sizeof(FilesContextSnapshotV3)) {
-    FilesContextSnapshotV3 previous;
-    memcpy(&previous, buffer, sizeof(previous));
-    previous.path[sizeof(previous.path) - 1] = '\0';
-    if (previous.version != 2 && previous.version != 3) {
-      return;
-    }
-    copyText(snapshot.path, sizeof(snapshot.path), previous.path);
-    const FileProvider *provider = defaultFileProvider();
-    copyText(snapshot.providerId, sizeof(snapshot.providerId),
-             provider != nullptr ? provider->id : "");
-    snapshot.scrollOffset = previous.scrollOffset;
-    snapshot.selectedIndex = previous.selectedIndex;
-    snapshot.mode = previous.mode;
-    snapshot.storageSelected = previous.storageSelected;
-  } else if (length == sizeof(FilesContextSnapshot)) {
-    memcpy(&snapshot, buffer, sizeof(snapshot));
-    snapshot.path[sizeof(snapshot.path) - 1] = '\0';
-    snapshot.providerId[sizeof(snapshot.providerId) - 1] = '\0';
-  } else {
+  memcpy(&snapshot, buffer, sizeof(snapshot));
+  if (snapshot.format != kFilesContextFormat) {
     return;
   }
-
-  if (snapshot.version != 2 && snapshot.version != 3) {
-    if (snapshot.version != 5) {
-      return;
-    }
-  }
+  snapshot.path[sizeof(snapshot.path) - 1] = '\0';
+  snapshot.providerId[sizeof(snapshot.providerId) - 1] = '\0';
   if (snapshot.path[0] != '/') {
     return;
   }
-  storageSelected = snapshot.version == 2 || snapshot.storageSelected != 0;
+  storageSelected = snapshot.storageSelected != 0;
   copyText(providerId, sizeof(providerId), snapshot.providerId);
   if (!storageSelected) {
     copyText(currentPath, sizeof(currentPath), "/");
     providerId[0] = '\0';
     loaded = false;
-    mode = Mode::Select;
     selectedIndex = NO_SELECTION;
     return;
   }
@@ -798,8 +748,6 @@ void FilesApp::restoreContext(const uint8_t *buffer, size_t length) {
   loadDirectory();
   scrollOffset = snapshot.scrollOffset;
   selectedIndex = snapshot.selectedIndex;
-  mode = snapshot.mode == static_cast<uint8_t>(Mode::Select) ? Mode::Select
-                                                             : Mode::Scroll;
   clampView();
 }
 
@@ -984,9 +932,6 @@ void FilesApp::finishDirectoryLoad() {
     setStatus("LIMITED");
   } else {
     setStatus("");
-  }
-  if (selectedIndex == NO_SELECTION) {
-    mode = entryCount < kSmallFolderLimit ? Mode::Select : Mode::Scroll;
   }
   clampView();
 }
@@ -1252,7 +1197,6 @@ void FilesApp::openDirectory(const char *path) {
   hasDirtyRegion = false;
   setStatus("");
   loadDirectory();
-  mode = entryCount < kSmallFolderLimit ? Mode::Select : Mode::Split;
 }
 
 void FilesApp::goUp() {
@@ -1659,10 +1603,15 @@ bool FilesApp::handleViewerPageJumpTouch(const TouchPoint &point) {
         viewerPageCount(activeViewer, providerId, viewerPath);
     uint32_t page = static_cast<uint32_t>(atoi(viewerPageInput.c_str()));
     if (page > 0 && pageCount > 0) {
-      if (page > pageCount) {
-        page = pageCount;
+      if (viewerIsPdf(activeViewer) && page > pageCount &&
+          pdfViewerRequestPage(providerId, viewerPath, page - 1U)) {
+        viewerOffset = page - 1U;
+      } else {
+        if (page > pageCount) {
+          page = pageCount;
+        }
+        viewerOffset = page - 1U;
       }
-      viewerOffset = page - 1U;
     }
     viewerPageJumpOpen = false;
     viewerPageInput = "";
@@ -1732,15 +1681,9 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
                     FILES_PATH_CAPACITY);
   gfx.setCursor(4, kHeaderY);
   gfx.print(pickerMode ? "Pick a file" : fittedText);
-  const char *modeLabel = "SPLIT";
-  if (mode == Mode::Scroll) {
-    modeLabel = "SCROLL";
-  } else if (mode == Mode::Select) {
-    modeLabel = "SELECT";
-  }
   drawRightText(gfx, statusUntil != 0
                          ? statusText
-                         : (pickerMode ? fittedText : modeLabel),
+                         : (pickerMode ? fittedText : "SPLIT"),
                 kHeaderY);
   gfx.drawLine(0, kHeaderLineY, 199, kHeaderLineY, 1);
 
@@ -1769,7 +1712,7 @@ void FilesApp::draw(Adafruit_GFX &gfx) {
     const uint16_t index = scrollOffset + i;
     const int16_t y = kListY + i * kRowH;
     const FileEntry &entry = entries[index];
-    const bool selected = mode != Mode::Scroll && index == selectedIndex;
+    const bool selected = index == selectedIndex;
     if (selected) {
       gfx.fillRect(2, y - 3, 196, kRowH - 1, 1);
       gfx.setTextColor(0);
@@ -1853,7 +1796,14 @@ void FilesApp::drawViewer(Adafruit_GFX &gfx) {
     activeViewer->draw(gfx, runtime);
     if (viewerSupportsPageJump(activeViewer)) {
       viewerSize = viewerPageCount(activeViewer, providerId, viewerPath);
-      if (viewerSize > 0 && viewerOffset >= viewerSize) {
+      const bool pendingPdfPage =
+          viewerIsPdf(activeViewer) &&
+          pdfViewerLoading(providerId, viewerPath) &&
+          viewerOffset >= viewerSize;
+      if (pendingPdfPage && viewerOffset < UINT32_MAX) {
+        // Preserve the requested lazy page until the rolling index finds it.
+        viewerSize = viewerOffset + 1U;
+      } else if (viewerSize > 0 && viewerOffset >= viewerSize) {
         viewerOffset = viewerSize - 1;
       }
     }
@@ -1989,16 +1939,10 @@ bool FilesApp::handleTouch(const TouchPoint &point) {
     return false;
   }
 
-  UiListNavMode navMode = UiListNavMode::Split;
-  if (mode == Mode::Scroll) {
-    navMode = UiListNavMode::Scroll;
-  } else if (mode == Mode::Select) {
-    navMode = UiListNavMode::Select;
-  }
   uint16_t nextOffset = scrollOffset;
   const UiListTouchResult listTouch = uiListHandleTouch(
       point, entryCount, MAX_VISIBLE_ENTRIES, kListY, kRowH,
-      kListBottomY - kListY, kListSplitX, navMode, nextOffset);
+      kListBottomY - kListY, kListSplitX, nextOffset);
   if (listTouch.action == UiListTouchAction::Scroll) {
     if (scrollOffset != nextOffset) {
       scrollOffset = nextOffset;
@@ -2049,7 +1993,6 @@ bool FilesApp::handleMenuButton() {
     loaded = false;
     scrollOffset = 0;
     selectedIndex = NO_SELECTION;
-    mode = Mode::Select;
     setStatus("");
     return true;
   }
@@ -2119,19 +2062,12 @@ bool FilesApp::handlePowerButton() {
   }
 
   if (!storageSelected) {
-    mode = Mode::Select;
-    return true;
+    return activateStorage();
   }
-  if (mode == Mode::Split) {
-    mode = Mode::Scroll;
-  } else if (mode == Mode::Scroll) {
-    mode = Mode::Select;
-  } else {
-    mode = Mode::Split;
+  if (selectedIndex < 0 || selectedIndex >= entryCount) {
+    return false;
   }
-  selectedIndex = NO_SELECTION;
-  clampView();
-  return true;
+  return activateIndex(static_cast<uint16_t>(selectedIndex));
 }
 
 bool FilesApp::handlePowerDoubleButton() {
@@ -2235,7 +2171,6 @@ bool FilesApp::update() {
     copyText(currentPath, sizeof(currentPath), "/");
     scrollOffset = 0;
     selectedIndex = NO_SELECTION;
-    mode = Mode::Select;
     storageSelected = false;
     providerId[0] = '\0';
     loaded = false;

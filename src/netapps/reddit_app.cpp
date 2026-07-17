@@ -207,8 +207,7 @@ bool RedditApp::handlePowerButton() {
   if (state != STATE_READY || feed.isExpanded()) {
     return false;
   }
-  feed.toggleSelectMode();
-  return true;
+  return feed.activateSelected();
 }
 
 bool RedditApp::fetch() {

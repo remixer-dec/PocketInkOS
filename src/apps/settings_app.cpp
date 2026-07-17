@@ -24,7 +24,9 @@ constexpr int16_t kListY = 24;
 constexpr int16_t kRowHeight = 22;
 constexpr int16_t kListBottomY = 199;
 constexpr int16_t kListSplitX = 148;
-constexpr uint8_t kVisibleRows = 7;
+constexpr uint8_t kVisibleRows = 8;
+static_assert(kListY + kVisibleRows * kRowHeight <= EPD_HEIGHT,
+              "Settings rows must fit the display");
 constexpr unsigned long kPopupMs = 1200;
 constexpr UiRect kAboutUpdateButton = {34, 112, 132, 30};
 constexpr char kFirstIconGlyph = '!';
@@ -399,6 +401,8 @@ const WidgetOption kWidgetOptions[] = {
 };
 constexpr uint8_t kWidgetOptionCount =
     sizeof(kWidgetOptions) / sizeof(kWidgetOptions[0]);
+static_assert(kWidgetOptionCount + 1 <= kVisibleRows,
+              "The widget save row must be visible");
 
 uint16_t widgetMaskFromValue(const char *value) {
   if (value == nullptr || strcmp(value, "none") == 0) {
@@ -590,8 +594,7 @@ void SettingsApp::reset() {
 
 void SettingsApp::release() { releaseInput(); }
 
-void SettingsApp::resetList(Mode nextMode) {
-  mode = nextMode;
+void SettingsApp::resetList() {
   scrollOffset = 0;
   selectedIndex = -1;
 }
@@ -778,15 +781,9 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
   } else if (page == Page::AppOptions && appSetting != nullptr) {
     title = appSetting->label;
   }
-  const char *navigation = "SPLIT";
-  if (mode == Mode::Scroll) {
-    navigation = "SCROLL";
-  } else if (mode == Mode::Select) {
-    navigation = "SELECT";
-  }
   gfx.setCursor(4, kHeaderY);
   gfx.print(title);
-  drawRightText(gfx, navigation, kHeaderY);
+  drawRightText(gfx, "SPLIT", kHeaderY);
   gfx.drawLine(0, kHeaderLineY, EPD_WIDTH - 1, kHeaderLineY, 1);
 
   uint16_t count = 0;
@@ -1043,15 +1040,9 @@ bool SettingsApp::handleListTouch(const TouchPoint &point) {
   }
 
   uint16_t nextOffset = scrollOffset;
-  UiListNavMode listMode = UiListNavMode::Split;
-  if (mode == Mode::Scroll) {
-    listMode = UiListNavMode::Scroll;
-  } else if (mode == Mode::Select) {
-    listMode = UiListNavMode::Select;
-  }
   const UiListTouchResult result = uiListHandleTouch(
       point, count, kVisibleRows, kListY, kRowHeight, kListBottomY - kListY,
-      kListSplitX, listMode, nextOffset);
+      kListSplitX, nextOffset);
   if (result.action == UiListTouchAction::Scroll) {
     if (nextOffset == scrollOffset) {
       return false;
@@ -1368,14 +1359,10 @@ bool SettingsApp::handlePowerButton() {
     inputKeyboard.toggleCaps();
     return true;
   }
-  if (mode == Mode::Split) {
-    mode = Mode::Scroll;
-  } else if (mode == Mode::Scroll) {
-    mode = Mode::Select;
-  } else {
-    mode = Mode::Split;
+  if (selectedIndex < 0) {
+    return false;
   }
-  selectedIndex = -1;
+  activateListIndex(static_cast<uint16_t>(selectedIndex));
   return true;
 }
 

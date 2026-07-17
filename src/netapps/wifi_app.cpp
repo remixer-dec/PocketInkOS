@@ -1735,7 +1735,7 @@ void WifiApp::handleNetworkTouch(const TouchPoint &point) {
   }
   const UiListTouchResult listTouch = uiListHandleTouch(
       point, total, NETWORK_ROW_COUNT, NETWORK_ROW_Y, NETWORK_ROW_H,
-      NETWORK_LIST_H, NETWORK_LIST_SPLIT_X, UiListNavMode::Split, listOffset);
+      NETWORK_LIST_H, NETWORK_LIST_SPLIT_X, listOffset);
   if (listTouch.action == UiListTouchAction::Scroll) {
     return;
   }
@@ -1944,8 +1944,7 @@ void WifiApp::handleNetScanTabTouch(const TouchPoint &point) {
 
   const UiListTouchResult listTouch = uiListHandleTouch(
       point, networkScanDeviceCount, NET_VISIBLE_ROWS, NET_ROW_Y,
-      NET_ROW_H, NET_LIST_H_VAL, NET_SPLIT_X, UiListNavMode::Split,
-      netScanVisibleOffset);
+      NET_ROW_H, NET_LIST_H_VAL, NET_SPLIT_X, netScanVisibleOffset);
   if (listTouch.action == UiListTouchAction::Scroll) {
     return;
   }

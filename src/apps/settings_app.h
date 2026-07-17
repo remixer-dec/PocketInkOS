@@ -35,10 +35,7 @@ private:
     AppInput,
     About,
   };
-  enum class Mode : uint8_t { Split, Scroll, Select };
-
   Page page = Page::Root;
-  Mode mode = Mode::Split;
   uint8_t group = 0;
   uint8_t editingSetting = 0xff;
   uint8_t appIndex = 0xff;
@@ -52,7 +49,7 @@ private:
   char popup[20] = {};
   unsigned long popupUntil = 0;
 
-  void resetList(Mode nextMode = Mode::Split);
+  void resetList();
   void openInterface();
   void openGroup(uint8_t nextGroup);
   void openOptions(uint8_t setting);

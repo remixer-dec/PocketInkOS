@@ -42,7 +42,6 @@ public:
   void release();
 
 private:
-  enum class Mode : uint8_t { Scroll = 0, Select = 1, Split = 2 };
   enum class DirectoryScanPass : uint8_t { Folders = 0, Files = 1 };
 
   static const int16_t NO_SELECTION = -1;
@@ -81,7 +80,6 @@ private:
   T9KeyboardComponent viewerPageKeyboard;
   unsigned long nextPdfProgressRedrawMs = 0;
   unsigned long statusUntil = 0;
-  Mode mode = Mode::Scroll;
   bool loaded = false;
   bool cardMounted = false;
   bool truncatedDirectory = false;

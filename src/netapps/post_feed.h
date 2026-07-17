@@ -26,18 +26,16 @@ public:
             const char *scoreLabel = "score", const char *rightHeader = "");
   uint8_t count() const;
   bool closeExpanded();
-  void toggleSelectMode();
+  bool activateSelected();
   bool isExpanded() const;
 
 private:
-  enum ListMode { MODE_SCROLL, MODE_SELECT, MODE_SPLIT };
-
   FeedPost *posts = nullptr;
   uint8_t postCount = 0;
   uint8_t scrollOffset = 0;
+  int8_t selectedIndex = -1;
   int8_t expandedIndex = -1;
   uint8_t expandedLineOffset = 0;
-  ListMode listMode = MODE_SPLIT;
 
   bool ensureStorage();
   void drawList(Adafruit_GFX &gfx, const char *header,
