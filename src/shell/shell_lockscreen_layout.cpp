@@ -5,10 +5,16 @@
 #include "ui/icon_ascii_font.h"
 
 #include <ctype.h>
+#include <cstring>
 
 namespace {
 
 LockscreenLayoutConfig lockscreenConfig;
+
+constexpr int16_t kClockY = 104;
+constexpr uint8_t kClockTextSize = 4;
+constexpr uint8_t kPeriodTextSize = 2;
+constexpr int16_t kPeriodGap = 4;
 
 bool asciiEqualIgnoreCase(const char *a, const char *b) {
   if (a == nullptr || b == nullptr) {
@@ -66,6 +72,28 @@ void drawCenteredIcon(AppDisplay &display, char icon, int16_t y,
   display.setTextSize(1);
 }
 
+bool splitTimePeriod(const char *text, char *time, size_t timeSize,
+                     const char *&period) {
+  period = "";
+  if (text == nullptr || time == nullptr || timeSize == 0) {
+    return false;
+  }
+  const size_t length = strlen(text);
+  const bool hasPeriod =
+      length >= 3 && text[length - 3] == ' ' && text[length - 1] == 'M' &&
+      (text[length - 2] == 'A' || text[length - 2] == 'P');
+  const size_t timeLength = hasPeriod ? length - 3 : length;
+  if (timeLength >= timeSize) {
+    return false;
+  }
+  memcpy(time, text, timeLength);
+  time[timeLength] = '\0';
+  if (hasPeriod) {
+    period = text + length - 2;
+  }
+  return true;
+}
+
 } // namespace
 
 void lockscreenLayoutConfigReload() {
@@ -99,24 +127,49 @@ void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
 
   display.setFont();
   display.setTextColor(1);
-  display.setTextSize(4);
+  char visibleTime[16];
+  const char *period = "";
+  if (!splitTimePeriod(timeText != nullptr ? timeText : "", visibleTime,
+                       sizeof(visibleTime), period)) {
+    visibleTime[0] = '\0';
+  }
+
+  display.setTextSize(kClockTextSize);
   int16_t timeX;
   int16_t timeY;
   uint16_t timeW;
   uint16_t timeH;
-  const char *visibleTime = timeText != nullptr ? timeText : "";
-  display.getTextBounds(visibleTime, 0, 0, &timeX, &timeY, &timeW, &timeH);
-  // "12:34 AM" does not fit at the 24-hour clock's scale. Measure first so
-  // both formats remain genuinely centered instead of clipping at the edge.
-  if (timeW > EPD_WIDTH - 12) {
-    display.setTextSize(3);
+  display.getTextBounds(visibleTime, 0, kClockY, &timeX, &timeY, &timeW,
+                        &timeH);
+
+  display.setTextSize(kPeriodTextSize);
+  int16_t periodX;
+  int16_t periodY;
+  uint16_t periodW;
+  uint16_t periodH;
+  display.getTextBounds(period, 0, 0, &periodX, &periodY, &periodW, &periodH);
+
+  const int16_t gap = periodW > 0 ? kPeriodGap : 0;
+  const int16_t groupW =
+      static_cast<int16_t>(timeW) + gap + static_cast<int16_t>(periodW);
+  const int16_t timeLeft = (EPD_WIDTH - groupW) / 2;
+
+  display.setTextSize(kClockTextSize);
+  display.setCursor(timeLeft - timeX, kClockY);
+  display.print(visibleTime);
+  if (periodW > 0) {
+    const int16_t periodLeft =
+        timeLeft + static_cast<int16_t>(timeW) + gap;
+    const int16_t timeBottom = timeY + static_cast<int16_t>(timeH);
+    display.setTextSize(kPeriodTextSize);
+    display.setCursor(periodLeft - periodX,
+                      timeBottom - static_cast<int16_t>(periodH) - periodY);
+    display.print(period);
   }
-  display.getTextBounds(visibleTime, 0, 104, &timeX, &timeY, &timeW, &timeH);
-  drawCenteredText(display, visibleTime, 104);
   if (timeEstimated && timeW > 0) {
-    const int16_t lineX = (EPD_WIDTH - static_cast<int16_t>(timeW)) / 2;
-    display.drawLine(lineX, timeY - 3,
-                     lineX + static_cast<int16_t>(timeW) - 1, timeY - 3, 1);
+    display.drawLine(timeLeft, timeY - 3,
+                     timeLeft + static_cast<int16_t>(timeW) - 1, timeY - 3,
+                     1);
   }
   if (lockscreenConfig.showDate) {
     display.setTextSize(1);
