@@ -30,7 +30,7 @@ bool ensureRtcDevice() {
   devConfig.device_address = RTC_ADDRESS;
   devConfig.scl_speed_hz = 400000;
 
-  return i2c_master_bus_add_device(bus, &devConfig, &rtcDevice) == ESP_OK;
+  return sharedI2cAddDevice(&devConfig, &rtcDevice) == ESP_OK;
 }
 
 } // namespace
@@ -46,8 +46,8 @@ bool Pcf85063Clock::readLocalUnix(int64_t &localUnix) {
 
   uint8_t reg = 0x04;
   uint8_t raw[7] = {};
-  if (i2c_master_transmit_receive(rtcDevice, &reg, sizeof(reg), raw,
-                                  sizeof(raw), 100) != ESP_OK) {
+  if (sharedI2cTransmitReceive(rtcDevice, &reg, sizeof(reg), raw, sizeof(raw),
+                               100) != ESP_OK) {
     return false;
   }
 
@@ -93,7 +93,7 @@ bool Pcf85063Clock::writeFromUnix(int64_t unixTime,
                     toBcd(static_cast<uint8_t>(weekday)),
                     toBcd(static_cast<uint8_t>(month)),
                     toBcd(static_cast<uint8_t>(year % 100))};
-  return i2c_master_transmit(rtcDevice, raw, sizeof(raw), 100) == ESP_OK;
+  return sharedI2cTransmit(rtcDevice, raw, sizeof(raw), 100) == ESP_OK;
 }
 
 uint8_t Pcf85063Clock::toBcd(uint8_t value) {

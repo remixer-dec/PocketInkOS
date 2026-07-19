@@ -228,7 +228,7 @@ bool AudioCapture::ensureCodec(char *error, int errorSize) {
     devConfig.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     devConfig.device_address = kEs8311Address;
     devConfig.scl_speed_hz = 100000;
-    if (i2c_master_bus_add_device(bus, &devConfig, &codecDevice) != ESP_OK) {
+    if (sharedI2cAddDevice(&devConfig, &codecDevice) != ESP_OK) {
       setError(error, errorSize, "ES8311 not found");
       return false;
     }
@@ -433,8 +433,8 @@ void AudioCapture::taskLoop() {
 bool AudioCapture::readCodecRegister(uint8_t reg, uint8_t &value) {
   value = 0;
   return codecDevice != NULL &&
-         i2c_master_transmit_receive(codecDevice, &reg, sizeof(reg), &value,
-                                     sizeof(value), kI2cTimeoutMs) == ESP_OK;
+         sharedI2cTransmitReceive(codecDevice, &reg, sizeof(reg), &value,
+                                  sizeof(value), kI2cTimeoutMs) == ESP_OK;
 }
 
 bool AudioCapture::writeCodecRegister(uint8_t reg, uint8_t value) {
@@ -442,7 +442,7 @@ bool AudioCapture::writeCodecRegister(uint8_t reg, uint8_t value) {
     return false;
   }
   uint8_t data[2] = {reg, value};
-  return i2c_master_transmit(codecDevice, data, sizeof(data), kI2cTimeoutMs) ==
+  return sharedI2cTransmit(codecDevice, data, sizeof(data), kI2cTimeoutMs) ==
          ESP_OK;
 }
 

@@ -38,6 +38,9 @@ inline esp_err_t i2c_master_bus_add_device(i2c_master_bus_handle_t,
   if (dev) *dev = reinterpret_cast<void *>(1);
   return ESP_OK;
 }
+inline esp_err_t i2c_master_bus_reset(i2c_master_bus_handle_t) {
+  return ESP_OK;
+}
 inline esp_err_t i2c_master_transmit_receive(i2c_master_dev_handle_t,
                                              const uint8_t *, size_t,
                                              uint8_t *, size_t, int) {

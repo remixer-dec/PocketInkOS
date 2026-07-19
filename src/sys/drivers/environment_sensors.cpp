@@ -36,7 +36,7 @@ bool sendShtc3Command(uint16_t command) {
   }
   uint8_t data[2] = {static_cast<uint8_t>(command >> 8),
                      static_cast<uint8_t>(command & 0xff)};
-  return i2c_master_transmit(shtc3Device, data, sizeof(data), 100) == ESP_OK;
+  return sharedI2cTransmit(shtc3Device, data, sizeof(data), 100) == ESP_OK;
 }
 
 uint8_t shtc3Crc(uint8_t msb, uint8_t lsb) {
@@ -64,7 +64,7 @@ bool readShtc3(EnvironmentSensorReadings &readings) {
   delay(15);
 
   uint8_t raw[6] = {};
-  if (i2c_master_receive(shtc3Device, raw, sizeof(raw), 100) != ESP_OK) {
+  if (sharedI2cReceive(shtc3Device, raw, sizeof(raw), 100) != ESP_OK) {
     sendShtc3Command(kShtc3Sleep);
     return false;
   }
@@ -94,7 +94,7 @@ void EnvironmentSensors::begin() {
     config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     config.device_address = kShtc3Address;
     config.scl_speed_hz = 400000;
-    i2c_master_bus_add_device(sharedI2cBusHandle(), &config, &shtc3Device);
+    sharedI2cAddDevice(&config, &shtc3Device);
   }
 
 #if HAS_NEW_TEMP_SENSOR_API

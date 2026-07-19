@@ -38,8 +38,7 @@ bool TouchController::begin() {
   config.device_address = kAddress;
   config.scl_speed_hz = 400000;
   i2c_master_dev_handle_t handle = nullptr;
-  if (i2c_master_bus_add_device(sharedI2cBusHandle(), &config, &handle) !=
-      ESP_OK) {
+  if (sharedI2cAddDevice(&config, &handle) != ESP_OK) {
     return false;
   }
   device = handle;
@@ -58,7 +57,7 @@ bool TouchController::read(TouchControllerSample &sample) {
 
   uint8_t countRegister = 0x02;
   uint8_t count = 0;
-  if (i2c_master_transmit_receive(device, &countRegister, 1, &count, 1, 100) !=
+  if (sharedI2cTransmitReceive(device, &countRegister, 1, &count, 1, 100) !=
       ESP_OK) {
     return false;
   }
@@ -71,8 +70,8 @@ bool TouchController::read(TouchControllerSample &sample) {
 
   uint8_t pointRegister = 0x03;
   uint8_t data[4] = {};
-  if (i2c_master_transmit_receive(device, &pointRegister, 1, data,
-                                  sizeof(data), 100) != ESP_OK) {
+  if (sharedI2cTransmitReceive(device, &pointRegister, 1, data, sizeof(data),
+                               100) != ESP_OK) {
     return false;
   }
   sample.x = ((static_cast<uint16_t>(data[0]) & 0x0f) << 8) | data[1];

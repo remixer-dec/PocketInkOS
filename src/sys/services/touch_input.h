@@ -25,7 +25,10 @@ struct TouchEvent {
 /// Reads debounced touch points and higher-level touch events from the panel.
 class TouchInput {
 public:
+  /// Initializes the controller without starting concurrent bus traffic.
   void begin();
+  /// Starts background polling after other boot-time I2C clients are ready.
+  void startPolling();
   /// Stops background bus traffic before reboot, power-off, or deep sleep.
   void end();
   bool read(TouchPoint &point);

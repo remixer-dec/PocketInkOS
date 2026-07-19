@@ -392,6 +392,7 @@ void setup() {
 
   logSetupStage("environment");
   environmentMonitor.refresh();
+  touch.startPolling();
   pinkCodecRefresh();
   pinkExecutableRefreshApps();
   refreshAppCatalog();

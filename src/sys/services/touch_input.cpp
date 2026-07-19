@@ -142,8 +142,14 @@ void TouchInput::begin() {
   if (touchReady && touchQueue == NULL) {
     touchQueue = xQueueCreate(TOUCH_QUEUE_DEPTH, sizeof(TouchEvent));
   }
-  if (touchReady && touchTaskHandle == NULL) {
-    touchTaskState.store(TouchTaskState::Running);
+}
+
+void TouchInput::startPolling() {
+  if (!touchReady) {
+    return;
+  }
+  touchTaskState.store(TouchTaskState::Running);
+  if (touchTaskHandle == NULL) {
     if (xTaskCreatePinnedToCore(touchTask, "touch", TOUCH_TASK_STACK_WORDS,
                                 NULL, TOUCH_TASK_PRIORITY, &touchTaskHandle,
                                 TOUCH_TASK_CORE) != pdPASS) {
