@@ -26,6 +26,7 @@
 #endif
 #if ENABLE_NETWORK_APPS
 #include "netapps/ai_app.h"
+#include "netapps/currency_exchange_app.h"
 #include "netapps/hn_app.h"
 #include "netapps/reddit_app.h"
 #include "netapps/weather_app.h"
@@ -57,6 +58,7 @@ RedditApp redditApp;
 HnApp hnApp;
 AiApp aiApp;
 WeatherApp weatherApp;
+CurrencyExchangeApp currencyExchangeApp;
 #endif
 TicTacToeApp ticTacToe;
 MinesweeperApp minesweeper;
@@ -92,6 +94,8 @@ AppScreen<RedditApp, true> redditScreen(redditApp);
 AppScreen<HnApp, true> hnScreen(hnApp);
 AppScreen<AiApp, true> aiScreen(aiApp);
 AppScreen<WeatherApp, true> weatherScreen(weatherApp);
+AppScreen<CurrencyExchangeApp, true>
+    currencyExchangeScreen(currencyExchangeApp);
 #endif
 
 AppEventResult handleChessMenu() {
@@ -400,6 +404,15 @@ const AppDefinition builtInApps[] = {
                []() { weatherApp.reset(); },
                defaultBehavior()
                    .withRelease([]() { weatherApp.release(); })
+                   .build()),
+    builtInApp("currency", "rates", "$", MENU_NETWORK,
+               &currencyExchangeScreen,
+               []() { currencyExchangeApp.reset(); },
+               defaultBehavior()
+                   .withMenuBtn(dirtyIfHandledMethod<
+                                CurrencyExchangeApp, currencyExchangeApp,
+                                &CurrencyExchangeApp::handleMenuButton>)
+                   .withRelease([]() { currencyExchangeApp.release(); })
                    .build())
 #endif
 };
