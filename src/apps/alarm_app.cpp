@@ -4,6 +4,7 @@
 #include "fs/providers/resonatto/remidi_synth.h"
 #include "sys/audio/audio_playback_renderer.h"
 #include "sys/services/device_clock.h"
+#include "sys/services/lockscreen_content.h"
 #include "sys/global.h"
 #include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
@@ -48,6 +49,12 @@ struct StoredAlarmPeriodicState {
   uint8_t alarmMinute;
   uint8_t alarmArmed;
   uint8_t triggerPending;
+};
+
+struct AlarmWidgetValue {
+  uint8_t hour;
+  uint8_t minute;
+  uint8_t armed;
 };
 
 RTC_FAST_ATTR StoredAlarmPeriodicState retainedAlarmState;
@@ -386,8 +393,13 @@ void AlarmApp::savePeriodicState() const {
 PeriodicTaskAction
 AlarmApp::onPeriodic(const PeriodicTaskContext &context) {
   StoredAlarmPeriodicState saved;
-  if (!context.clockSet || !loadAlarmPeriodicState(saved) ||
-      saved.alarmArmed == 0) {
+  if (!loadAlarmPeriodicState(saved)) {
+    return PeriodicTaskAction::Complete;
+  }
+  const AlarmWidgetValue widget = {saved.alarmHour, saved.alarmMinute,
+                                   saved.alarmArmed};
+  lockscreenWidgetUpdate(context.appId, &widget, sizeof(widget));
+  if (!context.clockSet || saved.alarmArmed == 0) {
     return PeriodicTaskAction::Complete;
   }
   if (saved.triggerPending != 0) {
@@ -409,6 +421,37 @@ AlarmApp::onPeriodic(const PeriodicTaskContext &context) {
   storeAlarmPeriodicState(saved.alarmHour, saved.alarmMinute, true, true,
                           minuteIndex);
   return PeriodicTaskAction::WakeApp;
+}
+
+void AlarmApp::drawWidget(Adafruit_GFX &gfx, const uint8_t *value,
+                          size_t valueSize, int16_t x, int16_t y,
+                          int16_t width, int16_t height) {
+  if (value == nullptr || valueSize != sizeof(AlarmWidgetValue)) {
+    return;
+  }
+  const AlarmWidgetValue &widget =
+      *reinterpret_cast<const AlarmWidgetValue *>(value);
+  char time[12];
+  if (widget.armed != 0) {
+    snprintf(time, sizeof(time), "ALARM %02u:%02u",
+             static_cast<unsigned>(widget.hour),
+             static_cast<unsigned>(widget.minute));
+  } else {
+    strncpy(time, "ALARM OFF", sizeof(time));
+    time[sizeof(time) - 1] = '\0';
+  }
+  gfx.setFont();
+  gfx.setTextColor(1);
+  gfx.setTextSize(2);
+  int16_t textX = 0;
+  int16_t textY = 0;
+  uint16_t textWidth = 0;
+  uint16_t textHeight = 0;
+  gfx.getTextBounds(time, 0, 0, &textX, &textY, &textWidth, &textHeight);
+  gfx.setCursor(x + (width - static_cast<int16_t>(textWidth)) / 2 - textX,
+                y + (height - static_cast<int16_t>(textHeight)) / 2 - textY);
+  gfx.print(time);
+  gfx.setTextSize(1);
 }
 
 void AlarmApp::startTimer() {

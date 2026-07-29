@@ -250,6 +250,7 @@ const AppDefinition builtInApps[] = {
             .withPeriodic(AlarmApp::onPeriodic, 1,
                           PeriodicWakeLevel::Basic,
                           PeriodicDisplayMode::None)
+            .withWidget("Alarm", AlarmApp::drawWidget)
             .withRelease([]() { alarmApp.release(); })
             .build(),
         true),
@@ -335,7 +336,8 @@ const AppDefinition builtInApps[] = {
     builtInApp("tts", "tts", "S", MENU_APPS, &ttsScreen,
                []() { ttsApp.reset(); },
                    defaultBehavior()
-                       .withExit([]() { ttsApp.stopAudio(); })
+                       .withExit([]() { ttsApp.cancelAndStop(); })
+                       .withRelease([]() { ttsApp.release(); })
                        .withMenuBtn(dirtyIfHandledMethod<
                                      TtsApp, ttsApp,
                                      &TtsApp::handleMenuButton>,

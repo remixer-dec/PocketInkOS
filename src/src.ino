@@ -13,6 +13,7 @@
 #include "sys/debug_logging.h"
 #include "sys/heap_debug.h"
 #include "sys/services/lockscreen_guard.h"
+#include "sys/services/lockscreen_content.h"
 #include "sys/services/power_control.h"
 #include "sys/drivers/pcf85063_clock.h"
 #include "sys/pink_executable.h"
@@ -347,6 +348,7 @@ void setup() {
   logSetupStage("normal boot");
   logRetainedWakeTrace();
   sleepClockContextClear();
+  lockscreenNotificationClear();
   heapMark("after-sleep-clock-check");
 
   logSetupStage("system services");

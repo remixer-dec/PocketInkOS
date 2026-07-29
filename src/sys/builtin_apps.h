@@ -128,6 +128,15 @@ struct BehaviorBuilder {
     return next;
   }
 
+  /// Adds an optional lockscreen widget to the app's static definition.
+  BehaviorBuilder withWidget(const char *label,
+                             AppWidgetDrawHandler draw) const {
+    BehaviorBuilder next = *this;
+    next.behavior.widget.label = label;
+    next.behavior.widget.draw = draw;
+    return next;
+  }
+
   /// Sets the release callback used when app-owned resources should be dropped.
   BehaviorBuilder withRelease(AppCallback handler) const {
     BehaviorBuilder next = *this;

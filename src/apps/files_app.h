@@ -43,6 +43,7 @@ public:
 
 private:
   enum class DirectoryScanPass : uint8_t { Folders = 0, Files = 1 };
+  enum class PendingWallpaper : uint8_t { None, Home, Lockscreen };
 
   static const int16_t NO_SELECTION = -1;
 
@@ -76,6 +77,7 @@ private:
   bool viewerPreviousAvailable = false;
   bool viewerNextAvailable = false;
   uint8_t viewerDither = 1;
+  PendingWallpaper pendingWallpaper = PendingWallpaper::None;
   String viewerPageInput;
   T9KeyboardComponent viewerPageKeyboard;
   unsigned long nextPdfProgressRedrawMs = 0;

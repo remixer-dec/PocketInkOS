@@ -11,6 +11,7 @@
 #include "sys/services/battery_monitor.h"
 #include "sys/services/connectivity_service.h"
 #include "sys/services/device_clock.h"
+#include "sys/services/lockscreen_content.h"
 #include "sys/services/power_control.h"
 #include "sys/services/sd_storage.h"
 #include "sys/services/system_stage_service.h"
@@ -19,7 +20,6 @@
 #include "sys/wake_trace.h"
 
 #include <Arduino.h>
-#include <cstring>
 
 extern "C" bool setCpuFrequencyMhz(uint32_t cpu_freq_mhz);
 
@@ -185,12 +185,6 @@ void PeriodicWakeService::seedSleepClockPreviousFrame(
   char timeText[16];
   char dateText[16];
   deviceClock.formatTime(timeText, sizeof(timeText), sleepClock.timeFormat);
-  if (sleepClock.timeFormat == CONFIG_TIME_12H) {
-    char *space = strchr(timeText, ' ');
-    if (space != nullptr) {
-      memmove(space, space + 1, strlen(space));
-    }
-  }
   deviceClock.formatDate(dateText, sizeof(dateText));
   drawLockscreenClockScreen(display, timeText, dateText,
                             sleepClock.timeEstimated);
@@ -241,12 +235,6 @@ void PeriodicWakeService::renderSleepClockScreen(
   char timeText[16];
   char dateText[16];
   deviceClock.formatTime(timeText, sizeof(timeText), timeFormat);
-  if (timeFormat == CONFIG_TIME_12H) {
-    char *space = strchr(timeText, ' ');
-    if (space != nullptr) {
-      memmove(space, space + 1, strlen(space));
-    }
-  }
   deviceClock.formatDate(dateText, sizeof(dateText));
 
   display.lock();
@@ -288,6 +276,7 @@ void PeriodicWakeService::enterSleepClockDeepSleep() {
                                   pinkPlan.nextDueMinute);
   const uint16_t intervalSeconds = wakeIntervalSeconds(clockSet, localUnix);
   const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
+  lockscreenContentPrepareForSleep();
   sleepClockContextStart(clockSet, timeEstimated, localUnix,
                          deviceClock.utcOffsetSeconds(), intervalSeconds,
                          timeFormat);
@@ -503,6 +492,9 @@ bool PeriodicWakeService::handleTimerWake() {
   }
 
   wakeDevice = wakeDevice || session.shouldWakeDevice();
+  if (lockscreenContentTakeRedrawRequest()) {
+    keepPeriodicDisplay = false;
+  }
   if (hooks.batteryCutoffReached != nullptr &&
       hooks.batteryCutoffReached()) {
     initializeDisplay(PeriodicDisplayMode::Partial, sleepClock);

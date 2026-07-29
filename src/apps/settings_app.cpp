@@ -78,6 +78,7 @@ enum SettingId : uint8_t {
   SETTING_AUDIO_PLAYER_LAYOUT,
   SETTING_HOME_SUN_BUTTON,
   SETTING_HOME_WIDGETS,
+  SETTING_LOCKSCREEN_WIDGET,
   SETTING_LOCKSCREEN_ICON,
   SETTING_LOCKSCREEN_DATE,
   SETTING_LOCKSCREEN_INACTIVITY,
@@ -307,6 +308,8 @@ const SettingDefinition kLockscreenSettings[] = {
      "lockscreen.inactivityMinutes", SettingKind::Options,
      nullptr, kInactivityOptionCount,
      5},
+    {SETTING_LOCKSCREEN_WIDGET, "Widget", "lockscreen.widget",
+     SettingKind::Options, nullptr, 0, 0},
     {SETTING_LOCKSCREEN_ICON, "Top icon", "lockscreen.topIcon",
      SettingKind::IconPicker, nullptr, 0, 2},
     {SETTING_LOCKSCREEN_DATE, "Show date", "lockscreen.date",
@@ -435,7 +438,40 @@ const InactivityOption *inactivityOptionForMinutes(uint8_t minutes) {
   return nullptr;
 }
 
+uint8_t lockscreenWidgetOptionCount() {
+  uint8_t count = 1; // The first option disables app widgets.
+  const size_t appCount = builtInAppDefinitionCount();
+  for (size_t i = 0; i < appCount && count < UINT8_MAX; i++) {
+    const AppDefinition *app = builtInAppDefinitionAt(i);
+    if (app != nullptr && app->behavior.widget.draw != nullptr) {
+      count++;
+    }
+  }
+  return count;
+}
+
+const AppDefinition *lockscreenWidgetForOption(uint16_t index) {
+  if (index == 0) {
+    return nullptr;
+  }
+  uint16_t option = 1;
+  const size_t appCount = builtInAppDefinitionCount();
+  for (size_t i = 0; i < appCount; i++) {
+    const AppDefinition *app = builtInAppDefinitionAt(i);
+    if (app == nullptr || app->behavior.widget.draw == nullptr) {
+      continue;
+    }
+    if (option++ == index) {
+      return app;
+    }
+  }
+  return nullptr;
+}
+
 uint8_t optionCountFor(const SettingDefinition &setting) {
+  if (setting.id == SETTING_LOCKSCREEN_WIDGET) {
+    return lockscreenWidgetOptionCount();
+  }
   if (setting.id == SETTING_LOCKSCREEN_INACTIVITY) {
     return setting.optionCount + 1;
   }
@@ -453,6 +489,22 @@ bool optionForIndex(const SettingDefinition &setting, uint16_t index,
                     const char *&label, const char *&value,
                     char *customLabel, size_t customLabelSize,
                     char *customValue, size_t customValueSize) {
+  if (setting.id == SETTING_LOCKSCREEN_WIDGET) {
+    if (index == 0) {
+      label = "None";
+      value = "none";
+      return true;
+    }
+    const AppDefinition *app = lockscreenWidgetForOption(index);
+    if (app == nullptr || app->id == nullptr) {
+      return false;
+    }
+    label = app->behavior.widget.label != nullptr
+                ? app->behavior.widget.label
+                : app->label;
+    value = app->id;
+    return true;
+  }
   if (setting.id == SETTING_LOCKSCREEN_INACTIVITY) {
     if (index < kInactivityOptionCount) {
       const InactivityOption &option = kInactivityOptions[index];
@@ -543,6 +595,22 @@ const char *groupTitle(Group group) {
 }
 
 const char *optionLabel(const SettingDefinition &setting, const char *value) {
+  if (setting.id == SETTING_LOCKSCREEN_WIDGET) {
+    if (value == nullptr || value[0] == '\0' || strcmp(value, "none") == 0) {
+      return "None";
+    }
+    const uint8_t count = lockscreenWidgetOptionCount();
+    for (uint8_t i = 1; i < count; i++) {
+      const AppDefinition *app = lockscreenWidgetForOption(i);
+      if (app != nullptr && app->id != nullptr &&
+          strcmp(app->id, value) == 0) {
+        return app->behavior.widget.label != nullptr
+                   ? app->behavior.widget.label
+                   : app->label;
+      }
+    }
+    return value;
+  }
   if (setting.options == nullptr || value == nullptr) {
     return value;
   }

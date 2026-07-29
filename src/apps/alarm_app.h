@@ -22,6 +22,10 @@ public:
   bool hasActiveSession() const;
   /// Level-1 periodic hook that decides whether the interactive alarm must wake.
   static PeriodicTaskAction onPeriodic(const PeriodicTaskContext &context);
+  /// Renders the compact alarm state retained by the periodic hook.
+  static void drawWidget(Adafruit_GFX &gfx, const uint8_t *value,
+                         size_t valueSize, int16_t x, int16_t y,
+                         int16_t width, int16_t height);
 
 private:
   struct AudioState;

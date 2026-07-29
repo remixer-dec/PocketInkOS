@@ -1,5 +1,6 @@
 #include "shell/shell_home_layout.h"
 #include "shell/shell_lockscreen_layout.h"
+#include "shell/wallpaper.h"
 #include "sys/global.h"
 #include "sys/system_config.h"
 #include <ctype.h>
@@ -206,6 +207,7 @@ bool shellHomeWidgetEnabled(uint16_t widget) {
 }
 
 void drawHomeScreen(AppDisplay &display, const ShellData &data) {
+  drawWallpaper(display, WallpaperTarget::Home);
   display.setTextColor(1);
 
   int16_t titleX = 0;

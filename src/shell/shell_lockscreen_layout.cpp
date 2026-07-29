@@ -1,6 +1,7 @@
 #include "shell/shell_lockscreen_layout.h"
 
 #include "sys/global.h"
+#include "sys/services/lockscreen_content.h"
 #include "sys/system_config.h"
 #include "ui/icon_ascii_font.h"
 
@@ -121,7 +122,8 @@ void drawLockscreenSleepScreen(AppDisplay &display) {
 void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
                                const char *dateText, bool timeEstimated) {
   display.fillScreen(0);
-  if (lockscreenConfig.topIcon != '\0') {
+  const bool contentDrawn = drawLockscreenContent(display);
+  if (!contentDrawn && lockscreenConfig.topIcon != '\0') {
     drawCenteredIcon(display, lockscreenConfig.topIcon, 42, 1);
   }
 

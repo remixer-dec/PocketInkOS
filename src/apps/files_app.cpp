@@ -3,6 +3,8 @@
 #include "fs/providers/epub_file_viewer.h"
 #include "fs/providers/midi_file_viewer.h"
 #include "fs/providers/pdf_file_viewer.h"
+#include "shell/wallpaper.h"
+#include "sys/app_display.h"
 #include "sys/services/lockscreen_guard.h"
 #include "sys/services/device_controls.h"
 #include "sys/psram_allocator.h"
@@ -147,9 +149,9 @@ static const int8_t kViewerScrollLines = 4;
 static const int16_t kScrollbarX = 198;
 static const int16_t kScrollbarW = 2;
 static const int16_t kViewerOptionsX = 20;
-static const int16_t kViewerOptionsY = 54;
+static const int16_t kViewerOptionsY = 24;
 static const int16_t kViewerOptionsW = 160;
-static const int16_t kViewerOptionsH = 96;
+static const int16_t kViewerOptionsH = 152;
 static const int16_t kViewerOptionsRowH = 28;
 
 bool equalsIgnoreCase(const char *left, const char *right);
@@ -1369,6 +1371,7 @@ bool FilesApp::openViewer(const char *path, const char *title,
   viewerSize = boundedFileSize(file);
   viewerFullscreen = false;
   viewerOptionsOpen = false;
+  pendingWallpaper = PendingWallpaper::None;
   viewerPageJumpOpen = false;
   viewerPreviousAvailable = false;
   viewerNextAvailable = false;
@@ -1498,6 +1501,7 @@ void FilesApp::closeViewer() {
   viewerSize = 0;
   viewerFullscreen = false;
   viewerOptionsOpen = false;
+  pendingWallpaper = PendingWallpaper::None;
   viewerPageJumpOpen = false;
   viewerPreviousAvailable = false;
   viewerNextAvailable = false;
@@ -1559,6 +1563,12 @@ bool FilesApp::handleViewerTouch(const TouchPoint &point) {
       viewerScaleToFit = !viewerScaleToFit;
     } else if (row == 2) {
       viewerFullscreen = !viewerFullscreen;
+      viewerOptionsOpen = false;
+    } else if (row == 3) {
+      pendingWallpaper = PendingWallpaper::Home;
+      viewerOptionsOpen = false;
+    } else if (row == 4) {
+      pendingWallpaper = PendingWallpaper::Lockscreen;
       viewerOptionsOpen = false;
     }
     markListDirty();
@@ -1760,6 +1770,33 @@ void FilesApp::drawViewer(Adafruit_GFX &gfx) {
     return;
   }
 
+  if (pendingWallpaper != PendingWallpaper::None) {
+    if (activeViewer != nullptr && activeViewer->draw != nullptr) {
+      FileViewerActivity activity = viewerActivity();
+      FileViewerRuntime runtime = makeViewerRuntime(true, &activity);
+      activeViewer->draw(gfx, runtime);
+    }
+    const WallpaperTarget target =
+        pendingWallpaper == PendingWallpaper::Home
+            ? WallpaperTarget::Home
+            : WallpaperTarget::Lockscreen;
+    const WallpaperResult result =
+        saveFramebufferWallpaper(static_cast<const AppDisplay &>(gfx), target);
+    pendingWallpaper = PendingWallpaper::None;
+    const char *message = wallpaperResultMessage(result);
+    gfx.fillRect(24, 84, 152, 32, 0);
+    gfx.drawRect(24, 84, 152, 32, 1);
+    int16_t textX = 0;
+    int16_t textY = 0;
+    uint16_t textW = 0;
+    uint16_t textH = 0;
+    gfx.getTextBounds(message, 0, 0, &textX, &textY, &textW, &textH);
+    gfx.setCursor((EPD_WIDTH - static_cast<int16_t>(textW)) / 2 - textX,
+                  100 - textY);
+    gfx.print(message);
+    return;
+  }
+
   if (viewerFullscreen) {
     if (activeViewer != nullptr && activeViewer->draw != nullptr) {
       FileViewerActivity activity = viewerActivity();
@@ -1834,6 +1871,10 @@ void FilesApp::drawViewerOptions(Adafruit_GFX &gfx) {
   snprintf(line, sizeof(line), "FULL %s", viewerFullscreen ? "ON" : "OFF");
   gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 84);
   gfx.print(line);
+  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 112);
+  gfx.print("SET HOME WALLPAPER");
+  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 140);
+  gfx.print("SET LOCK WALLPAPER");
 }
 
 void FilesApp::drawViewerScrollbar(Adafruit_GFX &gfx) const {

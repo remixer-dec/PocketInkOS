@@ -579,6 +579,7 @@ void PeriodicWakeSession::dispatch(PeriodicWakeLevel level,
     }
 
     PeriodicTaskContext context;
+    context.appId = task.appOwned ? task.id : nullptr;
     context.localUnix = localUnix;
     context.intervalMinutes = periodicEffectiveIntervalMinutes(
         task.schedule->intervalMinutes, policy.minIntervalMinutes);

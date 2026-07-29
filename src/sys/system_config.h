@@ -90,6 +90,7 @@ struct SystemConfig {
   char audioPlayerLayout[12];
 
   struct {
+    char widgetApp[24];
     char topIcon[2];
     bool showDate;
     uint8_t inactivityMinutes;

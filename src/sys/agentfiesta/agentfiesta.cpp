@@ -1100,6 +1100,7 @@ bool allowedConfigKey(const char *key) {
       "home.widgets",
       "layout",
       "interface.audioPlayerLayout",
+      "lockscreen.widget",
       "lockscreen.topIcon",
       "lockscreen.date",
       "lockscreen.inactivityMinutes",
