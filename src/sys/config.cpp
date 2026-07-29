@@ -211,6 +211,18 @@ bool validSystemValue(const char *key, const char *value) {
     bool enabled = false;
     return parseBool(value, enabled);
   }
+  if (strcmp(key, "notifications.mode") == 0) {
+    return asciiEqualIgnoreCase(value, "off") ||
+           asciiEqualIgnoreCase(value, "silent") ||
+           asciiEqualIgnoreCase(value, "on");
+  }
+  if (strcmp(key, "notifications.ringtone") == 0) {
+    return asciiEqualIgnoreCase(value, "chime") ||
+           asciiEqualIgnoreCase(value, "droplet") ||
+           asciiEqualIgnoreCase(value, "pulse") ||
+           asciiEqualIgnoreCase(value, "ascend") ||
+           asciiEqualIgnoreCase(value, "knock");
+  }
   if (strcmp(key, "cpu.mhz") == 0) {
     uint16_t mhz = 0;
     return parseUnsignedRange(value, 80, 240, mhz) &&
@@ -259,6 +271,8 @@ void resetSystemDefaults() {
             sizeof(currentConfig.lockscreen.topIcon), "S");
   currentConfig.lockscreen.showDate = true;
   currentConfig.lockscreen.inactivityMinutes = 2;
+  currentConfig.notifications.mode = CONFIG_NOTIFICATIONS_SILENT;
+  currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_CHIME;
   currentConfig.cpu.mhz = 240;
   currentConfig.cpu.governor = CONFIG_CPU_FIXED;
   currentConfig.time.timeFormat = CONFIG_TIME_24H;
@@ -403,6 +417,26 @@ void applySystemKey(const char *key, const char *value) {
     if (parseUnsignedRange(value, 0,
                            CONFIG_PERIODIC_INTERVAL_MAX_MINUTES, minutes)) {
       currentConfig.periodic.minIntervalMinutes = minutes;
+    }
+  } else if (strcmp(key, "notifications.mode") == 0) {
+    if (asciiEqualIgnoreCase(value, "off")) {
+      currentConfig.notifications.mode = CONFIG_NOTIFICATIONS_OFF;
+    } else if (asciiEqualIgnoreCase(value, "on")) {
+      currentConfig.notifications.mode = CONFIG_NOTIFICATIONS_ON;
+    } else {
+      currentConfig.notifications.mode = CONFIG_NOTIFICATIONS_SILENT;
+    }
+  } else if (strcmp(key, "notifications.ringtone") == 0) {
+    if (asciiEqualIgnoreCase(value, "droplet")) {
+      currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_DROPLET;
+    } else if (asciiEqualIgnoreCase(value, "pulse")) {
+      currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_PULSE;
+    } else if (asciiEqualIgnoreCase(value, "ascend")) {
+      currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_ASCEND;
+    } else if (asciiEqualIgnoreCase(value, "knock")) {
+      currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_KNOCK;
+    } else {
+      currentConfig.notifications.ringtone = CONFIG_NOTIFICATION_CHIME;
     }
   }
 }
@@ -553,6 +587,33 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
   } else if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
     snprintf(out, outSize, "%u", static_cast<unsigned>(
                                       currentConfig.periodic.minIntervalMinutes));
+  } else if (strcmp(key, "notifications.mode") == 0) {
+    const char *value = "silent";
+    if (currentConfig.notifications.mode == CONFIG_NOTIFICATIONS_OFF) {
+      value = "off";
+    } else if (currentConfig.notifications.mode == CONFIG_NOTIFICATIONS_ON) {
+      value = "on";
+    }
+    copyValue(out, outSize, value);
+  } else if (strcmp(key, "notifications.ringtone") == 0) {
+    const char *value = "chime";
+    switch (currentConfig.notifications.ringtone) {
+    case CONFIG_NOTIFICATION_DROPLET:
+      value = "droplet";
+      break;
+    case CONFIG_NOTIFICATION_PULSE:
+      value = "pulse";
+      break;
+    case CONFIG_NOTIFICATION_ASCEND:
+      value = "ascend";
+      break;
+    case CONFIG_NOTIFICATION_KNOCK:
+      value = "knock";
+      break;
+    case CONFIG_NOTIFICATION_CHIME:
+      break;
+    }
+    copyValue(out, outSize, value);
   } else {
     return false;
   }

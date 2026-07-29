@@ -1104,6 +1104,8 @@ bool allowedConfigKey(const char *key) {
       "lockscreen.topIcon",
       "lockscreen.date",
       "lockscreen.inactivityMinutes",
+      "notifications.mode",
+      "notifications.ringtone",
       "wifi.autoConnect",
       "wifi.autoOffMinutes",
       "cpu.mhz",

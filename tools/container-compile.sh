@@ -135,6 +135,7 @@ FILES=( \
   "$ROOT/src/sys/audio/audio_decode_queue.cpp" \
   "$ROOT/src/sys/audio/audio_playback_renderer.cpp" \
   "$ROOT/src/sys/audio/audio_power.cpp" \
+  "$ROOT/src/sys/audio/notification_sound.cpp" \
   "$ROOT/src/sys/drivers/shared_i2c_bus.cpp" \
   "$ROOT/src/sys/drivers/touch_controller.cpp" \
   "$ROOT/src/sys/drivers/environment_sensors.cpp" \
@@ -169,6 +170,7 @@ FILES=( \
   "$ROOT/src/sys/services/device_controls.cpp" \
   "$ROOT/src/sys/services/device_clock.cpp" \
   "$ROOT/src/sys/services/environment_monitor.cpp" \
+  "$ROOT/src/sys/services/lockscreen_content.cpp" \
   "$ROOT/src/sys/services/lockscreen_guard.cpp" \
   "$ROOT/src/sys/drivers/pcf85063_clock.cpp" \
   "$ROOT/src/sys/pink_executable.cpp" \
@@ -183,6 +185,7 @@ FILES=( \
   "$ROOT/src/sys/services/sd_storage.cpp" \
   "$ROOT/src/sys/system_fonts.cpp" \
   "$ROOT/src/shell/screenshot.cpp" \
+  "$ROOT/src/shell/wallpaper.cpp" \
   "$ROOT/src/sys/video/avi_encoder.cpp" \
   "$ROOT/src/sys/video/record.cpp" \
   "$ROOT/src/sys/sleep_clock_context.cpp" \

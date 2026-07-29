@@ -82,6 +82,8 @@ enum SettingId : uint8_t {
   SETTING_LOCKSCREEN_ICON,
   SETTING_LOCKSCREEN_DATE,
   SETTING_LOCKSCREEN_INACTIVITY,
+  SETTING_NOTIFICATION_MODE,
+  SETTING_NOTIFICATION_RINGTONE,
 };
 
 enum class SettingKind : uint8_t {
@@ -191,6 +193,18 @@ const SettingOption kAudioPlayerLayoutOptions[] = {
     {"Layout 2", "minimal"},
     {"Layout 3", "mixer"},
     {"Layout 4", "controls"},
+};
+const SettingOption kNotificationModeOptions[] = {
+    {"OFF", "off"},
+    {"SILENT", "silent"},
+    {"ON", "on"},
+};
+const SettingOption kNotificationRingtoneOptions[] = {
+    {"Chime", "chime"},
+    {"Droplet", "droplet"},
+    {"Pulse", "pulse"},
+    {"Ascend", "ascend"},
+    {"Knock", "knock"},
 };
 const InactivityOption kInactivityOptions[] = {
     {"0 (never)", 0}, {"1 min", 1}, {"2 min", 2},
@@ -315,6 +329,16 @@ const SettingDefinition kLockscreenSettings[] = {
     {SETTING_LOCKSCREEN_DATE, "Show date", "lockscreen.date",
      SettingKind::Options, kBoolOptions,
      static_cast<uint8_t>(sizeof(kBoolOptions) / sizeof(kBoolOptions[0])), 0},
+    {SETTING_NOTIFICATION_MODE, "Notifications", "notifications.mode",
+     SettingKind::Options, kNotificationModeOptions,
+     static_cast<uint8_t>(sizeof(kNotificationModeOptions) /
+                          sizeof(kNotificationModeOptions[0])),
+     0},
+    {SETTING_NOTIFICATION_RINGTONE, "Ringtone", "notifications.ringtone",
+     SettingKind::Options, kNotificationRingtoneOptions,
+     static_cast<uint8_t>(sizeof(kNotificationRingtoneOptions) /
+                          sizeof(kNotificationRingtoneOptions[0])),
+     0},
 };
 
 struct SettingGroupDefinition {

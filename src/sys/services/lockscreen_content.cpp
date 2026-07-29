@@ -25,7 +25,7 @@
 
 namespace {
 
-constexpr uint16_t kMagic = 0x4c43U;
+constexpr uint16_t kMagic = 0x4c44U;
 constexpr size_t kAppIdCapacity = 24;
 constexpr size_t kNotificationLineCapacity = 32;
 constexpr int16_t kContentX = 4;
@@ -39,7 +39,9 @@ struct RetainedLockscreenContent {
   uint8_t valueSize;
   uint8_t notificationActive;
   uint8_t redrawRequested;
-  uint8_t reserved;
+  uint8_t notificationMode;
+  uint8_t notificationRingtone;
+  uint8_t soundRequested;
   char widgetAppId[kAppIdCapacity];
   uint8_t value[LOCKSCREEN_WIDGET_VALUE_CAPACITY];
   char first[kNotificationLineCapacity];
@@ -68,7 +70,9 @@ void commit() {
 
 bool load() {
   return retained.magic == kMagic && retained.checksum == checksum(retained) &&
-         retained.valueSize <= LOCKSCREEN_WIDGET_VALUE_CAPACITY;
+         retained.valueSize <= LOCKSCREEN_WIDGET_VALUE_CAPACITY &&
+         retained.notificationMode <= CONFIG_NOTIFICATIONS_ON &&
+         retained.notificationRingtone <= CONFIG_NOTIFICATION_KNOCK;
 }
 
 void reset() {
@@ -155,6 +159,17 @@ void lockscreenContentPrepareForSleep() {
     retained.valueSize = 0;
     memset(retained.value, 0, sizeof(retained.value));
   }
+  const SystemConfig &config = currentSystemConfig();
+  retained.notificationMode =
+      static_cast<uint8_t>(config.notifications.mode);
+  retained.notificationRingtone =
+      static_cast<uint8_t>(config.notifications.ringtone);
+  retained.soundRequested = 0;
+  if (config.notifications.mode == CONFIG_NOTIFICATIONS_OFF) {
+    retained.notificationActive = 0;
+    retained.first[0] = '\0';
+    retained.second[0] = '\0';
+  }
   retained.redrawRequested = 0;
   commit();
 }
@@ -168,6 +183,7 @@ void lockscreenNotificationClear() {
   retained.first[0] = '\0';
   retained.second[0] = '\0';
   retained.redrawRequested = 0;
+  retained.soundRequested = 0;
   commit();
 }
 
@@ -201,10 +217,28 @@ bool lockscreenNotify(const char *first, const char *second) {
   if (!load()) {
     reset();
   }
+  if (retained.notificationMode == CONFIG_NOTIFICATIONS_OFF) {
+    return false;
+  }
   copyText(retained.first, sizeof(retained.first), first);
   copyText(retained.second, sizeof(retained.second), second);
   retained.notificationActive = 1;
   retained.redrawRequested = 1;
+  retained.soundRequested =
+      retained.notificationMode == CONFIG_NOTIFICATIONS_ON ? 1U : 0U;
+  commit();
+  return true;
+}
+
+bool lockscreenNotificationTakeSoundRequest(
+    ConfigNotificationRingtone &ringtone) {
+  if (!load() || retained.notificationActive == 0 ||
+      retained.soundRequested == 0) {
+    return false;
+  }
+  retained.soundRequested = 0;
+  ringtone =
+      static_cast<ConfigNotificationRingtone>(retained.notificationRingtone);
   commit();
   return true;
 }

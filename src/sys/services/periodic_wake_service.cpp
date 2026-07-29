@@ -5,6 +5,7 @@
 #endif
 
 #include "shell/shell_lockscreen_layout.h"
+#include "sys/audio/notification_sound.h"
 #include "sys/drivers/pcf85063_clock.h"
 #include "sys/drivers/shared_i2c_bus.h"
 #include "sys/pink_periodic_tasks.h"
@@ -502,6 +503,10 @@ bool PeriodicWakeService::handleTimerWake() {
       hooks.shutdownForLowBattery();
     }
     return true;
+  }
+  ConfigNotificationRingtone ringtone = CONFIG_NOTIFICATION_CHIME;
+  if (lockscreenNotificationTakeSoundRequest(ringtone)) {
+    playNotificationSound(ringtone);
   }
   if (wakeDevice) {
     return false;

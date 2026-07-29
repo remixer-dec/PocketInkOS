@@ -2,6 +2,8 @@
 #ifndef LOCKSCREEN_CONTENT_H
 #define LOCKSCREEN_CONTENT_H
 
+#include "sys/system_config.h"
+
 #include <Adafruit_GFX.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -19,7 +21,12 @@ bool lockscreenWidgetUpdate(const char *appId, const void *value,
                             size_t valueSize);
 
 /// Replaces the single retained notification. Text is truncated to fit storage.
+/// Returns false without retaining content when notifications are disabled.
 bool lockscreenNotify(const char *first, const char *second = nullptr);
+
+/// Claims one pending audible cue before playback so a crash cannot replay it.
+bool lockscreenNotificationTakeSoundRequest(
+    ConfigNotificationRingtone &ringtone);
 
 /// Draws the notification or selected app widget in the centered 192x64 slot.
 /// Returns true when content replaced the normal lock icon.

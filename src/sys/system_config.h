@@ -58,6 +58,22 @@ enum ConfigTimeSyncProtocol : uint8_t {
   CONFIG_TIME_SYNC_NTP,
 };
 
+/// Whether periodic notifications are retained and made audible.
+enum ConfigNotificationMode : uint8_t {
+  CONFIG_NOTIFICATIONS_OFF,
+  CONFIG_NOTIFICATIONS_SILENT,
+  CONFIG_NOTIFICATIONS_ON,
+};
+
+/// Built-in synthesized cue used for audible notifications.
+enum ConfigNotificationRingtone : uint8_t {
+  CONFIG_NOTIFICATION_CHIME,
+  CONFIG_NOTIFICATION_DROPLET,
+  CONFIG_NOTIFICATION_PULSE,
+  CONFIG_NOTIFICATION_ASCEND,
+  CONFIG_NOTIFICATION_KNOCK,
+};
+
 /// Persisted Wi-Fi credentials for one remembered network.
 struct ConfigWifiSavedNetwork {
   /// Network SSID.
@@ -95,6 +111,11 @@ struct SystemConfig {
     bool showDate;
     uint8_t inactivityMinutes;
   } lockscreen;
+
+  struct {
+    ConfigNotificationMode mode;
+    ConfigNotificationRingtone ringtone;
+  } notifications;
 
   struct {
     uint16_t mhz;
