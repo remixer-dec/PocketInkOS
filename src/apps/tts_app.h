@@ -27,6 +27,8 @@ public:
   bool handlePowerButton();
   bool hasActiveSession() const;
   void stopAudio();
+  void cancelAndStop();
+  void release();
 
 private:
   enum KeyboardMode : uint8_t {
@@ -35,6 +37,10 @@ private:
     KEYBOARD_NUMBERS
   };
   enum class VocoderBackend : uint8_t { Neural, GriffinLim };
+  enum class NumericSetting : uint8_t {
+    GriffinLimIterations,
+    PackedQuantTimeTile,
+  };
 
   static const int MAX_TEXT_LENGTH = 120;
 
@@ -45,11 +51,15 @@ private:
   bool keyboardOpen = false;
   KeyboardMode keyboardMode = KEYBOARD_T9;
   VocoderBackend vocoderBackend = VocoderBackend::Neural;
+  tts::ModelVersion modelVersion = tts::ModelVersion::V2;
   uint8_t griffinLimIterations = 4;
+  uint8_t packedQuantTimeTile = 32;
+  NumericSetting numericSetting = NumericSetting::GriffinLimIterations;
   char status[96] = "Enter text";
   char taskText[MAX_TEXT_LENGTH + 1] = {};
   std::atomic<bool> taskRunning{false};
   std::atomic<bool> taskDone{false};
+  std::atomic<bool> cancelRequested{false};
 
   tts::PcmBuffer pcm;
   tts::SynthesisResult lastResult;
@@ -61,11 +71,13 @@ private:
   QwertyZoomKeyboardComponent zoomKeyboard;
 
   void openKeyboard();
-  void openIterationKeyboard();
+  void openNumberKeyboard(NumericSetting setting);
   void closeKeyboard();
-  void applyIterationText();
+  void applyNumberText();
   void toggleVocoderBackend();
+  void toggleModelVersion();
   const char *vocoderBackendName() const;
+  const char *modelVersionName() const;
   void drawKeyboard(Adafruit_GFX &gfx);
   void drawMain(Adafruit_GFX &gfx);
   bool handleKeyboardTouch(const TouchPoint &point);
@@ -74,6 +86,7 @@ private:
   void finishSynthesis();
   void setStatus(const char *nextStatus);
   static void synthesisTaskEntry(void *user);
+  static bool synthesisCancelled(void *user);
   void synthesisTask();
   static size_t fillPlayback(void *user, int16_t *stereoFrames,
                              size_t frameCount);

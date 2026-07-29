@@ -6,6 +6,7 @@
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -27,12 +28,14 @@ const UiRect kSpeakButton = {72, 148, 58, 24};
 const UiRect kPlaybackButton = {136, 148, 56, 24};
 const UiRect kTextBox = {8, 38, 184, 70};
 const UiRect kBackendButton = {8, 124, 58, 20};
-const UiRect kIterButton = {72, 124, 58, 20};
+const UiRect kParameterButton = {72, 124, 58, 20};
+const UiRect kModelButton = {136, 124, 56, 20};
 const int8_t kInputButtonId = 0;
 const int8_t kSpeakButtonId = 1;
 const int8_t kPlaybackButtonId = 2;
 const int8_t kBackendButtonId = 3;
-const int8_t kIterButtonId = 4;
+const int8_t kParameterButtonId = 4;
+const int8_t kModelButtonId = 5;
 const uint32_t kTaskStackBytes = 16384;
 const UBaseType_t kTaskPriority = 1;
 const BaseType_t kTaskCore = 1;
@@ -132,6 +135,13 @@ void TtsApp::reset() {
   ttsAppLog("[tts-app] reset running=%u state=%s\n", taskRunning ? 1U : 0U,
             stateName(state));
   stopAudio();
+  if (taskRunning) {
+    cancelRequested = true;
+    state = State::Synthesizing;
+    setStatus("Cancelling...");
+    return;
+  }
+  cancelRequested = false;
   inputText = "hey";
   numberText = "";
   keyboardOpen = false;
@@ -193,9 +203,17 @@ bool TtsApp::handleTouch(const TouchPoint &point) {
     toggleVocoderBackend();
     return true;
   }
-  if (uiTouchContains(kIterButton, point)) {
-    press.press(kIterButtonId);
-    openIterationKeyboard();
+  if (uiTouchContains(kParameterButton, point)) {
+    press.press(kParameterButtonId);
+    openNumberKeyboard(
+        vocoderBackend == VocoderBackend::GriffinLim
+            ? NumericSetting::GriffinLimIterations
+            : NumericSetting::PackedQuantTimeTile);
+    return true;
+  }
+  if (uiTouchContains(kModelButton, point)) {
+    press.press(kModelButtonId);
+    toggleModelVersion();
     return true;
   }
   if (uiTouchContains(kSpeakButton, point)) {
@@ -289,6 +307,24 @@ void TtsApp::stopAudio() {
   playbackCursor = 0;
 }
 
+void TtsApp::cancelAndStop() {
+  stopAudio();
+  if (taskRunning) {
+    cancelRequested = true;
+    setStatus("Cancelling...");
+    ttsAppLog("[tts-app] synth cancellation requested\n");
+  }
+}
+
+void TtsApp::release() {
+  if (taskRunning) {
+    cancelRequested = true;
+    return;
+  }
+  stopAudio();
+  pcm.clear();
+}
+
 void TtsApp::openKeyboard() {
   if (state == State::Synthesizing) {
     return;
@@ -301,18 +337,26 @@ void TtsApp::openKeyboard() {
             static_cast<unsigned>(inputText.length()));
 }
 
-void TtsApp::openIterationKeyboard() {
+void TtsApp::openNumberKeyboard(NumericSetting setting) {
   if (state == State::Synthesizing) {
     return;
   }
+  numericSetting = setting;
   char value[4];
-  snprintf(value, sizeof(value), "%u", static_cast<unsigned>(griffinLimIterations));
+  const unsigned current =
+      setting == NumericSetting::GriffinLimIterations
+          ? static_cast<unsigned>(griffinLimIterations)
+          : static_cast<unsigned>(packedQuantTimeTile);
+  snprintf(value, sizeof(value), "%u", current);
   numberText = value;
   keyboardOpen = true;
   keyboardMode = KEYBOARD_NUMBERS;
   inputKeyboard.setLayout(T9KeyboardComponent::Layout::Numbers);
-  ttsAppLog("[tts-app] gl iters edit value=%u\n",
-            static_cast<unsigned>(griffinLimIterations));
+  ttsAppLog("[tts-app] numeric edit setting=%s value=%u\n",
+            setting == NumericSetting::GriffinLimIterations
+                ? "gl_iters"
+                : "packed_quant_tile",
+            current);
 }
 
 void TtsApp::closeKeyboard() {
@@ -324,20 +368,28 @@ void TtsApp::closeKeyboard() {
   inputKeyboard.setLayout(T9KeyboardComponent::Layout::Text);
 }
 
-void TtsApp::applyIterationText() {
+void TtsApp::applyNumberText() {
   int value = atoi(numberText.c_str());
-  if (value < 0) {
-    value = 0;
-  } else if (value > 16) {
-    value = 16;
+  if (numericSetting == NumericSetting::GriffinLimIterations) {
+    value = std::max(0, std::min(16, value));
+    griffinLimIterations = static_cast<uint8_t>(value);
+    ttsAppLog("[tts-app] gl iters set=%u\n",
+              static_cast<unsigned>(griffinLimIterations));
+    return;
   }
-  griffinLimIterations = static_cast<uint8_t>(value);
-  ttsAppLog("[tts-app] gl iters set=%u\n",
-            static_cast<unsigned>(griffinLimIterations));
+  value = std::max(1, std::min(64, value));
+  packedQuantTimeTile = static_cast<uint8_t>(value);
+  ttsAppLog("[tts-app] packed quant tile set=%u\n",
+            static_cast<unsigned>(packedQuantTimeTile));
 }
 
 void TtsApp::toggleVocoderBackend() {
   if (state == State::Synthesizing) {
+    return;
+  }
+  if (modelVersion == tts::ModelVersion::V2) {
+    setStatus("V2 uses neural");
+    ttsAppLog("[tts-app] backend toggle ignored model=v2\n");
     return;
   }
   stopAudio();
@@ -352,8 +404,30 @@ void TtsApp::toggleVocoderBackend() {
             static_cast<unsigned>(griffinLimIterations));
 }
 
+void TtsApp::toggleModelVersion() {
+  if (state == State::Synthesizing) {
+    return;
+  }
+  stopAudio();
+  pcm.clear();
+  modelVersion = modelVersion == tts::ModelVersion::V2
+                     ? tts::ModelVersion::V1
+                     : tts::ModelVersion::V2;
+  if (modelVersion == tts::ModelVersion::V2) {
+    vocoderBackend = VocoderBackend::Neural;
+  }
+  state = State::Idle;
+  snprintf(status, sizeof(status), "Model: %s", modelVersionName());
+  ttsAppLog("[tts-app] model=%s backend=%s\n", modelVersionName(),
+            vocoderBackendName());
+}
+
 const char *TtsApp::vocoderBackendName() const {
   return vocoderBackend == VocoderBackend::GriffinLim ? "griffin_lim" : "neural";
+}
+
+const char *TtsApp::modelVersionName() const {
+  return modelVersion == tts::ModelVersion::V1 ? "V1" : "V2";
 }
 
 void TtsApp::drawKeyboard(Adafruit_GFX &gfx) {
@@ -401,14 +475,23 @@ void TtsApp::drawMain(Adafruit_GFX &gfx) {
     gfx.print(meta);
   }
 
-  char iterLabel[8];
-  snprintf(iterLabel, sizeof(iterLabel), "ITR %u",
-           static_cast<unsigned>(griffinLimIterations));
+  char parameterLabel[9];
+  if (vocoderBackend == VocoderBackend::GriffinLim) {
+    snprintf(parameterLabel, sizeof(parameterLabel), "ITR %u",
+             static_cast<unsigned>(griffinLimIterations));
+  } else {
+    snprintf(parameterLabel, sizeof(parameterLabel), "TILE %u",
+             static_cast<unsigned>(packedQuantTimeTile));
+  }
   uiDrawButton(gfx, kBackendButton,
                vocoderBackend == VocoderBackend::GriffinLim ? "GL" : "NEURAL",
                vocoderBackend == VocoderBackend::GriffinLim ||
                    press.isPressed(kBackendButtonId));
-  uiDrawButton(gfx, kIterButton, iterLabel, press.isPressed(kIterButtonId));
+  uiDrawButton(gfx, kParameterButton, parameterLabel,
+               press.isPressed(kParameterButtonId));
+  uiDrawButton(gfx, kModelButton, modelVersionName(),
+               modelVersion == tts::ModelVersion::V2 ||
+                   press.isPressed(kModelButtonId));
 
   uiDrawButton(gfx, kInputButton, "INPUT", press.isPressed(kInputButtonId));
   uiDrawButton(gfx, kSpeakButton, "SPEAK",
@@ -428,7 +511,7 @@ bool TtsApp::handleKeyboardTouch(const TouchPoint &point) {
       return false;
     }
     if (event.action == KEY_OK) {
-      applyIterationText();
+      applyNumberText();
       closeKeyboard();
       setStatus("Ready to speak");
     }
@@ -489,6 +572,7 @@ bool TtsApp::startSynthesis() {
   taskText[sizeof(taskText) - 1] = '\0';
   lastResult = tts::SynthesisResult();
   taskDone = false;
+  cancelRequested = false;
   taskRunning = true;
   state = State::Synthesizing;
   setStatus("Synthesizing...");
@@ -555,6 +639,12 @@ void TtsApp::finishSynthesis() {
     }
     return;
   }
+  if (strcmp(lastResult.error, "Cancelled") == 0) {
+    state = State::Idle;
+    setStatus("Cancelled");
+    ttsAppLog("[tts-app] synth cancelled\n");
+    return;
+  }
   state = State::Error;
   setStatus(lastResult.error[0] != '\0' ? lastResult.error : "Synthesis failed");
   ttsAppLog("[tts-app] synth failed error=\"%s\"\n", status);
@@ -573,15 +663,24 @@ void TtsApp::synthesisTaskEntry(void *user) {
   vTaskDelete(nullptr);
 }
 
+bool TtsApp::synthesisCancelled(void *user) {
+  TtsApp *app = static_cast<TtsApp *>(user);
+  return app != nullptr && app->cancelRequested.load();
+}
+
 void TtsApp::synthesisTask() {
   LockscreenGuard sleepGuard;
   ttsAppLog("[tts-app] synth task stack_hwm_start=%u\n",
             currentTaskStackHighWaterMark());
   tts::ModelPaths paths;
   tts::defaultModelPaths(paths);
+  paths.version = modelVersion;
   tts::SynthesisOptions options;
   options.vocoderBackend = vocoderBackendName();
   options.griffinLimIterations = griffinLimIterations;
+  options.packedQuantTimeTile = packedQuantTimeTile;
+  options.shouldCancel = synthesisCancelled;
+  options.cancelUser = this;
   lastResult = tts::synthesizeToPcm(taskText, paths, options, pcm);
   ttsAppLog("[tts-app] synth task stack_hwm_end=%u\n",
             currentTaskStackHighWaterMark());

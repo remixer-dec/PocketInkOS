@@ -6,10 +6,19 @@
 
 namespace tts {
 
+enum class ModelVersion : uint8_t {
+  Auto,
+  V1,
+  V2,
+};
+
 struct ModelPaths {
   const char *acoustic = nullptr;
   const char *vocoder = nullptr;
   const char *cmudict = nullptr;
+  const char *v2Model = nullptr;
+  const char *v2Lexicon = nullptr;
+  ModelVersion version = ModelVersion::Auto;
 };
 
 struct SynthesisOptions {
@@ -17,9 +26,17 @@ struct SynthesisOptions {
   int vocoderChunkFrames = 96;
   const char *vocoderBackend = nullptr;
   int griffinLimIterations = 8;
+  int packedQuantTimeTile = 8;
   float lengthScale = 1.0f;
   float pitchScale = 1.0f;
   float energyScale = 1.0f;
+  float v2Speed = 1.0f;
+  float v2Variation = 0.667f;
+  uint64_t seed = 1234;
+  uint64_t v2Seed = 7;
+  int v2DecoderChunkFrames = 32;
+  bool (*shouldCancel)(void *user) = nullptr;
+  void *cancelUser = nullptr;
 };
 
 class PcmBuffer {
@@ -52,6 +69,7 @@ struct SynthesisResult {
   uint32_t elapsedMs = 0;
   size_t frames = 0;
   uint32_t sampleRateHz = 24000;
+  ModelVersion modelVersion = ModelVersion::Auto;
 };
 
 bool defaultModelPaths(ModelPaths &paths);

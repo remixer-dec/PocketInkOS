@@ -107,6 +107,8 @@ done < <(
 )
 
 if [[ "$EXTENDED" != "0" ]]; then
+  # Extended sources are symlinked into the sketch and skipped by find -type f.
+  emit_wrapper "$SKETCH_DIR/sys/audio/audio.cpp"
   emit_wrapper "$SKETCH_DIR/fs/providers/audio_file_viewer.cpp"
 fi
 
