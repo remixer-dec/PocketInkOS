@@ -3,7 +3,7 @@
 
 #include <driver/i2c_master.h>
 
-/// Initializes the board I2C bus shared by touch, RTC, and sensors.
+/// Initializes the board I2C bus shared by touch, RTC, sensors, and audio.
 bool sharedI2cBegin();
 /// Adds a device without racing traffic from another task.
 esp_err_t sharedI2cAddDevice(const i2c_device_config_t *config,

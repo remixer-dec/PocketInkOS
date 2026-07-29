@@ -45,7 +45,7 @@ bool drawWallpaper(AppDisplay &display, WallpaperTarget target) {
   if (!sdStorageMounted()) {
     return false;
   }
-  File file = SD_MMC.open(pathFor(target), FILE_READ);
+  File file = SD_MMC.open(pathFor(target));
   if (!file) {
     return false;
   }
