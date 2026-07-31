@@ -25,6 +25,7 @@ public:
   bool update();
   bool handleTouch(const TouchPoint &point);
   bool handleMenuButton();
+  bool handlePowerButton();
   bool hasActiveSession() const;
 
 private:
@@ -52,7 +53,7 @@ private:
   };
 
   static const unsigned long FETCH_TIMEOUT_MS = 10000;
-  static const uint8_t RELEVANT_RATE_COUNT = 8;
+  static const uint8_t MAX_RATE_COUNT = 180;
   static const uint8_t VISIBLE_RATE_COUNT = 8;
   static const uint8_t MAX_CRYPTO_COUNT = 30;
   static const uint16_t MAX_HISTORY_POINTS = 300;
@@ -79,10 +80,11 @@ private:
   State state = State::Choice;
   State failedRequest = State::Choice;
   bool requestStarted = false;
+  bool inverseFiatRates = false;
   uint8_t rateCount = 0;
   uint8_t cryptoCount = 0;
   uint16_t listOffset = 0;
-  int8_t selectedRateSlot = -1;
+  int16_t selectedRateSlot = -1;
   int8_t selectedCryptoIndex = -1;
   uint16_t historyCount = 0;
   CryptoRange cryptoRange = CryptoRange::OneDay;
@@ -107,7 +109,7 @@ private:
   void openRate(uint16_t visibleIndex);
   void openCrypto(uint16_t index);
   void setCryptoRange(CryptoRange range);
-  int8_t rateSlotAt(uint16_t visibleIndex) const;
+  int16_t rateSlotAt(uint16_t visibleIndex) const;
   const RateEntry *selectedRate() const;
   const CryptoEntry *selectedCrypto() const;
   void drawChoice(Adafruit_GFX &gfx) const;
@@ -117,6 +119,7 @@ private:
   void drawFiatChart(Adafruit_GFX &gfx) const;
   void drawCryptoList(Adafruit_GFX &gfx) const;
   void drawCryptoChart(Adafruit_GFX &gfx) const;
+  void drawListScrollbar(Adafruit_GFX &gfx, uint16_t itemCount) const;
   void drawPriceChart(Adafruit_GFX &gfx, const char *title,
                       const char *priceText, int16_t bottom) const;
   static void drawHeader(Adafruit_GFX &gfx, const char *left,
@@ -126,6 +129,7 @@ private:
   static void formatRate(float value, char *out, size_t outSize);
   static void formatCryptoPrice(float value, char *out, size_t outSize);
   static void formatAxisRate(float value, char *out, size_t outSize);
+  float displayedFiatRate(float rate) const;
   void setStatus(const char *text);
 };
 

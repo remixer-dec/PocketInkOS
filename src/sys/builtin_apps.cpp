@@ -412,6 +412,9 @@ const AppDefinition builtInApps[] = {
                    .withMenuBtn(dirtyIfHandledMethod<
                                 CurrencyExchangeApp, currencyExchangeApp,
                                 &CurrencyExchangeApp::handleMenuButton>)
+                   .withPowerBtn(dirtyIfHandledMethod<
+                                CurrencyExchangeApp, currencyExchangeApp,
+                                &CurrencyExchangeApp::handlePowerButton>)
                    .withRelease([]() { currencyExchangeApp.release(); })
                    .build())
 #endif

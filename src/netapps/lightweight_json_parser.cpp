@@ -25,6 +25,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
   bool hasPendingKey = false;
   bool expectingValue = false;
   bool hasPendingRaw = false;
+  bool documentComplete = false;
   int pendingRaw = 0;
   int unicodeRemaining = 0;
   int depth = 0;
@@ -33,10 +34,12 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
   int tokenLen = 0;
   char token[TOKEN_SIZE] = "";
   char currentKey[KEY_SIZE] = "";
-  unsigned long startedAt = millis();
-  unsigned long lastReadAt = startedAt;
+  unsigned long lastReadAt = millis();
 
-  while (millis() - startedAt < timeoutMs && bytes < maxBytes) {
+  while (bytes < maxBytes) {
+    if (documentComplete && !hasPendingRaw) {
+      break;
+    }
     if (expectedSize >= 0 && bytes >= expectedSize && !hasPendingRaw) {
       break;
     }
@@ -47,8 +50,10 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
       hasPendingRaw = false;
     } else {
       if (stream->available() <= 0) {
-        if (expectedSize < 0 && bytes > 0 && millis() - lastReadAt > 750) {
-          break;
+        const unsigned long idleMs = millis() - lastReadAt;
+        if (idleMs >= timeoutMs) {
+          setError(error, errorSize, "JSON timeout");
+          return false;
         }
         delay(1);
         continue;
@@ -90,6 +95,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
         token[tokenLen] = '\0';
         if (stringIsValue) {
           listener.onStringValue(depth, currentKey, token);
+          documentComplete = depth == 0;
           expectingValue = false;
           currentKey[0] = '\0';
         } else {
@@ -130,10 +136,15 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
       char numberText[64];
       size_t numberLength = 1;
       numberText[0] = c;
-      while (millis() - startedAt < timeoutMs && bytes < maxBytes) {
+      while (bytes < maxBytes) {
         if (expectedSize >= 0 && bytes >= expectedSize)
           break;
         if (stream->available() <= 0) {
+          const unsigned long idleMs = millis() - lastReadAt;
+          if (idleMs >= timeoutMs) {
+            setError(error, errorSize, "JSON timeout");
+            return false;
+          }
           delay(1);
           continue;
         }
@@ -141,6 +152,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
         if (next < 0)
           continue;
         bytes++;
+        lastReadAt = millis();
         const char digit = static_cast<char>(next);
         const bool numberCharacter =
             (digit >= '0' && digit <= '9') || digit == '.' || digit == 'e' ||
@@ -164,6 +176,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
         return false;
       }
       listener.onNumericValue(depth, currentKey, value);
+      documentComplete = depth == 0;
       expectingValue = false;
       currentKey[0] = '\0';
       continue;
@@ -195,6 +208,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
 
     if (c == '}') {
       listener.onObjectEnd(depth);
+      documentComplete = depth == 1;
       if (depth > 0) {
         depth--;
       }
@@ -205,6 +219,7 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
 
     if (c == ']') {
       listener.onArrayEnd(depth);
+      documentComplete = depth == 1;
       if (depth > 0) {
         depth--;
       }
@@ -216,20 +231,34 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
     if (c == 'n' || c == 't' || c == 'f') {
       const char *suffix = c == 'n' ? "ull" : (c == 't' ? "rue" : "alse");
       for (size_t i = 0; suffix[i] != '\0'; i++) {
-        while (stream->available() <= 0 &&
-               millis() - startedAt < timeoutMs)
+        if (bytes >= maxBytes) {
+          setError(error, errorSize, "JSON clipped");
+          return false;
+        }
+        if (expectedSize >= 0 && bytes >= expectedSize) {
+          setError(error, errorSize, "Invalid JSON literal");
+          return false;
+        }
+        while (stream->available() <= 0) {
+          if (millis() - lastReadAt >= timeoutMs) {
+            setError(error, errorSize, "JSON timeout");
+            return false;
+          }
           delay(1);
+        }
         const int next = stream->read();
         if (next < 0 || static_cast<char>(next) != suffix[i]) {
           setError(error, errorSize, "Invalid JSON literal");
           return false;
         }
         bytes++;
+        lastReadAt = millis();
       }
       if (c == 'n')
         listener.onNullValue(depth, currentKey);
       else
         listener.onBooleanValue(depth, currentKey, c == 't');
+      documentComplete = depth == 0;
       expectingValue = false;
       currentKey[0] = '\0';
       continue;
@@ -243,10 +272,6 @@ bool LightweightJsonParser::parse(Stream *stream, int expectedSize,
 
   if (bytes >= maxBytes) {
     setError(error, errorSize, "JSON clipped");
-    return false;
-  }
-  if (millis() - startedAt >= timeoutMs) {
-    setError(error, errorSize, "JSON timeout");
     return false;
   }
   if (inString || depth != 0) {

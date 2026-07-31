@@ -26,35 +26,18 @@ constexpr char kLatestRatesUrl[] =
 constexpr char kHistoryRatesUrl[] =
     "https://api.frankfurter.dev/v2/rates?base=USD&quotes=%s&from=%s&to=%s";
 constexpr char kCryptoMarketsUrl[] =
-    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=USD";
+    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=USD&"
+    "per_page=30&page=1&sparkline=false";
 constexpr char kCryptoHistoryUrl[] =
     "https://api.coingecko.com/api/v3/coins/%s/market_chart?"
     "vs_currency=USD&days=%u";
-constexpr const char *kRelevantCurrencies[] = {
-    "EUR", "JPY", "GBP", "CNY", "CAD", "AUD", "CHF", "HKD",
-};
-
 constexpr int16_t kChoiceY = 54;
 constexpr int16_t kChoiceRowHeight = 52;
 constexpr int16_t kListY = 22;
 constexpr int16_t kRateRowHeight = 22;
 constexpr int16_t kListHeight = EPD_HEIGHT - kListY;
-constexpr int16_t kCryptoListSplitX = 180;
-constexpr int16_t kCryptoPriceRightX = 174;
-
-int8_t relevantCurrencyIndex(const char *quote) {
-  if (quote == nullptr) {
-    return -1;
-  }
-  for (uint8_t index = 0;
-       index < sizeof(kRelevantCurrencies) / sizeof(kRelevantCurrencies[0]);
-       index++) {
-    if (strcmp(quote, kRelevantCurrencies[index]) == 0) {
-      return static_cast<int8_t>(index);
-    }
-  }
-  return -1;
-}
+constexpr int16_t kListSplitX = 180;
+constexpr int16_t kListValueRightX = 174;
 
 void copyText(char *out, size_t outSize, const char *value) {
   if (out == nullptr || outSize == 0) {
@@ -122,8 +105,9 @@ const char *shortDate(const char *date) {
 
 class CurrencyRatesJsonListener : public JsonStreamListener {
 public:
-  explicit CurrencyRatesJsonListener(CurrencyExchangeApp::RateEntry *target)
-      : rates(target) {}
+  CurrencyRatesJsonListener(CurrencyExchangeApp::RateEntry *target,
+                            uint8_t capacity)
+      : rates(target), maxRates(capacity) {}
 
   void onObjectStart(int depth, const char *) override {
     if (depth != 2) {
@@ -136,14 +120,10 @@ public:
   }
 
   void onObjectEnd(int depth) override {
-    if (depth != 2 || !hasRate) {
+    if (depth != 2 || !hasRate || quote[0] == '\0' || count >= maxRates) {
       return;
     }
-    const int8_t slot = relevantCurrencyIndex(quote);
-    if (slot < 0) {
-      return;
-    }
-    CurrencyExchangeApp::RateEntry &entry = rates[slot];
+    CurrencyExchangeApp::RateEntry &entry = rates[count++];
     entry.rate = rate;
     copyText(entry.quote, sizeof(entry.quote), quote);
     copyText(entry.date, sizeof(entry.date), date);
@@ -168,8 +148,11 @@ public:
     }
   }
 
+  uint8_t count = 0;
+
 private:
   CurrencyExchangeApp::RateEntry *rates;
+  uint8_t maxRates;
   float rate = 0.0f;
   char date[11] = "";
   char quote[4] = "";
@@ -331,6 +314,7 @@ void CurrencyExchangeApp::reset() {
   state = State::Choice;
   failedRequest = State::Choice;
   requestStarted = false;
+  inverseFiatRates = false;
   listOffset = 0;
   selectedRateSlot = -1;
   selectedCryptoIndex = -1;
@@ -372,7 +356,7 @@ bool CurrencyExchangeApp::hasActiveSession() const {
 bool CurrencyExchangeApp::ensureRateStorage() {
   if (rates == nullptr) {
     rates = static_cast<RateEntry *>(
-        psram::allocate(sizeof(RateEntry) * RELEVANT_RATE_COUNT));
+        psram::allocate(sizeof(RateEntry) * MAX_RATE_COUNT));
   }
   return rates != nullptr;
 }
@@ -395,7 +379,7 @@ bool CurrencyExchangeApp::ensureHistoryStorage() {
 
 void CurrencyExchangeApp::clearRates() {
   if (rates != nullptr) {
-    for (uint8_t i = 0; i < RELEVANT_RATE_COUNT; i++) {
+    for (uint8_t i = 0; i < MAX_RATE_COUNT; i++) {
       rates[i] = RateEntry();
     }
   }
@@ -533,14 +517,14 @@ bool CurrencyExchangeApp::handleTouch(const TouchPoint &point) {
   }
 
   uint16_t nextOffset = listOffset;
+  const uint16_t itemCount = fiatList ? rateCount : cryptoCount;
   const UiListTouchResult result = uiListHandleTouch(
-      point, fiatList ? rateCount : cryptoCount, VISIBLE_RATE_COUNT, kListY,
-      kRateRowHeight, kListHeight,
-      fiatList ? EPD_WIDTH : kCryptoListSplitX, nextOffset);
+      point, itemCount, VISIBLE_RATE_COUNT, kListY, kRateRowHeight,
+      kListHeight, kListSplitX, nextOffset);
   if (result.action == UiListTouchAction::Scroll) {
     const int8_t pageRemainder =
         static_cast<int8_t>(VISIBLE_RATE_COUNT - 1);
-    uiListScrollBy(nextOffset, cryptoCount, VISIBLE_RATE_COUNT,
+    uiListScrollBy(nextOffset, itemCount, VISIBLE_RATE_COUNT,
                    point.y < kListY + kListHeight / 2 ? -pageRemainder
                                                      : pageRemainder);
     listOffset = nextOffset;
@@ -585,6 +569,22 @@ bool CurrencyExchangeApp::handleMenuButton() {
   return false;
 }
 
+bool CurrencyExchangeApp::handlePowerButton() {
+  if (state != State::FiatList && state != State::FiatChart) {
+    return false;
+  }
+
+  inverseFiatRates = !inverseFiatRates;
+  if (state == State::FiatChart && historyRates != nullptr) {
+    for (uint16_t i = 0; i < historyCount; i++) {
+      if (historyRates[i] > 0.0f) {
+        historyRates[i] = 1.0f / historyRates[i];
+      }
+    }
+  }
+  return true;
+}
+
 bool CurrencyExchangeApp::fetchRates() {
   if (WiFi.status() != WL_CONNECTED) {
     setStatus("WiFi not connected");
@@ -600,6 +600,9 @@ bool CurrencyExchangeApp::fetchRates() {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
+  // getStreamPtr() exposes HTTP/1.1 chunk framing. Request connection-close
+  // responses so the JSON parser receives only the response body.
+  http.useHTTP10(true);
   http.setTimeout(FETCH_TIMEOUT_MS);
   if (!http.begin(client, kLatestRatesUrl)) {
     setStatus("HTTP setup failed");
@@ -613,19 +616,16 @@ bool CurrencyExchangeApp::fetchRates() {
     return false;
   }
 
-  CurrencyRatesJsonListener listener(rates);
+  CurrencyRatesJsonListener listener(rates, MAX_RATE_COUNT);
   LightweightJsonParser parser;
   const bool parsed =
       parser.parse(http.getStreamPtr(), http.getSize(), FETCH_TIMEOUT_MS,
                    MAX_RATES_JSON_BYTES, listener, status, sizeof(status));
   http.end();
 
-  for (uint8_t i = 0; i < RELEVANT_RATE_COUNT; i++) {
-    if (!rates[i].valid) {
-      continue;
-    }
-    rateCount++;
-    if (latestDate[0] == '\0') {
+  rateCount = listener.count;
+  for (uint8_t i = 0; i < rateCount; i++) {
+    if (latestDate[0] == '\0' || strcmp(rates[i].date, latestDate) > 0) {
       copyText(latestDate, sizeof(latestDate), rates[i].date);
     }
   }
@@ -633,7 +633,7 @@ bool CurrencyExchangeApp::fetchRates() {
     return false;
   }
   if (rateCount == 0 || latestDate[0] == '\0') {
-    setStatus("No relevant rates");
+    setStatus("No rates available");
     return false;
   }
   return true;
@@ -672,6 +672,7 @@ bool CurrencyExchangeApp::fetchFiatHistory() {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
+  http.useHTTP10(true);
   http.setTimeout(FETCH_TIMEOUT_MS);
   if (!http.begin(client, url)) {
     setStatus("HTTP setup failed");
@@ -695,6 +696,11 @@ bool CurrencyExchangeApp::fetchFiatHistory() {
   historyCount = listener.count;
   copyText(historyFirstDate, sizeof(historyFirstDate), listener.firstDate);
   copyText(historyLastDate, sizeof(historyLastDate), listener.lastDate);
+  if (inverseFiatRates) {
+    for (uint16_t i = 0; i < historyCount; i++) {
+      historyRates[i] = displayedFiatRate(historyRates[i]);
+    }
+  }
   if (!parsed && historyCount == 0) {
     return false;
   }
@@ -719,13 +725,14 @@ bool CurrencyExchangeApp::fetchCryptoMarkets() {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
+  http.useHTTP10(true);
+  http.setUserAgent("PocketInk/1.0");
   http.setTimeout(FETCH_TIMEOUT_MS);
   if (!http.begin(client, kCryptoMarketsUrl)) {
     setStatus("HTTP setup failed");
     return false;
   }
   http.addHeader("Accept", "application/json");
-  http.addHeader("User-Agent", "PocketInk/1.0");
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
     setStatus(code == 429 ? "CoinGecko rate limit" : "Markets request failed");
@@ -780,13 +787,14 @@ bool CurrencyExchangeApp::fetchCryptoHistory() {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
+  http.useHTTP10(true);
+  http.setUserAgent("PocketInk/1.0");
   http.setTimeout(FETCH_TIMEOUT_MS);
   if (!http.begin(client, url)) {
     setStatus("HTTP setup failed");
     return false;
   }
   http.addHeader("Accept", "application/json");
-  http.addHeader("User-Agent", "PocketInk/1.0");
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
     setStatus(code == 429 ? "CoinGecko rate limit" : "History request failed");
@@ -813,7 +821,7 @@ bool CurrencyExchangeApp::fetchCryptoHistory() {
 }
 
 void CurrencyExchangeApp::openRate(uint16_t visibleIndex) {
-  const int8_t slot = rateSlotAt(visibleIndex);
+  const int16_t slot = rateSlotAt(visibleIndex);
   if (slot < 0) {
     return;
   }
@@ -841,26 +849,17 @@ void CurrencyExchangeApp::setCryptoRange(CryptoRange range) {
   state = State::LoadingCryptoHistory;
 }
 
-int8_t CurrencyExchangeApp::rateSlotAt(uint16_t visibleIndex) const {
-  if (rates == nullptr) {
+int16_t CurrencyExchangeApp::rateSlotAt(uint16_t visibleIndex) const {
+  if (rates == nullptr || visibleIndex >= rateCount) {
     return -1;
   }
-  uint16_t currentVisible = 0;
-  for (uint8_t slot = 0; slot < RELEVANT_RATE_COUNT; slot++) {
-    if (!rates[slot].valid) {
-      continue;
-    }
-    if (currentVisible++ == visibleIndex) {
-      return static_cast<int8_t>(slot);
-    }
-  }
-  return -1;
+  return static_cast<int16_t>(visibleIndex);
 }
 
 const CurrencyExchangeApp::RateEntry *
 CurrencyExchangeApp::selectedRate() const {
   if (rates == nullptr || selectedRateSlot < 0 ||
-      selectedRateSlot >= static_cast<int8_t>(RELEVANT_RATE_COUNT) ||
+      selectedRateSlot >= static_cast<int16_t>(rateCount) ||
       !rates[selectedRateSlot].valid) {
     return nullptr;
   }
@@ -892,8 +891,13 @@ void CurrencyExchangeApp::drawLoading(Adafruit_GFX &gfx) const {
   } else if (state == State::LoadingFiatHistory) {
     const RateEntry *entry = selectedRate();
     drawHeader(gfx, "USD RATES", latestDate);
-    snprintf(text, sizeof(text), "Loading USD/%s...",
-             entry != nullptr ? entry->quote : "---");
+    if (inverseFiatRates) {
+      snprintf(text, sizeof(text), "Loading %s/USD...",
+               entry != nullptr ? entry->quote : "---");
+    } else {
+      snprintf(text, sizeof(text), "Loading USD/%s...",
+               entry != nullptr ? entry->quote : "---");
+    }
   } else if (state == State::LoadingCryptoMarkets) {
     drawHeader(gfx, "CRYPTO USD", "TOP 30");
     copyText(text, sizeof(text), "Loading markets...");
@@ -923,7 +927,7 @@ void CurrencyExchangeApp::drawFailed(Adafruit_GFX &gfx) const {
 }
 
 void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
-  drawHeader(gfx, "USD RATES", latestDate);
+  drawHeader(gfx, inverseFiatRates ? "1 UNIT = USD" : "1 USD =", latestDate);
   if (rates == nullptr || rateCount == 0) {
     drawCentered(gfx, "No rates", 94);
     return;
@@ -934,7 +938,7 @@ void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
           ? static_cast<uint8_t>(rateCount - listOffset)
           : VISIBLE_RATE_COUNT;
   for (uint8_t row = 0; row < visible; row++) {
-    const int8_t slot = rateSlotAt(listOffset + row);
+    const int16_t slot = rateSlotAt(listOffset + row);
     if (slot < 0) {
       continue;
     }
@@ -944,13 +948,21 @@ void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
     gfx.print(entry.quote);
 
     char rateText[16] = "";
-    formatRate(entry.rate, rateText, sizeof(rateText));
-    drawRightText(gfx, rateText, y + 7);
+    formatRate(displayedFiatRate(entry.rate), rateText, sizeof(rateText));
+    int16_t x1 = 0;
+    int16_t y1 = 0;
+    uint16_t width = 0;
+    uint16_t height = 0;
+    gfx.getTextBounds(rateText, 0, y + 7, &x1, &y1, &width, &height);
+    gfx.setCursor(kListValueRightX - static_cast<int16_t>(width) - x1,
+                  y + 7);
+    gfx.print(rateText);
     if (row + 1 < visible) {
-      gfx.drawLine(4, y + kRateRowHeight - 1, EPD_WIDTH - 4,
+      gfx.drawLine(4, y + kRateRowHeight - 1, kListSplitX - 5,
                    y + kRateRowHeight - 1, 1);
     }
   }
+  drawListScrollbar(gfx, rateCount);
 }
 
 void CurrencyExchangeApp::drawFiatChart(Adafruit_GFX &gfx) const {
@@ -961,9 +973,13 @@ void CurrencyExchangeApp::drawFiatChart(Adafruit_GFX &gfx) const {
   }
 
   char title[12] = "";
-  snprintf(title, sizeof(title), "USD/%s", entry->quote);
+  if (inverseFiatRates) {
+    snprintf(title, sizeof(title), "%s/USD", entry->quote);
+  } else {
+    snprintf(title, sizeof(title), "USD/%s", entry->quote);
+  }
   char rateText[16] = "";
-  formatRate(entry->rate, rateText, sizeof(rateText));
+  formatRate(displayedFiatRate(entry->rate), rateText, sizeof(rateText));
   drawPriceChart(gfx, title, rateText, 164);
   gfx.setCursor(45, 174);
   gfx.print(shortDate(historyFirstDate));
@@ -997,21 +1013,36 @@ void CurrencyExchangeApp::drawCryptoList(Adafruit_GFX &gfx) const {
     uint16_t width = 0;
     uint16_t height = 0;
     gfx.getTextBounds(priceText, 0, y + 7, &x1, &y1, &width, &height);
-    gfx.setCursor(kCryptoPriceRightX - static_cast<int16_t>(width) - x1,
+    gfx.setCursor(kListValueRightX - static_cast<int16_t>(width) - x1,
                   y + 7);
     gfx.print(priceText);
     if (row + 1 < visible) {
-      gfx.drawLine(4, y + kRateRowHeight - 1, kCryptoListSplitX - 5,
+      gfx.drawLine(4, y + kRateRowHeight - 1, kListSplitX - 5,
                    y + kRateRowHeight - 1, 1);
     }
+  }
+
+  drawListScrollbar(gfx, cryptoCount);
+}
+
+void CurrencyExchangeApp::drawListScrollbar(Adafruit_GFX &gfx,
+                                             uint16_t itemCount) const {
+  if (itemCount == 0) {
+    return;
   }
 
   const int16_t trackTop = kListY + 4;
   const int16_t trackHeight = kListHeight - 8;
   const uint16_t maxOffset =
-      uiListMaxOffset(cryptoCount, VISIBLE_RATE_COUNT);
-  const int16_t thumbHeight = static_cast<int16_t>(
-      static_cast<int32_t>(trackHeight) * VISIBLE_RATE_COUNT / cryptoCount);
+      uiListMaxOffset(itemCount, VISIBLE_RATE_COUNT);
+  int16_t thumbHeight = itemCount <= VISIBLE_RATE_COUNT
+                            ? trackHeight
+                            : static_cast<int16_t>(
+                                  static_cast<int32_t>(trackHeight) *
+                                  VISIBLE_RATE_COUNT / itemCount);
+  if (thumbHeight < 8) {
+    thumbHeight = 8;
+  }
   const int16_t thumbTravel = trackHeight - thumbHeight;
   const int16_t thumbTop =
       maxOffset == 0
@@ -1019,6 +1050,7 @@ void CurrencyExchangeApp::drawCryptoList(Adafruit_GFX &gfx) const {
           : static_cast<int16_t>(
                 trackTop + static_cast<int32_t>(thumbTravel) * listOffset /
                                maxOffset);
+  gfx.drawLine(kListSplitX, kListY, kListSplitX, EPD_HEIGHT - 1, 1);
   gfx.drawLine(190, trackTop, 190, trackTop + trackHeight - 1, 1);
   gfx.fillRect(188, thumbTop, 5, thumbHeight, 1);
 }
@@ -1144,7 +1176,9 @@ void CurrencyExchangeApp::formatCryptoPrice(float value, char *out,
 
 void CurrencyExchangeApp::formatAxisRate(float value, char *out,
                                          size_t outSize) {
-  if (value >= 100.0f) {
+  if (value >= 1000.0f) {
+    snprintf(out, outSize, "%.0f", value);
+  } else if (value >= 100.0f) {
     snprintf(out, outSize, "%.1f", value);
   } else if (value >= 10.0f) {
     snprintf(out, outSize, "%.2f", value);
@@ -1155,6 +1189,10 @@ void CurrencyExchangeApp::formatAxisRate(float value, char *out,
   } else {
     snprintf(out, outSize, "%.3g", static_cast<double>(value));
   }
+}
+
+float CurrencyExchangeApp::displayedFiatRate(float rate) const {
+  return inverseFiatRates && rate > 0.0f ? 1.0f / rate : rate;
 }
 
 void CurrencyExchangeApp::setStatus(const char *text) {
