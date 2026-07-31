@@ -22,30 +22,37 @@ git -C ggml apply ../patches/ggml/*.patch
 TTS is optional. Enable it explicitly:
 
 ```bash
-WITH_TTS=1 bin/app.sh
-```
-
-Equivalent flag:
-
-```bash
 ENABLE_TTS=1 bin/app.sh
 ```
 
 Container syntax check:
 
 ```bash
-WITH_TTS=1 tools/container-compile.sh
+ENABLE_TTS=1 tools/container-compile.sh
 ```
 
 ## Runtime Assets
 
-Place model and dictionary files on the SD card:
+V2 is preferred automatically when both of these files are present:
 
 ```text
-/sdcard/tts/acoustic/inflect_acoustic_q4_0_E.gguf
-/sdcard/tts/vocoder/inflect_vocoder_q4_0_E.gguf
-/sdcard/tts/cmudict.bin
-/sdcard/tts/cmudict.idx
+/sdcard/tts/InflectV2/inflect_nano_v2_q4_0.gguf
+/sdcard/tts/InflectV2/lexicon.bin
+```
+
+The Micro Q4_0 model is also recognized as
+`/sdcard/tts/InflectV2/inflect_micro_v2_q4_0.gguf`. To use another quant or
+choose between Nano and Micro when both are installed, name the selected GGUF
+`/sdcard/tts/InflectV2/model.gguf`.
+
+The existing V1 layout remains supported and is used when a complete V2 pair
+is not installed:
+
+```text
+/sdcard/tts/InflectV1/acoustic/inflect_acoustic_q4_0_E.gguf
+/sdcard/tts/InflectV1/vocoder/inflect_vocoder_q4_0_E.gguf
+/sdcard/tts/InflectV1/cmudict.bin
+/sdcard/tts/InflectV1/cmudict.idx
 ```
 
 `cmudict.bin` is the compiled pronunciation dictionary. `cmudict.idx` is its index file and is required for fast dictionary initialization.
@@ -58,7 +65,6 @@ Default TTS flags are set by `bin/app.sh` and `tools/container-compile.sh`:
 INFLECT_LOW_MEMORY=1
 INFLECT_USE_ESP_DSP_CONTIG=0
 INFLECT_USE_ESP_DSP_STRIDED=1
-INFLECT_USE_RESBLOCK_IM2COL=1
 INFLECT_VOCODER_BACKEND=neural
 INFLECT_GRIFFIN_LIM_ITERS=8
 INFLECT_PROFILE_ACOUSTIC_OPS=0
@@ -66,7 +72,10 @@ INFLECT_PROFILE_VOCODER_OPS=0
 INFLECT_ACOUSTIC_SKIP_POSTNET=0
 ```
 
-Set any of these in the environment before running the build script to override the default.
+The low-memory build always enables resblock im2col, packed quantized dot
+products with cached scales, and the ESP32-S3 S8 SIMD kernel. Set any flag
+listed above in the environment before running the build script to override
+its default.
 
 ## Measured Performance
 

@@ -2,7 +2,9 @@
 #include "sys/psram_allocator.h"
 
 #include "shell/shell_home_layout.h"
+#include "shell/wallpaper.h"
 #include "sys/app_config.h"
+#include "sys/audio/notification_sound.h"
 #include "sys/builtin_apps.h"
 #include "sys/global.h"
 #include "sys/services/device_controls.h"
@@ -78,12 +80,15 @@ enum SettingId : uint8_t {
   SETTING_AUDIO_PLAYER_LAYOUT,
   SETTING_HOME_SUN_BUTTON,
   SETTING_HOME_WIDGETS,
+  SETTING_HOME_TEXT_COLOR,
+  SETTING_HOME_REMOVE_WALLPAPER,
   SETTING_LOCKSCREEN_WIDGET,
   SETTING_LOCKSCREEN_ICON,
   SETTING_LOCKSCREEN_DATE,
   SETTING_LOCKSCREEN_INACTIVITY,
   SETTING_NOTIFICATION_MODE,
   SETTING_NOTIFICATION_RINGTONE,
+  SETTING_LOCKSCREEN_REMOVE_WALLPAPER,
 };
 
 enum class SettingKind : uint8_t {
@@ -95,6 +100,7 @@ enum class SettingKind : uint8_t {
   AppPicker,
   ReadOnly,
   Reserved,
+  Action,
 };
 
 struct SettingOption {
@@ -198,6 +204,10 @@ const SettingOption kNotificationModeOptions[] = {
     {"OFF", "off"},
     {"SILENT", "silent"},
     {"ON", "on"},
+};
+const SettingOption kHomeTextColorOptions[] = {
+    {"Black", "black"},
+    {"White", "white"},
 };
 const SettingOption kNotificationRingtoneOptions[] = {
     {"Chime", "chime"},
@@ -311,6 +321,13 @@ const SettingDefinition kGeneralSettings[] = {
 };
 
 const SettingDefinition kHomeSettings[] = {
+    {SETTING_HOME_TEXT_COLOR, "Text color", "home.textColor",
+     SettingKind::Options, kHomeTextColorOptions,
+     static_cast<uint8_t>(sizeof(kHomeTextColorOptions) /
+                          sizeof(kHomeTextColorOptions[0])),
+     0},
+    {SETTING_HOME_REMOVE_WALLPAPER, "Remove wallpaper", nullptr,
+     SettingKind::Action, nullptr, 0, 0},
     {SETTING_HOME_SUN_BUTTON, "SUN button app", "home.sunBtnApp",
      SettingKind::AppPicker, nullptr, 0, 32},
     {SETTING_HOME_WIDGETS, "Widgets", "home.widgets", SettingKind::MultiSelect,
@@ -318,6 +335,8 @@ const SettingDefinition kHomeSettings[] = {
 };
 
 const SettingDefinition kLockscreenSettings[] = {
+    {SETTING_LOCKSCREEN_REMOVE_WALLPAPER, "Remove wallpaper", nullptr,
+     SettingKind::Action, nullptr, 0, 0},
     {SETTING_LOCKSCREEN_INACTIVITY, "On inactivity",
      "lockscreen.inactivityMinutes", SettingKind::Options,
      nullptr, kInactivityOptionCount,
@@ -937,6 +956,8 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
       label = setting.label;
       if (setting.kind == SettingKind::Reserved) {
         value = "reserved";
+      } else if (setting.kind == SettingKind::Action) {
+        value = ">";
       } else if (setting.kind == SettingKind::ReadOnly) {
         snprintf(pickerLabel, sizeof(pickerLabel), "%u%%",
                  static_cast<unsigned>(PERIODIC_LOW_BATTERY_PERCENT));
@@ -1194,6 +1215,12 @@ void SettingsApp::activateListIndex(uint16_t index) {
     const SettingDefinition &setting = settings[index];
     if (setting.kind == SettingKind::Reserved) {
       showPopup("RESERVED");
+    } else if (setting.kind == SettingKind::Action) {
+      const WallpaperTarget target =
+          setting.id == SETTING_HOME_REMOVE_WALLPAPER
+              ? WallpaperTarget::Home
+              : WallpaperTarget::Lockscreen;
+      showPopup(wallpaperResultMessage(removeWallpaper(target)));
     } else if (setting.kind == SettingKind::ReadOnly) {
       showPopup("FIXED AT 15%");
     } else if (setting.kind == SettingKind::Options) {
@@ -1371,6 +1398,9 @@ void SettingsApp::saveSetting(const char *value) {
     if (setting->id == SETTING_CPU_GOVERNOR ||
         setting->id == SETTING_CPU_MHZ) {
       deviceControlsApplyConfig();
+    }
+    if (setting->id == SETTING_NOTIFICATION_RINGTONE) {
+      playNotificationSound(currentSystemConfig().notifications.ringtone);
     }
   }
   releaseInput();

@@ -51,7 +51,8 @@ void drawMenuTitle(AppDisplay &display, const MenuState &state) {
   uint16_t titleW;
   uint16_t titleH;
   display.getTextBounds(title, 0, 10, &titleX, &titleY, &titleW, &titleH);
-  display.setCursor((EPD_WIDTH - titleW) / 2, 10);
+  display.setCursor((EPD_WIDTH - static_cast<int16_t>(titleW)) / 2 - titleX,
+                    10);
   display.print(title);
 }
 
@@ -180,8 +181,8 @@ void moveMenuNext(MenuState &state) {
 void drawAppMenu(AppDisplay &display, const MenuState &state,
                  int8_t pressedSlot) {
   display.setTextColor(1);
-  uiDrawBorderlessIconButton(display, {4, 0, 39, 28}, '<');
-  uiDrawBorderlessIconButton(display, {157, 0, 39, 28}, '>');
+  uiDrawBorderlessIconButton(display, {4, 4, 39, 26}, '<');
+  uiDrawBorderlessIconButton(display, {157, 4, 39, 26}, '>');
   drawMenuTitle(display, state);
 
   for (uint8_t slot = 0; slot < MENU_GRID_SIZE; slot++) {

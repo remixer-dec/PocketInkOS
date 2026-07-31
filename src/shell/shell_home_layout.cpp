@@ -21,6 +21,7 @@ ShellLayoutConfig shellConfig = {
     SHELL_LAYOUT_DEFAULT,
     SHELL_TEMP_CELSIUS,
     SHELL_WIDGETS_DEFAULT,
+    1,
 };
 
 bool asciiEqualIgnoreCase(const char *a, const char *b) {
@@ -127,6 +128,7 @@ void resetShellConfigDefaults() {
   shellConfig.layout = SHELL_LAYOUT_DEFAULT;
   shellConfig.temperatureUnit = SHELL_TEMP_CELSIUS;
   shellConfig.homeWidgets = SHELL_WIDGETS_DEFAULT;
+  shellConfig.homeTextColor = 1;
 }
 
 float displayTemperature(float celsius) {
@@ -193,6 +195,9 @@ void shellHomeLayoutConfigReload() {
   if (configGet("home.widgets", value, sizeof(value))) {
     shellConfig.homeWidgets = parseWidgetMask(value, shellConfig.homeWidgets);
   }
+  if (configGet("home.textColor", value, sizeof(value))) {
+    shellConfig.homeTextColor = asciiEqualIgnoreCase(value, "white") ? 0 : 1;
+  }
 }
 
 void shellLayoutConfigReload() {
@@ -208,7 +213,7 @@ bool shellHomeWidgetEnabled(uint16_t widget) {
 
 void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   drawWallpaper(display, WallpaperTarget::Home);
-  display.setTextColor(1);
+  display.setTextColor(shellConfig.homeTextColor);
 
   int16_t titleX = 0;
   int16_t titleY = 0;
@@ -235,6 +240,9 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   }
 
   drawStatusBar(display, data.status);
+  // The status bar owns its black foreground; restore the user's home-only
+  // color before drawing wallpaper-facing content below it.
+  display.setTextColor(shellConfig.homeTextColor);
 
   HomeTextColumn leftColumn = {4, 22, 12, false};
   HomeTextColumn rightColumn = {EPD_WIDTH - 4, 22, 12, true};

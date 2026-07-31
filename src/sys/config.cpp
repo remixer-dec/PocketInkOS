@@ -223,6 +223,10 @@ bool validSystemValue(const char *key, const char *value) {
            asciiEqualIgnoreCase(value, "ascend") ||
            asciiEqualIgnoreCase(value, "knock");
   }
+  if (strcmp(key, "home.textColor") == 0) {
+    return asciiEqualIgnoreCase(value, "black") ||
+           asciiEqualIgnoreCase(value, "white");
+  }
   if (strcmp(key, "cpu.mhz") == 0) {
     uint16_t mhz = 0;
     return parseUnsignedRange(value, 80, 240, mhz) &&
@@ -262,6 +266,8 @@ void resetSystemDefaults() {
             "contact_links");
   copyValue(currentConfig.home.widgets, sizeof(currentConfig.home.widgets),
             "temp,hum,cpuTemp,sd,battery,logoText,buttonHelp");
+  copyValue(currentConfig.home.textColor,
+            sizeof(currentConfig.home.textColor), "black");
   copyValue(currentConfig.layout, sizeof(currentConfig.layout), "default");
   copyValue(currentConfig.audioPlayerLayout,
             sizeof(currentConfig.audioPlayerLayout), "controls");
@@ -311,6 +317,8 @@ const StringConfigField *stringConfigField(const char *key) {
        sizeof(currentConfig.home.sunBtnApp)},
       {"home.widgets", currentConfig.home.widgets,
        sizeof(currentConfig.home.widgets)},
+      {"home.textColor", currentConfig.home.textColor,
+       sizeof(currentConfig.home.textColor)},
       {"layout", currentConfig.layout, sizeof(currentConfig.layout)},
       {"interface.audioPlayerLayout", currentConfig.audioPlayerLayout,
        sizeof(currentConfig.audioPlayerLayout)},

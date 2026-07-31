@@ -42,6 +42,7 @@ struct ShellLayoutConfig {
   ShellLayoutMode layout = SHELL_LAYOUT_DEFAULT;
   ShellTemperatureUnit temperatureUnit = SHELL_TEMP_CELSIUS;
   uint16_t homeWidgets = 0;
+  uint16_t homeTextColor = 1;
 };
 
 /// Live data passed into shell renderers for one frame.

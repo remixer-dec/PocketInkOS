@@ -148,11 +148,12 @@ static const uint32_t kEpubBackgroundIndexBudgetUs = 180000;
 static const int8_t kViewerScrollLines = 4;
 static const int16_t kScrollbarX = 198;
 static const int16_t kScrollbarW = 2;
-static const int16_t kViewerOptionsX = 20;
-static const int16_t kViewerOptionsY = 24;
-static const int16_t kViewerOptionsW = 160;
-static const int16_t kViewerOptionsH = 152;
-static const int16_t kViewerOptionsRowH = 28;
+static const int16_t kViewerOptionsX = 10;
+static const int16_t kViewerOptionsY = 8;
+static const int16_t kViewerOptionsW = 180;
+static const int16_t kViewerOptionsH = 184;
+static const int16_t kViewerOptionsHeaderH = 30;
+static const int16_t kViewerOptionsRowH = 29;
 
 bool equalsIgnoreCase(const char *left, const char *right);
 
@@ -1556,7 +1557,11 @@ bool FilesApp::handleViewerTouch(const TouchPoint &point) {
       markListDirty();
       return true;
     }
-    const int16_t row = (point.y - kViewerOptionsY - 18) / kViewerOptionsRowH;
+    const int16_t rowsY = kViewerOptionsY + kViewerOptionsHeaderH;
+    if (point.y < rowsY) {
+      return true;
+    }
+    const int16_t row = (point.y - rowsY) / kViewerOptionsRowH;
     if (row == 0) {
       viewerDither = static_cast<uint8_t>((viewerDither + 1U) & 3U);
     } else if (row == 1) {
@@ -1858,23 +1863,45 @@ void FilesApp::drawViewerOptions(Adafruit_GFX &gfx) {
                kViewerOptionsH, 1);
   gfx.setTextColor(1);
   gfx.setTextSize(1);
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 8);
-  gfx.print("IMAGE");
+  const char *title = "IMAGE OPTIONS";
+  int16_t textX = 0;
+  int16_t textY = 0;
+  uint16_t textW = 0;
+  uint16_t textH = 0;
+  gfx.getTextBounds(title, 0, 0, &textX, &textY, &textW, &textH);
+  gfx.setCursor(kViewerOptionsX +
+                    (kViewerOptionsW - static_cast<int16_t>(textW)) / 2 -
+                    textX,
+                kViewerOptionsY + 10);
+  gfx.print(title);
+  const int16_t rowsY = kViewerOptionsY + kViewerOptionsHeaderH;
+  gfx.drawLine(kViewerOptionsX, rowsY - 1,
+               kViewerOptionsX + kViewerOptionsW - 1, rowsY - 1, 1);
 
-  char line[28];
-  snprintf(line, sizeof(line), "DITHER %s", imageDitherName(viewerDither));
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 28);
-  gfx.print(line);
-  snprintf(line, sizeof(line), "SCALE %s", viewerScaleToFit ? "FIT" : "1:1");
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 56);
-  gfx.print(line);
-  snprintf(line, sizeof(line), "FULL %s", viewerFullscreen ? "ON" : "OFF");
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 84);
-  gfx.print(line);
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 112);
-  gfx.print("SET HOME WALLPAPER");
-  gfx.setCursor(kViewerOptionsX + 8, kViewerOptionsY + 140);
-  gfx.print("SET LOCK WALLPAPER");
+  const char *const labels[] = {"DITHER", "SCALE", "FULLSCREEN",
+                                "HOME WALLPAPER", "LOCK WALLPAPER"};
+  const char *const values[] = {imageDitherName(viewerDither),
+                                viewerScaleToFit ? "FIT" : "1:1",
+                                viewerFullscreen ? "ON" : "OFF", "SET >",
+                                "SET >"};
+  for (uint8_t row = 0; row < 5; row++) {
+    const int16_t rowTop = rowsY + row * kViewerOptionsRowH;
+    const int16_t baseline = rowTop + 11;
+    gfx.setCursor(kViewerOptionsX + 9, baseline);
+    gfx.print(labels[row]);
+
+    gfx.getTextBounds(values[row], 0, baseline, &textX, &textY, &textW,
+                      &textH);
+    gfx.setCursor(kViewerOptionsX + kViewerOptionsW - 9 -
+                      static_cast<int16_t>(textW) - textX,
+                  baseline);
+    gfx.print(values[row]);
+    if (row < 4) {
+      gfx.drawLine(kViewerOptionsX + 7, rowTop + kViewerOptionsRowH - 1,
+                   kViewerOptionsX + kViewerOptionsW - 8,
+                   rowTop + kViewerOptionsRowH - 1, 1);
+    }
+  }
 }
 
 void FilesApp::drawViewerScrollbar(Adafruit_GFX &gfx) const {
