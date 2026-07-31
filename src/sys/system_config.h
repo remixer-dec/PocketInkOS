@@ -100,6 +100,7 @@ struct SystemConfig {
     char sunBtnApp[32];
     char widgets[CONFIG_VALUE_MAX];
     char textColor[6];
+    char widgetGravity[7];
   } home;
 
   char layout[16];

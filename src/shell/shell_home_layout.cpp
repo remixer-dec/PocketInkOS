@@ -22,6 +22,7 @@ ShellLayoutConfig shellConfig = {
     SHELL_TEMP_CELSIUS,
     SHELL_WIDGETS_DEFAULT,
     1,
+    SHELL_WIDGET_GRAVITY_TOP,
 };
 
 bool asciiEqualIgnoreCase(const char *a, const char *b) {
@@ -129,6 +130,7 @@ void resetShellConfigDefaults() {
   shellConfig.temperatureUnit = SHELL_TEMP_CELSIUS;
   shellConfig.homeWidgets = SHELL_WIDGETS_DEFAULT;
   shellConfig.homeTextColor = 1;
+  shellConfig.homeWidgetGravity = SHELL_WIDGET_GRAVITY_TOP;
 }
 
 float displayTemperature(float celsius) {
@@ -198,6 +200,12 @@ void shellHomeLayoutConfigReload() {
   if (configGet("home.textColor", value, sizeof(value))) {
     shellConfig.homeTextColor = asciiEqualIgnoreCase(value, "white") ? 0 : 1;
   }
+  if (configGet("home.widgetGravity", value, sizeof(value))) {
+    shellConfig.homeWidgetGravity =
+        asciiEqualIgnoreCase(value, "bottom")
+            ? SHELL_WIDGET_GRAVITY_BOTTOM
+            : SHELL_WIDGET_GRAVITY_TOP;
+  }
 }
 
 void shellLayoutConfigReload() {
@@ -244,8 +252,28 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   // color before drawing wallpaper-facing content below it.
   display.setTextColor(shellConfig.homeTextColor);
 
-  HomeTextColumn leftColumn = {4, 22, 12, false};
-  HomeTextColumn rightColumn = {EPD_WIDTH - 4, 22, 12, true};
+  constexpr int16_t kWidgetTopY = 22;
+  constexpr int16_t kWidgetBottomY = EPD_HEIGHT - 8;
+  constexpr int16_t kWidgetRowHeight = 12;
+  const uint8_t leftCount =
+      (shellHomeWidgetEnabled(SHELL_WIDGET_BATTERY) ? 1U : 0U) +
+      (shellHomeWidgetEnabled(SHELL_WIDGET_SD) ? 1U : 0U);
+  const uint8_t rightCount =
+      (shellHomeWidgetEnabled(SHELL_WIDGET_TEMP) ? 1U : 0U) +
+      (shellHomeWidgetEnabled(SHELL_WIDGET_HUM) ? 1U : 0U) +
+      (shellHomeWidgetEnabled(SHELL_WIDGET_CPU_TEMP) ? 1U : 0U);
+  const auto columnStartY = [](uint8_t count) {
+    if (shellConfig.homeWidgetGravity == SHELL_WIDGET_GRAVITY_TOP ||
+        count == 0) {
+      return kWidgetTopY;
+    }
+    return static_cast<int16_t>(
+        kWidgetBottomY - (count - 1U) * kWidgetRowHeight);
+  };
+  HomeTextColumn leftColumn = {4, columnStartY(leftCount), kWidgetRowHeight,
+                               false};
+  HomeTextColumn rightColumn = {EPD_WIDTH - 4, columnStartY(rightCount),
+                                kWidgetRowHeight, true};
 
   if (shellHomeWidgetEnabled(SHELL_WIDGET_BATTERY)) {
     char batteryText[20];
@@ -307,7 +335,10 @@ void drawHomeScreen(AppDisplay &display, const ShellData &data) {
   }
 
   if (shellHomeWidgetEnabled(SHELL_WIDGET_BUTTON_HELP)) {
-    drawCenteredText(display, "SUN: contact", 182);
-    drawCenteredText(display, "PWR: apps", 192);
+    const int16_t firstY =
+        shellConfig.homeWidgetGravity == SHELL_WIDGET_GRAVITY_BOTTOM ? 22
+                                                                     : 182;
+    drawCenteredText(display, "SUN: contact", firstY);
+    drawCenteredText(display, "PWR: apps", firstY + 10);
   }
 }

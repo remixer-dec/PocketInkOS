@@ -50,9 +50,9 @@ void drawMenuTitle(AppDisplay &display, const MenuState &state) {
   int16_t titleY;
   uint16_t titleW;
   uint16_t titleH;
-  display.getTextBounds(title, 0, 10, &titleX, &titleY, &titleW, &titleH);
+  display.getTextBounds(title, 0, 12, &titleX, &titleY, &titleW, &titleH);
   display.setCursor((EPD_WIDTH - static_cast<int16_t>(titleW)) / 2 - titleX,
-                    10);
+                    12);
   display.print(title);
 }
 

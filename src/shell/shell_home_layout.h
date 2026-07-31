@@ -20,6 +20,12 @@ enum ShellTemperatureUnit : uint8_t {
   SHELL_TEMP_FAHRENHEIT,
 };
 
+/// Edge used to anchor the compact status widgets on the home screen.
+enum ShellWidgetGravity : uint8_t {
+  SHELL_WIDGET_GRAVITY_TOP,
+  SHELL_WIDGET_GRAVITY_BOTTOM,
+};
+
 /// Bitmask for optional home widgets so low-memory config can stay compact.
 enum ShellWidget : uint16_t {
   SHELL_WIDGET_TEMP = 1U << 0,
@@ -43,6 +49,7 @@ struct ShellLayoutConfig {
   ShellTemperatureUnit temperatureUnit = SHELL_TEMP_CELSIUS;
   uint16_t homeWidgets = 0;
   uint16_t homeTextColor = 1;
+  ShellWidgetGravity homeWidgetGravity = SHELL_WIDGET_GRAVITY_TOP;
 };
 
 /// Live data passed into shell renderers for one frame.
