@@ -6,6 +6,7 @@
 #include "sys/services/wifi_manager.h"
 #include "sys/services/touch_input.h"
 #include "ui/components/t9_keyboard_component.h"
+#include "ui/system_qr.h"
 #include "ui/ui_helpers.h"
 
 struct WifiPingSlot;
@@ -98,6 +99,9 @@ private:
   bool scanDone = false;
   bool popupOpen = false;
   bool popupConfirm = false;
+  bool tetherPopupOpen = false;
+  bool tetherQrOpen = false;
+  SystemQrCode tetherQr;
   UiPressFeedback press;
   bool scanRequested = false;
   bool scanPending = false;
@@ -167,6 +171,7 @@ private:
   void drawNetworkDeviceRow(Adafruit_GFX &gfx, uint16_t index,
                             uint8_t row) const;
   void drawPopup(Adafruit_GFX &gfx);
+  void drawTetherPopup(Adafruit_GFX &gfx);
   void drawPassword(Adafruit_GFX &gfx);
   void drawDevices(Adafruit_GFX &gfx);
   void drawDeviceTabs(Adafruit_GFX &gfx);
@@ -180,6 +185,7 @@ private:
   void drawLoadingIndicator(Adafruit_GFX &gfx, int16_t x, int16_t y);
   void handleNetworkTouch(const TouchPoint &point);
   void handlePopupTouch(const TouchPoint &point);
+  void handleTetherTouch(const TouchPoint &point);
   void handlePasswordTouch(const TouchPoint &point);
   void handleDevicesTouch(const TouchPoint &point);
   void handleDeviceTabsTouch(const TouchPoint &point);

@@ -49,6 +49,20 @@ struct AppApiWifiNetwork {
   int32_t rssi = -127;
 };
 
+enum class AppApiHttpMethod : uint8_t { Get, Post, Put, Delete };
+
+/// One copied, bounded inbound request. body remains session-owned until the
+/// matching response is submitted or the request expires.
+struct AppApiHttpRequest {
+  const uint8_t *body = nullptr;
+  size_t bodySize = 0;
+  uint32_t requestId = 0;
+  AppApiHttpMethod method = AppApiHttpMethod::Get;
+  char path[192] = {};
+  char query[384] = {};
+  char contentType[96] = {};
+};
+
 /// Callback used to consume transient directory entries during enumeration.
 using AppApiDirectoryEntryHandler = bool (*)(const char *name,
                                               bool directory, uint32_t size,
@@ -133,6 +147,19 @@ AppApiStatus appApiWifiScan();
 size_t appApiWifiNetworkCount();
 /// Copies one completed scan entry; returns false when out of range.
 bool appApiWifiNetworkAt(size_t index, AppApiWifiNetwork &out);
+
+/// Starts a LAN-only HTTP/1 server after a session permission prompt. An empty
+/// staticDirectory disables static files; "/" is intentionally not mountable.
+AppApiStatus appApiHttpStart(uint16_t port, const char *staticDirectory,
+                             const char *username = "",
+                             const char *password = "");
+AppApiStatus appApiHttpRoute(AppApiHttpMethod method, const char *path);
+AppApiStatus appApiHttpNextRequest(AppApiHttpRequest &out);
+AppApiStatus appApiHttpRespond(uint32_t requestId, int status,
+                               const char *contentType,
+                               const uint8_t *body, size_t bodySize);
+/// Copies the current station DHCP address or tethering address.
+bool appApiLocalAddress(char *out, size_t outSize);
 
 /// Simplified capture operation. The system pumps recording while Pending and
 /// returns a session-owned WAV buffer at End. Repeating an active request with

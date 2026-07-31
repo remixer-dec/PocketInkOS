@@ -7,8 +7,10 @@
 #include "sys/ext_app_api/audio_capture_service.h"
 #include "sys/ext_app_api/audio_service.h"
 #include "sys/ext_app_api/file_service.h"
+#include "sys/ext_app_api/http_service.h"
 #include "sys/ext_app_api/modal_service.h"
 #include "sys/ext_app_api/permission_service.h"
+#include "net/network_interface.h"
 
 #if ENABLE_NETWORK_APPS
 #include "sys/services/wifi_manager.h"
@@ -41,7 +43,8 @@ struct OpenAppMailbox {
 
 struct AppApiSession {
   explicit AppApiSession(const char *id)
-      : files(permissions), modals(permissions, id), audio(files) {
+      : files(permissions), modals(permissions, id), audio(files),
+        http(files, permissions) {
     copyText(appId, sizeof(appId), id);
   }
 
@@ -50,6 +53,7 @@ struct AppApiSession {
   ModalService modals;
   AudioCaptureService audioCapture;
   AudioService audio;
+  HttpService http;
   SensorRefreshMailbox sensorRefresh;
   OpenAppMailbox openApp;
   AppApiWifiNetwork wifiNetworks[kMaxWifiNetworks] = {};
@@ -59,6 +63,7 @@ struct AppApiSession {
   bool wifiScanned = false;
 
   void release() {
+    http.release();
     audioCapture.release();
     audio.releaseAll();
     modals.release();
@@ -166,6 +171,7 @@ bool appApiUpdateOnMainCore() {
     return false;
   }
   session->audioCapture.updateOnMainCore();
+  session->http.update(millis());
 
   SensorRefreshState refresh =
       session->sensorRefresh.state.load(std::memory_order_acquire);
@@ -441,6 +447,68 @@ bool appApiWifiNetworkAt(size_t index, AppApiWifiNetwork &out) {
   }
   out = session->wifiNetworks[index];
   return true;
+}
+
+AppApiStatus appApiHttpStart(uint16_t port, const char *staticDirectory,
+                             const char *username, const char *password) {
+#if ENABLE_NETWORK_APPS
+  return session != nullptr
+             ? abiStatus(session->http.start(
+                   port, staticDirectory != nullptr ? staticDirectory : "",
+                   username != nullptr ? username : "",
+                   password != nullptr ? password : ""))
+             : AppApiStatus::Error;
+#else
+  (void)port;
+  (void)staticDirectory;
+  (void)username;
+  (void)password;
+  return AppApiStatus::Unsupported;
+#endif
+}
+
+AppApiStatus appApiHttpRoute(AppApiHttpMethod method, const char *path) {
+#if ENABLE_NETWORK_APPS
+  return session != nullptr
+             ? abiStatus(session->http.route(method, path))
+             : AppApiStatus::Error;
+#else
+  (void)method;
+  (void)path;
+  return AppApiStatus::Unsupported;
+#endif
+}
+
+AppApiStatus appApiHttpNextRequest(AppApiHttpRequest &out) {
+#if ENABLE_NETWORK_APPS
+  return session != nullptr ? abiStatus(session->http.next(out))
+                            : AppApiStatus::Error;
+#else
+  out = {};
+  return AppApiStatus::Unsupported;
+#endif
+}
+
+AppApiStatus appApiHttpRespond(uint32_t requestId, int status,
+                               const char *contentType, const uint8_t *body,
+                               size_t bodySize) {
+#if ENABLE_NETWORK_APPS
+  return session != nullptr
+             ? abiStatus(session->http.respond(requestId, status, contentType,
+                                               body, bodySize))
+             : AppApiStatus::Error;
+#else
+  (void)requestId;
+  (void)status;
+  (void)contentType;
+  (void)body;
+  (void)bodySize;
+  return AppApiStatus::Unsupported;
+#endif
+}
+
+bool appApiLocalAddress(char *out, size_t outSize) {
+  return net::localAddress(out, outSize);
 }
 
 AppApiStatus appApiCaptureWav(uint32_t maxDurationMs, const uint8_t **data,

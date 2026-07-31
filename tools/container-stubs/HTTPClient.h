@@ -7,6 +7,8 @@
 class HTTPClient {
 public:
   void setTimeout(unsigned long) {}
+  void useHTTP10(bool = true) {}
+  void setUserAgent(const char *) {}
   bool begin(const char *) { return true; }
   bool begin(WiFiClient &, const char *) { return true; }
   void addHeader(const char *, const char *) {}

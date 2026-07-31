@@ -19,6 +19,7 @@ enum class PermissionKind : uint8_t {
   FileDelete,
   Gpio,
   WifiScan,
+  LanServer,
   AgentAction,
   SystemConfig,
 };

@@ -81,6 +81,7 @@ enum SettingId : uint8_t {
   SETTING_HOME_SUN_BUTTON,
   SETTING_HOME_WIDGETS,
   SETTING_HOME_TEXT_COLOR,
+  SETTING_HOME_WIDGET_GRAVITY,
   SETTING_HOME_REMOVE_WALLPAPER,
   SETTING_LOCKSCREEN_WIDGET,
   SETTING_LOCKSCREEN_ICON,
@@ -209,6 +210,10 @@ const SettingOption kHomeTextColorOptions[] = {
     {"Black", "black"},
     {"White", "white"},
 };
+const SettingOption kHomeWidgetGravityOptions[] = {
+    {"Top", "top"},
+    {"Bottom", "bottom"},
+};
 const SettingOption kNotificationRingtoneOptions[] = {
     {"Chime", "chime"},
     {"Droplet", "droplet"},
@@ -325,6 +330,11 @@ const SettingDefinition kHomeSettings[] = {
      SettingKind::Options, kHomeTextColorOptions,
      static_cast<uint8_t>(sizeof(kHomeTextColorOptions) /
                           sizeof(kHomeTextColorOptions[0])),
+     0},
+    {SETTING_HOME_WIDGET_GRAVITY, "Widget gravity", "home.widgetGravity",
+     SettingKind::Options, kHomeWidgetGravityOptions,
+     static_cast<uint8_t>(sizeof(kHomeWidgetGravityOptions) /
+                          sizeof(kHomeWidgetGravityOptions[0])),
      0},
     {SETTING_HOME_REMOVE_WALLPAPER, "Remove wallpaper", nullptr,
      SettingKind::Action, nullptr, 0, 0},

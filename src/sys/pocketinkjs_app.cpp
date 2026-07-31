@@ -61,6 +61,7 @@ constexpr size_t kPocketInkJSAllocationHeadroomBytes = 32U * 1024U;
 constexpr size_t kPocketInkJSMaxSourceBytes = 96U * 1024U;
 constexpr size_t kPocketInkJSMaxHttpBytes = 64U * 1024U;
 constexpr size_t kPocketInkJSModulePathCapacity = 256;
+constexpr char kPocketInkJSSystemModulePrefix[] = "/@pocketink/";
 constexpr uint32_t kPocketInkJSHttpTimeoutMs = 8000;
 constexpr uint8_t kPocketInkJSMaxTimers = 16;
 constexpr size_t kPocketInkJSJobsPerUpdate = 32;
@@ -74,13 +75,83 @@ constexpr BaseType_t kPocketInkJSExecutorCore = 1;
 constexpr size_t kIdCapacity = 20;
 constexpr size_t kStatusCapacity = 96;
 
+struct PocketInkJSSystemModule {
+  const char *name;
+  const char *source;
+};
+
+constexpr PocketInkJSSystemModule kPocketInkJSSystemModules[] = {
+    {"pocketink",
+     "module.exports={PocketInkJS,app,audio,console,files,fs,gpio,http,"
+     "network,permissions,screen,sensors,stream,time,ui,process,fetch,"
+     "setTimeout,setInterval,clearTimeout,clearInterval}"},
+    {"PocketInkJS", "module.exports=PocketInkJS"},
+    {"app", "module.exports=app"},
+    {"audio", "module.exports=audio"},
+    {"console", "module.exports=console"},
+    {"files", "module.exports=files"},
+    {"fs", "module.exports=fs"},
+    {"gpio", "module.exports=gpio"},
+    {"http", "module.exports=http"},
+    {"network", "module.exports=network"},
+    {"permissions", "module.exports=permissions"},
+    {"process", "module.exports=process"},
+    {"screen", "module.exports=screen"},
+    {"sensors", "module.exports=sensors"},
+    {"stream", "module.exports=stream"},
+    {"time", "module.exports=time"},
+    {"timers",
+     "module.exports={setTimeout,setInterval,clearTimeout,clearInterval}"},
+    {"ui", "module.exports=ui"},
+};
+
+const PocketInkJSSystemModule *pocketInkJSSystemModule(const char *name) {
+  if (name == nullptr) {
+    return nullptr;
+  }
+  for (const PocketInkJSSystemModule &module : kPocketInkJSSystemModules) {
+    if (strcmp(name, module.name) == 0) {
+      return &module;
+    }
+  }
+  return nullptr;
+}
+
+const PocketInkJSSystemModule *pocketInkJSSystemModuleRequest(
+    const char *request) {
+  constexpr char kQualifiedPrefix[] = "pocketink:";
+  if (request != nullptr &&
+      strncmp(request, kQualifiedPrefix, sizeof(kQualifiedPrefix) - 1U) == 0) {
+    request += sizeof(kQualifiedPrefix) - 1U;
+  }
+  return pocketInkJSSystemModule(request);
+}
+
+const PocketInkJSSystemModule *pocketInkJSSystemModulePath(const char *path) {
+  if (path == nullptr ||
+      strncmp(path, kPocketInkJSSystemModulePrefix,
+              sizeof(kPocketInkJSSystemModulePrefix) - 1U) != 0) {
+    return nullptr;
+  }
+  return pocketInkJSSystemModule(
+      path + sizeof(kPocketInkJSSystemModulePrefix) - 1U);
+}
+
 bool resolvePocketInkJSModule(const char *importer, const char *request,
                               char *out, size_t capacity, void *) {
   if (importer == nullptr || request == nullptr || out == nullptr ||
-      capacity < 5 || capacity > kPocketInkJSModulePathCapacity ||
-      (request[0] != '/' &&
+      capacity < 5 || capacity > kPocketInkJSModulePathCapacity) {
+    return false;
+  }
+  if (const PocketInkJSSystemModule *module =
+          pocketInkJSSystemModuleRequest(request)) {
+    const int written = snprintf(out, capacity, "%s%s",
+                                 kPocketInkJSSystemModulePrefix, module->name);
+    return written > 0 && static_cast<size_t>(written) < capacity;
+  }
+  if (request[0] != '/' &&
        !(request[0] == '.' && request[1] == '/') &&
-       !(request[0] == '.' && request[1] == '.' && request[2] == '/'))) {
+       !(request[0] == '.' && request[1] == '.' && request[2] == '/')) {
     return false;
   }
 
@@ -161,6 +232,20 @@ bool readPocketInkJSModule(const char *path, char *output,
                            size_t *inOutBytes, void *) {
   if (path == nullptr || inOutBytes == nullptr)
     return false;
+  if (const PocketInkJSSystemModule *module =
+          pocketInkJSSystemModulePath(path)) {
+    const size_t bytes = strlen(module->source);
+    if (output == nullptr) {
+      *inOutBytes = bytes;
+      return true;
+    }
+    if (*inOutBytes < bytes) {
+      return false;
+    }
+    memcpy(output, module->source, bytes);
+    *inOutBytes = bytes;
+    return true;
+  }
   File file = openProviderPath("sd", path);
   if (!file || file.isDirectory())
     return false;
@@ -341,6 +426,19 @@ struct TimerState {
   uint32_t nextId = 1;
 };
 
+constexpr uint8_t kPocketInkJSHttpRouteLimit = 12;
+
+struct HostedHttpRoute {
+  PocketInkJS::RootHandle callback = PocketInkJS::kInvalidRoot;
+  AppApiHttpMethod method = AppApiHttpMethod::Get;
+  char path[192] = {};
+  bool active = false;
+};
+
+struct HostedHttpState {
+  HostedHttpRoute routes[kPocketInkJSHttpRouteLimit] = {};
+};
+
 enum class PocketInkJSSystemModal : uint8_t {
   None,
   FilePicker,
@@ -364,6 +462,7 @@ Adafruit_GFX *PocketInkJSDrawTarget = nullptr;
 uint8_t PocketInkJSSleepGuardDepth = 0;
 UBaseType_t PocketInkJSLowestStackHwm = UINT_MAX;
 char *PocketInkJSLogBuffer = nullptr;
+HostedHttpState *PocketInkJSHostedHttp = nullptr;
 
 void PocketInkJSLogWrite(const char *text) {
   if (!debugLoggingEnabled()) {
@@ -1247,6 +1346,27 @@ ImageRenderCache *preparedSpriteFrame(PreparedSprite &sprite,
   return cached;
 }
 
+bool preparedSpriteAffineTransform(PocketInkJS::Runtime &runtime,
+                                   PocketInkJS::Value options,
+                                   ImageTransform &transform) {
+  const PocketInkJS::Value matrix = runtime.objectGet(options, "matrix");
+  if (runtime.typeOf(matrix) != PocketInkJS::ValueType::Array ||
+      runtime.arrayLength(matrix) != 6U) {
+    return false;
+  }
+  float *values[] = {&transform.a, &transform.b, &transform.c,
+                     &transform.d, &transform.tx, &transform.ty};
+  for (size_t i = 0; i < 6U; i++) {
+    const PocketInkJS::Value value = runtime.arrayAt(matrix, i);
+    const double number = runtime.toNumber(value);
+    if (!runtime.isNumber(value) || !std::isfinite(number)) {
+      return false;
+    }
+    *values[i] = static_cast<float>(number);
+  }
+  return true;
+}
+
 PocketInkJS::Value nativeUiCreateLayer(PocketInkJS::Runtime &runtime,
                                        const PocketInkJS::Value *args,
                                        size_t argc, void *) {
@@ -1308,10 +1428,17 @@ PocketInkJS::Value nativeUiDrawSprite(PocketInkJS::Runtime &runtime,
     return runtime.fail("invalid sprite position");
   }
   uint8_t flags = 0;
+  ImageTransform transform;
   PocketInkJS::Value layerValue = runtime.undefined();
   if (argc >= 4U) {
     if (runtime.typeOf(args[3]) == PocketInkJS::ValueType::Object) {
-      layerValue = args[3];
+      uint8_t layerIndex = 0;
+      if (preparedHandle(runtime, args[3], "__preparedLayer",
+                         graphics->layerCount, layerIndex)) {
+        layerValue = args[3];
+      } else if (!preparedSpriteAffineTransform(runtime, args[3], transform)) {
+        return runtime.fail("invalid sprite transform");
+      }
     } else {
       const double flagNumber = runtime.toNumber(args[3]);
       if (!runtime.isNumber(args[3]) || !std::isfinite(flagNumber) ||
@@ -1343,18 +1470,17 @@ PocketInkJS::Value nativeUiDrawSprite(PocketInkJS::Runtime &runtime,
   if (frame == nullptr) {
     return runtime.boolean(false);
   }
-  const ImageTransform identity;
   if (layer != nullptr) {
     PackedCacheGfx layerTarget(layer->bitmap, layer->bitmap.cachedWidth(),
                                layer->bitmap.cachedHeight());
     return runtime.boolean(frame->draw(
         layerTarget, static_cast<int16_t>(xNumber),
-        static_cast<int16_t>(yNumber), identity));
+        static_cast<int16_t>(yNumber), transform));
   }
   return runtime.boolean(
       target != nullptr &&
       frame->draw(*target, static_cast<int16_t>(xNumber),
-                  static_cast<int16_t>(yNumber), identity));
+                  static_cast<int16_t>(yNumber), transform));
 }
 
 PocketInkJS::Value nativeUiDrawLayer(PocketInkJS::Runtime &runtime,
@@ -1685,70 +1811,6 @@ PocketInkJS::Value nativeUiVectorString(PocketInkJS::Runtime &runtime,
       *PocketInkJSDrawTarget, svg.data, svg.size, x, y, w, h, transform));
 }
 
-PocketInkJS::Value readPocketInkJSFile(PocketInkJS::Runtime &runtime,
-                             const PocketInkJS::Value *args, size_t argc) {
-  if (argc < 1 || argc > 3 || !runtime.isString(args[0])) {
-    return runtime.fail("file read expects path, offset?, maxBytes?");
-  }
-  char path[288];
-  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
-    return runtime.fail("file path is too long");
-  }
-  size_t offset = 0;
-  size_t maxBytes = 4096;
-  if (argc > 1) {
-    const double value = runtime.toNumber(args[1]);
-    if (!runtime.isNumber(args[1]) || !std::isfinite(value) || value < 0 ||
-        value > UINT32_MAX || std::floor(value) != value) {
-      return runtime.fail("invalid file offset");
-    }
-    offset = static_cast<size_t>(value);
-  }
-  if (argc > 2) {
-    const double value = runtime.toNumber(args[2]);
-    if (!runtime.isNumber(args[2]) || !std::isfinite(value) || value < 1 ||
-        value > 65536 || std::floor(value) != value) {
-      return runtime.fail("invalid file read size");
-    }
-    maxBytes = static_cast<size_t>(value);
-  }
-  uint8_t *buffer = static_cast<uint8_t *>(psram::allocate(maxBytes));
-  if (buffer == nullptr) {
-    return runtime.fail("no PSRAM for file read");
-  }
-  size_t bytes = 0;
-  size_t fileSize = 0;
-  const AppApiStatus status =
-      appApiReadFile(path, offset, buffer, maxBytes, &bytes, &fileSize);
-  if (status == AppApiStatus::Error) {
-    psram::release(buffer);
-    return runtime.fail("file read failed");
-  }
-  PocketInkJS::Value result = runtime.makeObject();
-  PocketInkJS::Value data = runtime.makeString(
-      reinterpret_cast<const char *>(buffer), bytes);
-  psram::release(buffer);
-  runtime.objectSet(result, "data", data);
-  runtime.objectSet(result, "bytes", runtime.number(bytes));
-  runtime.objectSet(result, "size", runtime.number(fileSize));
-  runtime.objectSet(result, "offset", runtime.number(offset));
-  runtime.objectSet(result, "eof",
-                    runtime.boolean(status == kAppApiEnd));
-  return result;
-}
-
-PocketInkJS::Value nativeFilesReadText(PocketInkJS::Runtime &runtime,
-                                  const PocketInkJS::Value *args, size_t argc,
-                                  void *) {
-  return readPocketInkJSFile(runtime, args, argc);
-}
-
-PocketInkJS::Value nativeFilesReadBinary(PocketInkJS::Runtime &runtime,
-                                    const PocketInkJS::Value *args, size_t argc,
-                                    void *) {
-  return readPocketInkJSFile(runtime, args, argc);
-}
-
 bool jsStringEquals(PocketInkJS::Runtime &runtime, PocketInkJS::Value value,
                     const char *expected) {
   if (!runtime.isString(value) || expected == nullptr) {
@@ -1987,24 +2049,6 @@ PocketInkJS::Value nativeFsUnlink(PocketInkJS::Runtime &runtime,
                          nativeFsUnlinkSync(runtime, args, argc, userData));
 }
 
-PocketInkJS::Value nativeFilesWrite(PocketInkJS::Runtime &runtime,
-                               const PocketInkJS::Value *args, size_t argc,
-                               void *) {
-  if (argc < 2 || argc > 3 || !runtime.isString(args[0]) ||
-      !runtime.isString(args[1])) {
-    return runtime.fail("files.write expects path, data, append?");
-  }
-  char path[288];
-  if (!copyJsString(runtime, args[0], path, sizeof(path))) {
-    return runtime.fail("file path is too long");
-  }
-  const PocketInkJS::StringView data = runtime.stringView(args[1]);
-  return apiStatusValue(
-      runtime,
-      appApiWriteFile(path, reinterpret_cast<const uint8_t *>(data.data),
-                      data.size, argc == 3 && runtime.toBoolean(args[2])));
-}
-
 PocketInkJS::Value nativeFilesPick(PocketInkJS::Runtime &runtime,
                               const PocketInkJS::Value *args, size_t argc, void *) {
   if (argc > 2 || (argc > 0 && !runtime.isString(args[0])) ||
@@ -2033,15 +2077,6 @@ PocketInkJS::Value nativeFilesPick(PocketInkJS::Runtime &runtime,
                           true);
   }
   return promise;
-}
-
-PocketInkJS::Value nativeFilesDelete(PocketInkJS::Runtime &runtime,
-                                const PocketInkJS::Value *args, size_t argc,
-                                void *) {
-  char path[288];
-  return argc == 1 && copyJsString(runtime, args[0], path, sizeof(path))
-             ? apiStatusValue(runtime, appApiDeleteFile(path))
-             : runtime.fail("files.delete expects a path");
 }
 
 PocketInkJS::Value nativeAppOpen(PocketInkJS::Runtime &runtime,
@@ -2147,6 +2182,335 @@ PocketInkJS::Value nativeNetworkNetworks(PocketInkJS::Runtime &runtime,
     runtime.arrayPush(result, item);
   }
   return result;
+}
+
+HostedHttpState *ensureHostedHttpState() {
+  if (PocketInkJSHostedHttp != nullptr) {
+    return PocketInkJSHostedHttp;
+  }
+  void *memory = allocatePsram(sizeof(HostedHttpState));
+  if (memory == nullptr) {
+    return nullptr;
+  }
+  PocketInkJSHostedHttp = new (memory) HostedHttpState();
+  return PocketInkJSHostedHttp;
+}
+
+void releaseHostedHttpState(PocketInkJS::Runtime *runtime) {
+  if (PocketInkJSHostedHttp == nullptr) {
+    return;
+  }
+  if (runtime != nullptr) {
+    for (HostedHttpRoute &route : PocketInkJSHostedHttp->routes) {
+      if (route.active) {
+        runtime->release(route.callback);
+      }
+    }
+  }
+  PocketInkJSHostedHttp->~HostedHttpState();
+  psram::release(PocketInkJSHostedHttp);
+  PocketInkJSHostedHttp = nullptr;
+}
+
+PocketInkJS::Value nativeNetworkAddress(PocketInkJS::Runtime &runtime,
+                                        const PocketInkJS::Value *,
+                                        size_t argc, void *) {
+  if (argc != 0) {
+    return runtime.fail("network.address expects no arguments");
+  }
+  char address[16] = {};
+  return appApiLocalAddress(address, sizeof(address))
+             ? runtime.makeString(address)
+             : runtime.undefined();
+}
+
+PocketInkJS::Value nativeHostedHttpListen(PocketInkJS::Runtime &runtime,
+                                          const PocketInkJS::Value *args,
+                                          size_t argc, void *) {
+  if (argc < 1 || argc > 2 || !runtime.isNumber(args[0]) ||
+      (argc == 2 &&
+       runtime.typeOf(args[1]) != PocketInkJS::ValueType::Object)) {
+    return runtime.fail(
+        "http.server.listen expects port and an optional options object");
+  }
+  const double rawPort = runtime.toNumber(args[0]);
+  if (!std::isfinite(rawPort) || std::floor(rawPort) != rawPort ||
+      rawPort < 1024 || rawPort > UINT16_MAX) {
+    return runtime.fail("invalid HTTP server port");
+  }
+  char staticDirectory[288] = {};
+  char username[96] = {};
+  char password[96] = {};
+  if (argc == 2) {
+    const PocketInkJS::Value staticValue =
+        runtime.objectGet(args[1], "staticDir");
+    const PocketInkJS::Value usernameValue =
+        runtime.objectGet(args[1], "username");
+    const PocketInkJS::Value passwordValue =
+        runtime.objectGet(args[1], "password");
+    if ((!runtime.isUndefined(staticValue) &&
+         !copyJsString(runtime, staticValue, staticDirectory,
+                       sizeof(staticDirectory))) ||
+        (!runtime.isUndefined(usernameValue) &&
+         !copyJsString(runtime, usernameValue, username, sizeof(username))) ||
+        (!runtime.isUndefined(passwordValue) &&
+         !copyJsString(runtime, passwordValue, password, sizeof(password)))) {
+      return runtime.fail("invalid HTTP server options");
+    }
+  }
+  return apiStatusValue(
+      runtime, appApiHttpStart(static_cast<uint16_t>(rawPort), staticDirectory,
+                               username, password));
+}
+
+PocketInkJS::Value registerHostedHttpRoute(PocketInkJS::Runtime &runtime,
+                                           const PocketInkJS::Value *args,
+                                           size_t argc,
+                                           AppApiHttpMethod method) {
+  if (argc != 2 || !runtime.isString(args[0]) ||
+      !runtime.isCallable(args[1])) {
+    return runtime.fail("HTTP route expects path and handler");
+  }
+  HostedHttpState *state = ensureHostedHttpState();
+  if (state == nullptr) {
+    return runtime.fail("no PSRAM for HTTP routes");
+  }
+  char path[192] = {};
+  if (!copyJsString(runtime, args[0], path, sizeof(path)) || path[0] != '/') {
+    return runtime.fail("invalid HTTP route path");
+  }
+  HostedHttpRoute *slot = nullptr;
+  for (HostedHttpRoute &candidate : state->routes) {
+    if (candidate.active && candidate.method == method &&
+        strcmp(candidate.path, path) == 0) {
+      return runtime.fail("duplicate HTTP route");
+    }
+    if (!candidate.active && slot == nullptr) {
+      slot = &candidate;
+    }
+  }
+  if (slot == nullptr) {
+    return runtime.fail("HTTP route table is full");
+  }
+  const PocketInkJS::RootHandle callback = runtime.retain(args[1]);
+  if (callback == PocketInkJS::kInvalidRoot) {
+    return runtime.undefined();
+  }
+  const AppApiStatus status = appApiHttpRoute(method, path);
+  if (status != AppApiStatus::Ok) {
+    runtime.release(callback);
+    return apiStatusValue(runtime, status);
+  }
+  slot->callback = callback;
+  slot->method = method;
+  memcpy(slot->path, path, strlen(path) + 1U);
+  slot->active = true;
+  return apiStatusValue(runtime, AppApiStatus::Ok);
+}
+
+PocketInkJS::Value nativeHostedHttpGet(PocketInkJS::Runtime &runtime,
+                                       const PocketInkJS::Value *args,
+                                       size_t argc, void *) {
+  return registerHostedHttpRoute(runtime, args, argc, AppApiHttpMethod::Get);
+}
+
+PocketInkJS::Value nativeHostedHttpPost(PocketInkJS::Runtime &runtime,
+                                        const PocketInkJS::Value *args,
+                                        size_t argc, void *) {
+  return registerHostedHttpRoute(runtime, args, argc, AppApiHttpMethod::Post);
+}
+
+PocketInkJS::Value nativeHostedHttpPut(PocketInkJS::Runtime &runtime,
+                                       const PocketInkJS::Value *args,
+                                       size_t argc, void *) {
+  return registerHostedHttpRoute(runtime, args, argc, AppApiHttpMethod::Put);
+}
+
+PocketInkJS::Value nativeHostedHttpDelete(PocketInkJS::Runtime &runtime,
+                                          const PocketInkJS::Value *args,
+                                          size_t argc, void *) {
+  return registerHostedHttpRoute(runtime, args, argc, AppApiHttpMethod::Delete);
+}
+
+PocketInkJS::Value nativeHostedHttpResponse(PocketInkJS::Runtime &runtime,
+                                            const PocketInkJS::Value *args,
+                                            size_t argc, void *) {
+  if (argc < 1 || argc > 3 || !runtime.isString(args[0]) ||
+      (argc >= 2 && !runtime.isNumber(args[1])) ||
+      (argc == 3 && !runtime.isString(args[2]))) {
+    return runtime.fail(
+        "http.server.response expects body, status?, contentType?");
+  }
+  const double rawStatus = argc >= 2 ? runtime.toNumber(args[1]) : 200;
+  if (!std::isfinite(rawStatus) || std::floor(rawStatus) != rawStatus ||
+      rawStatus < 100 || rawStatus > 599) {
+    return runtime.fail("invalid HTTP response status");
+  }
+  if (argc == 3) {
+    const PocketInkJS::StringView type = runtime.stringView(args[2]);
+    if (type.size >= 64) {
+      return runtime.fail("HTTP response content type is too long");
+    }
+    for (size_t i = 0; i < type.size; i++) {
+      const unsigned char c = static_cast<unsigned char>(type.data[i]);
+      if (c < 0x20U || c == 0x7fU) {
+        return runtime.fail("invalid HTTP response content type");
+      }
+    }
+  }
+  PocketInkJS::Value result = runtime.makeObject();
+  if (runtime.isUndefined(result) ||
+      !runtime.objectSet(result, "__httpResponse", runtime.boolean(true)) ||
+      !runtime.objectSet(result, "body", args[0]) ||
+      !runtime.objectSet(result, "status", runtime.number(rawStatus)) ||
+      !runtime.objectSet(result, "contentType",
+                         argc == 3
+                             ? args[2]
+                             : runtime.makeString(
+                                   "text/plain; charset=utf-8"))) {
+    return runtime.fail("unable to create HTTP response");
+  }
+  return result;
+}
+
+bool pumpHostedHttp(PocketInkJS::Runtime &runtime, bool &processed) {
+  processed = false;
+  for (uint8_t count = 0; count < 4; count++) {
+    AppApiHttpRequest request;
+    const AppApiStatus status = appApiHttpNextRequest(request);
+    if (status == kAppApiEnd) {
+      return true;
+    }
+    if (status != AppApiStatus::Ok) {
+      return status == AppApiStatus::Unsupported;
+    }
+    processed = true;
+    HostedHttpRoute *route = nullptr;
+    if (PocketInkJSHostedHttp != nullptr) {
+      for (HostedHttpRoute &candidate : PocketInkJSHostedHttp->routes) {
+        if (candidate.active && candidate.method == request.method &&
+            strcmp(candidate.path, request.path) == 0) {
+          route = &candidate;
+          break;
+        }
+      }
+    }
+    if (route == nullptr) {
+      static constexpr char missing[] = "Route unavailable\n";
+      appApiHttpRespond(request.requestId, 500, "text/plain; charset=utf-8",
+                        reinterpret_cast<const uint8_t *>(missing),
+                        sizeof(missing) - 1U);
+      continue;
+    }
+
+    PocketInkJS::Value incoming = runtime.makeObject();
+    runtime.objectSet(incoming, "method",
+                      runtime.makeString(
+                          request.method == AppApiHttpMethod::Post
+                              ? "POST"
+                              : request.method == AppApiHttpMethod::Put
+                                    ? "PUT"
+                                    : request.method == AppApiHttpMethod::Delete
+                                          ? "DELETE"
+                                          : "GET"));
+    runtime.objectSet(incoming, "path", runtime.makeString(request.path));
+    runtime.objectSet(incoming, "query", runtime.makeString(request.query));
+    runtime.objectSet(incoming, "contentType",
+                      runtime.makeString(request.contentType));
+    runtime.objectSet(
+        incoming, "body",
+        runtime.makeString(request.body != nullptr
+                               ? reinterpret_cast<const char *>(request.body)
+                               : "",
+                           request.bodySize));
+    const PocketInkJS::Value callback = runtime.retained(route->callback);
+    const PocketInkJS::RunResult handled = runtime.call(callback, &incoming, 1);
+    if (!handled.ok) {
+      static constexpr char failed[] = "Handler failed\n";
+      appApiHttpRespond(request.requestId, 500, "text/plain; charset=utf-8",
+                        reinterpret_cast<const uint8_t *>(failed),
+                        sizeof(failed) - 1U);
+      return false;
+    }
+    if (runtime.typeOf(handled.value) == PocketInkJS::ValueType::Promise) {
+      static constexpr char asyncUnsupported[] =
+          "Async handlers are not supported\n";
+      appApiHttpRespond(
+          request.requestId, 500, "text/plain; charset=utf-8",
+          reinterpret_cast<const uint8_t *>(asyncUnsupported),
+          sizeof(asyncUnsupported) - 1U);
+      continue;
+    }
+
+    int responseStatus = 200;
+    const char *responseType = "application/json; charset=utf-8";
+    PocketInkJS::Value bodyValue = handled.value;
+    const PocketInkJS::Value marker =
+        runtime.objectGet(handled.value, "__httpResponse");
+    if (runtime.isTruthy(marker)) {
+      const PocketInkJS::Value statusValue =
+          runtime.objectGet(handled.value, "status");
+      const PocketInkJS::Value typeValue =
+          runtime.objectGet(handled.value, "contentType");
+      bodyValue = runtime.objectGet(handled.value, "body");
+      const double rawResponseStatus = runtime.toNumber(statusValue);
+      if (!runtime.isString(bodyValue) || !runtime.isString(typeValue) ||
+          !runtime.isNumber(statusValue) ||
+          !std::isfinite(rawResponseStatus) ||
+          std::floor(rawResponseStatus) != rawResponseStatus ||
+          rawResponseStatus < 100 || rawResponseStatus > 599) {
+        static constexpr char invalid[] = "Invalid handler response\n";
+        appApiHttpRespond(request.requestId, 500,
+                          "text/plain; charset=utf-8",
+                          reinterpret_cast<const uint8_t *>(invalid),
+                          sizeof(invalid) - 1U);
+        continue;
+      }
+      responseStatus = static_cast<int>(rawResponseStatus);
+      responseType = runtime.stringView(typeValue).data;
+    } else if (runtime.isString(handled.value)) {
+      responseType = "text/plain; charset=utf-8";
+    } else if (runtime.isUndefined(handled.value)) {
+      appApiHttpRespond(request.requestId, 204, "text/plain", nullptr, 0);
+      continue;
+    } else {
+      const PocketInkJS::Value stringify = runtime.get("JSON.stringify");
+      const PocketInkJS::RunResult encoded =
+          runtime.call(stringify, &bodyValue, 1);
+      if (!encoded.ok || !runtime.isString(encoded.value)) {
+        static constexpr char invalid[] = "Response is not serializable\n";
+        appApiHttpRespond(request.requestId, 500,
+                          "text/plain; charset=utf-8",
+                          reinterpret_cast<const uint8_t *>(invalid),
+                          sizeof(invalid) - 1U);
+        return encoded.ok;
+      }
+      bodyValue = encoded.value;
+    }
+    const PocketInkJS::StringView body = runtime.stringView(bodyValue);
+    const PocketInkJS::StringView contentType =
+        runtime.isTruthy(marker)
+            ? runtime.stringView(runtime.objectGet(handled.value,
+                                                   "contentType"))
+            : PocketInkJS::StringView{responseType, strlen(responseType)};
+    char copiedType[64] = {};
+    if (contentType.size >= sizeof(copiedType)) {
+      appApiHttpRespond(request.requestId, 500, "text/plain", nullptr, 0);
+      continue;
+    }
+    memcpy(copiedType, contentType.data, contentType.size);
+    copiedType[contentType.size] = '\0';
+    if (body.size > 64U * 1024U ||
+        appApiHttpRespond(request.requestId, responseStatus, copiedType,
+                          reinterpret_cast<const uint8_t *>(body.data),
+                          body.size) != AppApiStatus::Ok) {
+      static constexpr char failed[] = "Response rejected\n";
+      appApiHttpRespond(request.requestId, 500, "text/plain; charset=utf-8",
+                        reinterpret_cast<const uint8_t *>(failed),
+                        sizeof(failed) - 1U);
+    }
+  }
+  return true;
 }
 
 PocketInkJS::Value nativeUiFonts(PocketInkJS::Runtime &runtime, const PocketInkJS::Value *,
@@ -2808,6 +3172,12 @@ private:
     dirty = pumpAsyncCompletions() || dirty;
     dirty = pumpTimers() || dirty;
     dirty = pumpSystemModal() || dirty;
+    bool httpProcessed = false;
+    if (runtime != nullptr && status[0] == '\0' &&
+        !pumpHostedHttp(*runtime, httpProcessed)) {
+      setRuntimeError();
+      return dirty;
+    }
     // Promise reactions are microtasks: run them immediately after host
     // completions and before entering the next app callback. In particular,
     // picker results must reach their .then(...) handler before onUpdate can
@@ -3088,6 +3458,7 @@ private:
     hasErrorCatalog = false;
     touchCallbacks = 0;
     releaseTimers();
+    releaseHostedHttpState(runtime);
     if (runtime != nullptr && systemModalPromise != PocketInkJS::kInvalidRoot) {
       runtime->release(systemModalPromise);
     }
@@ -3818,19 +4189,15 @@ PocketInkJS::Value nativeUiButtonContains(PocketInkJS::Runtime &runtime,
 PocketInkJS::Value nativeUiListTouch(PocketInkJS::Runtime &runtime,
                                 const PocketInkJS::Value *args, size_t argc,
                                 void *) {
-  if (!numericArguments(runtime, args, argc, 10))
+  if (!numericArguments(runtime, args, argc, 9))
     return runtime.undefined();
-  const int modeValue = static_cast<int>(runtime.toNumber(args[8]));
-  const UiListNavMode mode = modeValue == 1   ? UiListNavMode::Select
-                             : modeValue == 2 ? UiListNavMode::Split
-                                              : UiListNavMode::Scroll;
-  uint16_t offset = toU16(runtime.toNumber(args[9]));
+  uint16_t offset = toU16(runtime.toNumber(args[8]));
   const UiListTouchResult hit = uiListHandleTouch(
       TouchPoint{toU16(runtime.toNumber(args[0])),
                  toU16(runtime.toNumber(args[1]))},
       toU16(runtime.toNumber(args[2])), toU8(runtime.toNumber(args[3])),
       toI16(runtime.toNumber(args[4])), toI16(runtime.toNumber(args[5])),
-      toI16(runtime.toNumber(args[6])), toI16(runtime.toNumber(args[7])), mode,
+      toI16(runtime.toNumber(args[6])), toI16(runtime.toNumber(args[7])),
       offset);
   PocketInkJS::Value result = runtime.makeObject();
   const char *action = hit.action == UiListTouchAction::Scroll
@@ -4016,6 +4383,33 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Returns the list of networks found by the last scan.
       //JS/ Returns: object[] - { ssid: string, rssi: number }
       {"network.networks", nativeNetworkNetworks},
+      //JS/ Returns the station DHCP address, or the tethering address.
+      //JS/ Returns: string | undefined
+      {"network.address", nativeNetworkAddress},
+      //JS/ Starts a permissioned LAN HTTP server. Retry after PENDING.
+      //JS/ Returns: Permissions
+      //JS/ Args: port (number), options? ({staticDir?, username?, password?})
+      {"http.server.listen", nativeHostedHttpListen},
+      //JS/ Registers an exact GET handler. Objects returned by handlers become JSON.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), handler (function)
+      {"http.server.get", nativeHostedHttpGet},
+      //JS/ Registers an exact POST handler.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), handler (function)
+      {"http.server.post", nativeHostedHttpPost},
+      //JS/ Registers an exact PUT handler.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), handler (function)
+      {"http.server.put", nativeHostedHttpPut},
+      //JS/ Registers an exact DELETE handler.
+      //JS/ Returns: Permissions
+      //JS/ Args: path (string), handler (function)
+      {"http.server.delete", nativeHostedHttpDelete},
+      //JS/ Creates a custom dynamic response; plain returned objects use JSON.
+      //JS/ Returns: object
+      //JS/ Args: body (string), status? (number), contentType? (string)
+      {"http.server.response", nativeHostedHttpResponse},
       //JS/ Performs a synchronous HTTP GET request and returns the response body.
       //JS/ Returns: string
       //JS/ Args: url (string), maxBytes? (number)
@@ -4056,22 +4450,6 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Returns: boolean
       //JS/ Args: appId (string)
       {"app.open", nativeAppOpen},
-      //JS/ Reads a file and returns an object with data, bytes, size, offset, and eof properties.
-      //JS/ Returns: object - { data: string, bytes: number, size: number, offset: number, eof: boolean }
-      //JS/ Args: path (string), offset? (number), maxBytes? (number)
-      {"files.readText", nativeFilesReadText},
-      //JS/ Reads a file and returns binary data with metadata (same as readText).
-      //JS/ Returns: object - { data: string, bytes: number, size: number, offset: number, eof: boolean }
-      //JS/ Args: path (string), offset? (number), maxBytes? (number)
-      {"files.readBinary", nativeFilesReadBinary},
-      //JS/ Writes string data to a file. Optionally appends instead of overwriting.
-      //JS/ Returns: Permissions
-      //JS/ Args: path (string), data (string), append? (boolean)
-      {"files.write", nativeFilesWrite},
-      //JS/ Deletes a file by path.
-      //JS/ Returns: Permissions
-      //JS/ Args: path (string)
-      {"files.delete", nativeFilesDelete},
       //JS/ Opens the system file picker UI. Returns a Promise that resolves with the selected path.
       //JS/ Returns: Promise
       //JS/ Args: initialPath? (string), filter? (string)
@@ -4231,9 +4609,9 @@ bool PocketInkJSApp::installBindings() {
       //JS/ Returns: object - { __preparedSprite: number }, Arg sheet: object - { frameWidth: number, frameHeight: number, frameCount: number, rowCount: number, columnCount: number, __preparedSheet: number }, Arg options: object - { scale?: number }
       //JS/ Args: sheet (object), row (number), column (number), options? ({scale})
       {"ui.prepareSprite", nativeUiPrepareSprite},
-      //JS/ Draws a prepared sprite with cached flip/quarter-turn transforms.
+      //JS/ Draws a prepared sprite with cached flip/quarter-turn transforms or an affine matrix.
       //JS/ Returns: boolean, Arg sprite: object - { __preparedSprite: number }, Arg layer: object - { __preparedLayer: number }
-      //JS/ Args: sprite (object), x (number), y (number), transform? (number), layer? (object)
+      //JS/ Args: sprite (object), x (number), y (number), transform? (number|{matrix}), layer? (object)
       {"ui.drawSprite", nativeUiDrawSprite},
       //JS/ Allocates a bit-packed static drawing layer (defaults to screen size).
       //JS/ Returns: object - { __preparedLayer: number }
@@ -4273,7 +4651,7 @@ bool PocketInkJSApp::installBindings() {
       {"ui.buttonContains", nativeUiButtonContains},
       //JS/ Handles touch interaction for a scrollable list. Returns an object with action, index, and offset.
       //JS/ Returns: object - { action: string, index: number, offset: number }
-      //JS/ Args: tx (number), ty (number), itemH (number), visible (number), x (number), y (number), w (number), h (number), mode (number), offset (number)
+      //JS/ Args: tx (number), ty (number), itemCount (number), visible (number), listY (number), rowHeight (number), listHeight (number), splitX (number), offset (number)
       {"ui.listTouch", nativeUiListTouch},
       //JS/ Draws a set of selectable option buttons from an array of option objects.
       //JS/ Returns: void
@@ -4330,9 +4708,6 @@ bool PocketInkJSApp::installBindings() {
   //JS/ Constant: ui.FONT_DEFAULT (0) - Default system font.
   //JS/ Constant: ui.FONT_ICON_8 (1) - 8-pixel icon font.
   //JS/ Constant: ui.FONT_ICON_12 (2) - 12-pixel icon font.
-  //JS/ Constant: ui.LIST_SCROLL (0) - Scroll list navigation mode.
-  //JS/ Constant: ui.LIST_SELECT (1) - Select list navigation mode.
-  //JS/ Constant: ui.LIST_SPLIT (2) - Split list navigation mode.
   //JS/ Constant: ui.KEYBOARD_TEXT (0) - Full text keyboard layout.
   //JS/ Constant: ui.KEYBOARD_NUMBERS (1) - Numeric keypad layout.
   //JS/ Constant: ui.KEYBOARD_NUMERIC (2) - Numeric input layout.
@@ -4361,9 +4736,6 @@ bool PocketInkJSApp::installBindings() {
          runtime->set("ui.FONT_DEFAULT", runtime->number(0)) &&
          runtime->set("ui.FONT_ICON_8", runtime->number(1)) &&
          runtime->set("ui.FONT_ICON_12", runtime->number(2)) &&
-         runtime->set("ui.LIST_SCROLL", runtime->number(0)) &&
-         runtime->set("ui.LIST_SELECT", runtime->number(1)) &&
-         runtime->set("ui.LIST_SPLIT", runtime->number(2)) &&
          runtime->set("ui.KEYBOARD_TEXT", runtime->number(0)) &&
          runtime->set("ui.KEYBOARD_NUMBERS", runtime->number(1)) &&
          runtime->set("ui.KEYBOARD_NUMERIC", runtime->number(2)) &&
@@ -4430,8 +4802,8 @@ void PocketInkJSApp::load() {
   }
   PocketInkJS::Options options;
   options.maxBindings = 512;
-  options.maxNatives = 96;
-  options.maxHostRoots = 48;
+  options.maxNatives = 112;
+  options.maxHostRoots = 64;
   options.maxCallDepth = 24;
   options.maxSteps = 160000;
   options.nowMilliseconds = PocketInkJSNowMilliseconds;

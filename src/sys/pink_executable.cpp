@@ -943,6 +943,49 @@ bool hostWifiNetworkAt(size_t index, PinkWifiNetwork *out) {
   return true;
 }
 
+int8_t hostHttpStart(uint16_t port, const char *staticDirectory,
+                     const char *username, const char *password) {
+  return apiStatus(
+      appApiHttpStart(port, staticDirectory, username, password));
+}
+
+int8_t hostHttpRoute(uint8_t method, const char *path) {
+  if (method > static_cast<uint8_t>(AppApiHttpMethod::Delete)) {
+    return PINK_API_ERROR;
+  }
+  return apiStatus(appApiHttpRoute(static_cast<AppApiHttpMethod>(method), path));
+}
+
+int8_t hostHttpNextRequest(PinkHttpRequest *out) {
+  if (out == nullptr) {
+    return PINK_API_ERROR;
+  }
+  AppApiHttpRequest request;
+  const AppApiStatus status = appApiHttpNextRequest(request);
+  if (status != AppApiStatus::Ok) {
+    return apiStatus(status);
+  }
+  out->body = request.body;
+  out->bodySize = request.bodySize;
+  out->requestId = request.requestId;
+  out->method = static_cast<uint8_t>(request.method);
+  copyText(out->path, sizeof(out->path), request.path);
+  copyText(out->query, sizeof(out->query), request.query);
+  copyText(out->contentType, sizeof(out->contentType), request.contentType);
+  return PINK_API_OK;
+}
+
+int8_t hostHttpRespond(uint32_t requestId, int status,
+                       const char *contentType, const uint8_t *body,
+                       size_t bodySize) {
+  return apiStatus(
+      appApiHttpRespond(requestId, status, contentType, body, bodySize));
+}
+
+bool hostLocalAddress(char *out, size_t outSize) {
+  return appApiLocalAddress(out, outSize);
+}
+
 size_t hostFontCount() { return systemFontCount(); }
 
 bool hostFontInfo(size_t index, char *name, size_t nameSize,
@@ -1272,7 +1315,8 @@ uint32_t pinkFeatureFlags() {
                    PINK_FEATURE_GPIO | PINK_FEATURE_SENSORS |
                    PINK_FEATURE_RETURNABLE_JS;
 #if ENABLE_NETWORK_APPS
-  flags |= PINK_FEATURE_WIFI_SCAN | PINK_FEATURE_AGENTFIESTA;
+  flags |= PINK_FEATURE_WIFI_SCAN | PINK_FEATURE_AGENTFIESTA |
+           PINK_FEATURE_LAN_SERVER;
 #endif
   return flags;
 }
@@ -1350,6 +1394,11 @@ PinkHost makeHost() {
   host.fileList = hostFileList;
   host.drawSpritePath = hostDrawSpritePath;
   host.drawSpriteBuffer = hostDrawSpriteBuffer;
+  host.httpStart = hostHttpStart;
+  host.httpRoute = hostHttpRoute;
+  host.httpNextRequest = hostHttpNextRequest;
+  host.httpRespond = hostHttpRespond;
+  host.localAddress = hostLocalAddress;
   return host;
 }
 

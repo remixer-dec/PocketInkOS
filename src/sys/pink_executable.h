@@ -11,7 +11,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL; // "PINK"
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 16;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 17;
 /// Oldest .pink ABI version this firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 /// Size in bytes of PinkExecutableHeader.
@@ -129,6 +129,7 @@ enum PinkFeature : uint32_t {
   PINK_FEATURE_WIFI_SCAN = 1U << 6U,
   PINK_FEATURE_AGENTFIESTA = 1U << 7U,
   PINK_FEATURE_RETURNABLE_JS = 1U << 8U,
+  PINK_FEATURE_LAN_SERVER = 1U << 9U,
 };
 
 enum PinkFileAuthorization : uint8_t {
@@ -163,6 +164,55 @@ struct PinkSpriteFrame {
   }
 };
 
+/// Uniform, row-major spritesheet description. Rows and columns are zero-based.
+struct PinkSpritesheet {
+  uint16_t frameWidth = 0;
+  uint16_t frameHeight = 0;
+  uint16_t frameCount = 0;
+  uint16_t rowCount = 0;
+
+  static PinkSpritesheet defineSpritesheet(uint16_t width, uint16_t height,
+                                           uint16_t frames,
+                                           uint16_t rows) {
+    PinkSpritesheet sheet;
+    if (width == 0U || height == 0U || frames == 0U || rows == 0U ||
+        rows > frames) {
+      return sheet;
+    }
+    const uint32_t columns =
+        (static_cast<uint32_t>(frames) + rows - 1U) / rows;
+    if (columns * width > 0x7fffU ||
+        static_cast<uint32_t>(rows) * height > 0x7fffU) {
+      return sheet;
+    }
+    sheet.frameWidth = width;
+    sheet.frameHeight = height;
+    sheet.frameCount = frames;
+    sheet.rowCount = rows;
+    return sheet;
+  }
+
+  uint16_t columnCount() const {
+    return frameCount != 0U && rowCount != 0U
+               ? static_cast<uint16_t>(
+                     (static_cast<uint32_t>(frameCount) + rowCount - 1U) /
+                     rowCount)
+               : 0U;
+  }
+
+  PinkSpriteFrame spriteAt(uint16_t row, uint16_t column) const {
+    const uint16_t columns = columnCount();
+    const uint32_t index = static_cast<uint32_t>(row) * columns + column;
+    if (frameWidth == 0U || frameHeight == 0U || row >= rowCount ||
+        column >= columns || index >= frameCount) {
+      return {};
+    }
+    return {static_cast<uint16_t>(column * frameWidth),
+            static_cast<uint16_t>(row * frameHeight), frameWidth,
+            frameHeight};
+  }
+};
+
 struct PinkSensorSnapshot {
   uint8_t temperatureValid = 0;
   uint8_t humidityValid = 0;
@@ -176,6 +226,23 @@ struct PinkSensorSnapshot {
 struct PinkWifiNetwork {
   char ssid[33] = {};
   int32_t rssi = -127;
+};
+
+enum PinkHttpMethod : uint8_t {
+  PINK_HTTP_GET = 0,
+  PINK_HTTP_POST = 1,
+  PINK_HTTP_PUT = 2,
+  PINK_HTTP_DELETE = 3,
+};
+
+struct PinkHttpRequest {
+  const uint8_t *body = nullptr;
+  size_t bodySize = 0;
+  uint32_t requestId = 0;
+  uint8_t method = PINK_HTTP_GET;
+  char path[192] = {};
+  char query[384] = {};
+  char contentType[96] = {};
 };
 
 struct PinkEvent {
@@ -320,6 +387,16 @@ struct PinkHost {
                              const PinkSpriteFrame *frame, int16_t x,
                              int16_t y, uint8_t dither, uint8_t cacheEntries,
                              const PinkImageTransform *transform);
+  /// ABI 17: permissioned LAN HTTP server. Dynamic requests are polled from
+  /// UPDATE so app code never runs in the networking callback context.
+  int8_t (*httpStart)(uint16_t port, const char *staticDirectory,
+                      const char *username, const char *password);
+  int8_t (*httpRoute)(uint8_t method, const char *path);
+  int8_t (*httpNextRequest)(PinkHttpRequest *out);
+  int8_t (*httpRespond)(uint32_t requestId, int status,
+                        const char *contentType, const uint8_t *body,
+                        size_t bodySize);
+  bool (*localAddress)(char *out, size_t outSize);
 };
 
 inline bool pinkSpritesSupported(const PinkHost *host) {
@@ -328,6 +405,16 @@ inline bool pinkSpritesSupported(const PinkHost *host) {
              offsetof(PinkHost, drawSpriteBuffer) +
                  sizeof(PinkHost::drawSpriteBuffer) &&
          host->drawSpritePath != nullptr && host->drawSpriteBuffer != nullptr;
+}
+
+inline bool pinkHttpSupported(const PinkHost *host) {
+  return host != nullptr && host->abiVersion >= 17U &&
+         host->hostSize >=
+             offsetof(PinkHost, localAddress) +
+                 sizeof(PinkHost::localAddress) &&
+         host->httpStart != nullptr && host->httpRoute != nullptr &&
+         host->httpNextRequest != nullptr && host->httpRespond != nullptr &&
+         host->localAddress != nullptr;
 }
 
 inline int8_t pinkDrawSpritePath(

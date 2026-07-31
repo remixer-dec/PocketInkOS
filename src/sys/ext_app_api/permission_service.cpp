@@ -21,6 +21,8 @@ const char *permissionTitle(PermissionKind kind) {
     return "ALLOW GPIO?";
   case PermissionKind::WifiScan:
     return "SCAN WI-FI?";
+  case PermissionKind::LanServer:
+    return "SERVE ON LAN?";
   case PermissionKind::AgentAction:
     return "AGENT ACTION?";
   case PermissionKind::SystemConfig:
@@ -159,7 +161,8 @@ void PermissionService::drawPrompt(Adafruit_GFX &gfx,
   if (prompt.kind == PermissionKind::FileWrite ||
       prompt.kind == PermissionKind::FileDelete ||
       prompt.kind == PermissionKind::SystemConfig ||
-      prompt.kind == PermissionKind::AgentAction) {
+      prompt.kind == PermissionKind::AgentAction ||
+      prompt.kind == PermissionKind::LanServer) {
     const char *name = strrchr(prompt.resource, '/');
     name = name != nullptr ? name + 1 : prompt.resource;
     const size_t length = strlen(name);

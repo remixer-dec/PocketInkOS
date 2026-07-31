@@ -16,6 +16,8 @@ enum wl_status_t {
 
 #define WIFI_STA 1
 #define WIFI_OFF 0
+#define WIFI_AP 2
+#define WIFI_AP_STA 3
 
 class IPAddress {
 public:
@@ -67,7 +69,16 @@ public:
 
 class WiFiClass {
 public:
-  bool mode(int) { return true; }
+  bool mode(int value) {
+    modeValue = value;
+    if (value == WIFI_OFF) {
+      statusValue = WL_DISCONNECTED;
+      apStarted = false;
+    } else if (value == WIFI_AP) {
+      statusValue = WL_DISCONNECTED;
+    }
+    return true;
+  }
   void persistent(bool) {}
   void begin(const char *ssid, const char *) {
     savedSsid = ssid ? ssid : "";
@@ -86,6 +97,22 @@ public:
   IPAddress gatewayIP() const { return IPAddress(192, 168, 1, 1); }
   IPAddress subnetMask() const { return IPAddress(255, 255, 255, 0); }
   IPAddress dnsIP(uint8_t = 0) const { return IPAddress(1, 1, 1, 1); }
+  bool softAP(const char *ssid, const char *) {
+    savedApSsid = ssid ? ssid : "";
+    apStarted = true;
+    return true;
+  }
+  bool softAPdisconnect(bool wifiOff = false) {
+    apStarted = false;
+    savedApSsid = "";
+    if (wifiOff) {
+      statusValue = WL_DISCONNECTED;
+    }
+    return true;
+  }
+  IPAddress softAPIP() const {
+    return apStarted ? IPAddress(192, 168, 4, 1) : IPAddress();
+  }
   bool hostByName(const char *, IPAddress &out) {
     out = IPAddress(93, 184, 216, 34);
     return true;
@@ -94,7 +121,10 @@ public:
 
 private:
   wl_status_t statusValue = WL_DISCONNECTED;
+  int modeValue = WIFI_OFF;
   String savedSsid;
+  String savedApSsid;
+  bool apStarted = false;
 };
 
 inline WiFiClass WiFi;

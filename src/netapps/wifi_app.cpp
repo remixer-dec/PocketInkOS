@@ -5,6 +5,7 @@
 #if ENABLE_NETWORK_APPS
 
 #include "netapps/wifi_app.h"
+#include "net/network_interface.h"
 #include "sys/psram_allocator.h"
 #include "sys/global.h"
 #include "sys/system_config.h"
@@ -61,8 +62,13 @@ static void on_ping_end(esp_ping_handle_t hdl, void *args) {
 }
 
 static const UiRect SCAN_BUTTON = {4, 172, 60, 24};
+static const UiRect TETHER_BUTTON = {70, 172, 60, 24};
 static const UiRect WIFI_TOGGLE_BUTTON = {136, 172, 60, 24};
 static const UiRect POPUP_RECT = {10, 50, 180, 110};
+static const UiRect TETHER_POPUP_RECT = {10, 42, 180, 120};
+static const UiRect TETHER_QR_BUTTON = {150, 86, 26, 24};
+static const UiRect TETHER_CLOSE_BUTTON = {24, 132, 68, 24};
+static const UiRect TETHER_STOP_BUTTON = {108, 132, 68, 24};
 static const UiRect PASSWORD_CANCEL_BUTTON = {4, 4, 58, 20};
 static const UiRect DEVICE_BACK_BUTTON = {4, 172, 60, 24};
 static const UiRect DEVICE_SCAN_BUTTON = {136, 172, 60, 24};
@@ -313,6 +319,9 @@ void WifiApp::open() {
 void WifiApp::release() {
   popupOpen = false;
   popupConfirm = false;
+  tetherPopupOpen = false;
+  tetherQrOpen = false;
+  tetherQr.clear();
   devicePopupOpen = false;
   pendingSaveAfterConnect = false;
   view = VIEW_NETWORKS;
@@ -428,6 +437,9 @@ void WifiApp::reset() {
   view = VIEW_NETWORKS;
   popupOpen = false;
   popupConfirm = false;
+  tetherPopupOpen = false;
+  tetherQrOpen = false;
+  tetherQr.clear();
   press.clear();
   devicePopupOpen = false;
   passwordInput[0] = '\0';
@@ -461,7 +473,8 @@ void WifiApp::disconnect() {
 
 bool WifiApp::hasActiveSession() const {
   return wifiManager.hasActiveSession() ||
-         networkScanState == SCAN_RUNNING || portScanState == PORT_RUNNING;
+         networkScanState == SCAN_RUNNING || portScanState == PORT_RUNNING ||
+         net::tetheringActive();
 }
 
 WifiDisplayState WifiApp::displayState() const {
@@ -571,6 +584,8 @@ bool WifiApp::handleTouch(const TouchPoint &point) {
     handlePasswordTouch(point);
   } else if (view == VIEW_DEVICES) {
     handleDevicesTouch(point);
+  } else if (tetherPopupOpen) {
+    handleTetherTouch(point);
   } else if (popupOpen) {
     handlePopupTouch(point);
   } else {
@@ -598,6 +613,14 @@ bool WifiApp::handleMenuButton() {
     view = VIEW_NETWORKS;
     networkScanState = SCAN_IDLE;
     freeNetDevices();
+    return true;
+  }
+  if (tetherPopupOpen) {
+    if (tetherQrOpen) {
+      tetherQrOpen = false;
+    } else {
+      tetherPopupOpen = false;
+    }
     return true;
   }
   return closePopup();
@@ -938,17 +961,23 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   } else {
     gfx.print("off");
   }
+  const char *tetherLabel =
+      net::tetheringActive() ? "AP INFO" : "HOTSPOT";
 
   if (scanRequested && !scanDone && displayState() != WIFI_DISPLAY_OFF) {
     drawLoadingIndicator(gfx, 0, 0);
     if (displayState() != WIFI_DISPLAY_OFF) {
       uiDrawButton(gfx, SCAN_BUTTON, "SCAN", press.isPressed(0));
     }
+    uiDrawButton(gfx, TETHER_BUTTON, tetherLabel);
     uiDrawButton(gfx, WIFI_TOGGLE_BUTTON,
                  displayState() == WIFI_DISPLAY_OFF ? "ON" : "OFF",
                  press.isPressed(1));
     if (popupOpen) {
       drawPopup(gfx);
+    }
+    if (tetherPopupOpen) {
+      drawTetherPopup(gfx);
     }
     return;
   }
@@ -1005,12 +1034,45 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   if (displayState() != WIFI_DISPLAY_OFF) {
     uiDrawButton(gfx, SCAN_BUTTON, "SCAN", press.isPressed(0));
   }
+  uiDrawButton(gfx, TETHER_BUTTON, tetherLabel);
   uiDrawButton(gfx, WIFI_TOGGLE_BUTTON,
                displayState() == WIFI_DISPLAY_OFF ? "ON" : "OFF",
                press.isPressed(1));
   if (popupOpen) {
     drawPopup(gfx);
   }
+  if (tetherPopupOpen) {
+    drawTetherPopup(gfx);
+  }
+}
+
+void WifiApp::drawTetherPopup(Adafruit_GFX &gfx) {
+  if (tetherQrOpen) {
+    gfx.fillRect(0, 0, EPD_WIDTH, EPD_HEIGHT, 0);
+    tetherQr.draw(gfx, 0, 0, EPD_WIDTH);
+    return;
+  }
+  drawDialogBackdropHatch(gfx);
+  gfx.fillRect(TETHER_POPUP_RECT.x, TETHER_POPUP_RECT.y,
+               TETHER_POPUP_RECT.w, TETHER_POPUP_RECT.h, 0);
+  drawDialogRect(gfx, TETHER_POPUP_RECT);
+  gfx.setTextSize(1);
+  gfx.setCursor(66, 56);
+  gfx.print("HOTSPOT");
+
+  const net::InterfaceSnapshot snapshot = net::interfaceSnapshot();
+  gfx.setCursor(18, 78);
+  gfx.print("SSID ");
+  gfx.print(snapshot.tetherSsid);
+  gfx.setCursor(18, 98);
+  gfx.print("PASS ");
+  gfx.print(snapshot.tetherPassword);
+  uiDrawBorderlessIconButton(gfx, TETHER_QR_BUTTON, ';');
+  gfx.setCursor(18, 118);
+  gfx.print("IP   ");
+  gfx.print(snapshot.tetherAddress);
+  uiDrawButton(gfx, TETHER_CLOSE_BUTTON, "CLOSE");
+  uiDrawButton(gfx, TETHER_STOP_BUTTON, "STOP");
 }
 
 uint8_t WifiApp::selectedPopupActions(PopupAction *actions, uint8_t capacity,
@@ -1711,6 +1773,14 @@ void WifiApp::advancePortScan() {
 // ---- Touch handlers ----
 
 void WifiApp::handleNetworkTouch(const TouchPoint &point) {
+  if (uiContains(TETHER_BUTTON, point)) {
+    if (!net::tetheringActive() && !net::startGeneratedTethering()) {
+      wifiManager.setStatus("Hotspot failed");
+      return;
+    }
+    tetherPopupOpen = true;
+    return;
+  }
   if (displayState() != WIFI_DISPLAY_OFF && uiContains(SCAN_BUTTON, point)) {
     press.press(0);
     scanNetworks();
@@ -1755,6 +1825,37 @@ void WifiApp::handleNetworkTouch(const TouchPoint &point) {
     selectedIndex = scanIndex;
   }
   popupOpen = true;
+}
+
+void WifiApp::handleTetherTouch(const TouchPoint &point) {
+  if (tetherQrOpen) {
+    tetherQrOpen = false;
+    return;
+  }
+  if (uiContains(TETHER_QR_BUTTON, point)) {
+    const net::InterfaceSnapshot snapshot = net::interfaceSnapshot();
+    char payload[SystemQrCode::maxPayload + 1] = {};
+    const int length = snprintf(payload, sizeof(payload),
+                                "WIFI:T:WPA;S:%s;P:%s;;",
+                                snapshot.tetherSsid,
+                                snapshot.tetherPassword);
+    tetherQrOpen = length > 0 &&
+                   length <= SystemQrCode::maxPayload &&
+                   tetherQr.encode(payload);
+    return;
+  }
+  if (uiContains(TETHER_CLOSE_BUTTON, point)) {
+    tetherPopupOpen = false;
+    return;
+  }
+  if (uiContains(TETHER_STOP_BUTTON, point)) {
+    net::stopTethering();
+    tetherPopupOpen = false;
+    return;
+  }
+  if (!uiContains(TETHER_POPUP_RECT, point)) {
+    tetherPopupOpen = false;
+  }
 }
 
 void WifiApp::handlePopupTouch(const TouchPoint &point) {

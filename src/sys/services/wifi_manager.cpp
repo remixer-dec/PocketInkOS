@@ -6,6 +6,7 @@
 
 #include "sys/services/wifi_manager.h"
 #include "sys/system_config.h"
+#include "net/network_interface.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -55,8 +56,7 @@ bool WifiManager::startSta() {
     timeSync.setStatus("Low WiFi heap");
     return false;
   }
-  WiFi.persistent(false);
-  if (!WiFi.mode(WIFI_STA)) {
+  if (!net::startStationInterface()) {
     state = STATE_FAILED;
     timeSync.setStatus("WiFi start fail");
     return false;
@@ -89,9 +89,10 @@ void WifiManager::disconnect() {
   if (staStarted || WiFi.status() == WL_CONNECTED) {
     WiFi.scanDelete();
     if (WiFi.status() == WL_CONNECTED) {
-      WiFi.disconnect(true, false);
+      // Turning the radio off here would also tear down an active local AP.
+      WiFi.disconnect(!net::tetheringActive(), false);
     }
-    WiFi.mode(WIFI_OFF);
+    net::stopStationInterface();
   }
   staStarted = false;
   state = STATE_IDLE;

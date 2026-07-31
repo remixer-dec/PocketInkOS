@@ -9,7 +9,7 @@
 /// Magic value that marks a binary as a .pink executable.
 static const uint32_t PINK_EXECUTABLE_MAGIC = 0x4b4e4950UL;
 /// ABI version emitted by the current .pink build tooling.
-static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 16;
+static const uint16_t PINK_EXECUTABLE_ABI_VERSION = 17;
 /// Oldest .pink ABI version the current firmware still accepts.
 static const uint16_t PINK_EXECUTABLE_MIN_ABI_VERSION = 7;
 static const uint16_t PINK_EXECUTABLE_HEADER_SIZE = 28;
@@ -62,6 +62,7 @@ enum PinkFeature : uint32_t {
   PINK_FEATURE_WIFI_SCAN = 1U << 6U,
   PINK_FEATURE_AGENTFIESTA = 1U << 7U,
   PINK_FEATURE_RETURNABLE_JS = 1U << 8U,
+  PINK_FEATURE_LAN_SERVER = 1U << 9U,
 };
 
 enum PinkFileAuthorization : uint8_t {
@@ -183,6 +184,23 @@ struct PinkSensorSnapshot {
 struct PinkWifiNetwork {
   char ssid[33] = {};
   int32_t rssi = -127;
+};
+
+enum PinkHttpMethod : uint8_t {
+  PINK_HTTP_GET = 0,
+  PINK_HTTP_POST = 1,
+  PINK_HTTP_PUT = 2,
+  PINK_HTTP_DELETE = 3,
+};
+
+struct PinkHttpRequest {
+  const uint8_t *body = nullptr;
+  size_t bodySize = 0;
+  uint32_t requestId = 0;
+  uint8_t method = PINK_HTTP_GET;
+  char path[192] = {};
+  char query[384] = {};
+  char contentType[96] = {};
 };
 
 /// Shared event payload exchanged between the firmware and a .pink app.
@@ -322,6 +340,14 @@ struct PinkHost {
                              const PinkSpriteFrame *frame, int16_t x,
                              int16_t y, uint8_t dither, uint8_t cacheEntries,
                              const PinkImageTransform *transform);
+  int8_t (*httpStart)(uint16_t port, const char *staticDirectory,
+                      const char *username, const char *password);
+  int8_t (*httpRoute)(uint8_t method, const char *path);
+  int8_t (*httpNextRequest)(PinkHttpRequest *out);
+  int8_t (*httpRespond)(uint32_t requestId, int status,
+                        const char *contentType, const uint8_t *body,
+                        size_t bodySize);
+  bool (*localAddress)(char *out, size_t outSize);
 };
 
 inline bool pinkSpritesSupported(const PinkHost *host) {
@@ -330,6 +356,16 @@ inline bool pinkSpritesSupported(const PinkHost *host) {
              offsetof(PinkHost, drawSpriteBuffer) +
                  sizeof(PinkHost::drawSpriteBuffer) &&
          host->drawSpritePath != nullptr && host->drawSpriteBuffer != nullptr;
+}
+
+inline bool pinkHttpSupported(const PinkHost *host) {
+  return host != nullptr && host->abiVersion >= 17U &&
+         host->hostSize >=
+             offsetof(PinkHost, localAddress) +
+                 sizeof(PinkHost::localAddress) &&
+         host->httpStart != nullptr && host->httpRoute != nullptr &&
+         host->httpNextRequest != nullptr && host->httpRespond != nullptr &&
+         host->localAddress != nullptr;
 }
 
 inline int8_t pinkDrawSpritePath(
