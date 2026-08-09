@@ -55,7 +55,7 @@ private:
   void flushDisplay(PeriodicDisplayMode mode);
   void seedSleepClockPreviousFrame(const SleepClockSnapshot &sleepClock);
   void renderSleepClockScreen(bool partialUpdate, ConfigTimeFormat timeFormat,
-                              bool timeEstimated);
+                              ConfigDateFormat dateFormat, bool timeEstimated);
   bool finishTimerWake(const SleepClockSnapshot &sleepClock, bool clockSet,
                        int64_t localUnix, bool keepPeriodicDisplay);
   void prepareForPowerTransition();

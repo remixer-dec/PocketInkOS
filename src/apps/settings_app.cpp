@@ -11,6 +11,7 @@
 #include "sys/system_config.h"
 #include "ui/components/list_component.h"
 #include "ui/icon_ascii_font.h"
+#include "ui/remote_text_input.h"
 #include "ui/ui_helpers.h"
 
 #include <Arduino.h>
@@ -51,6 +52,7 @@ enum RootItem : uint8_t {
   ROOT_TIME,
   ROOT_CALIBRATION,
   ROOT_WIFI,
+  ROOT_NETWORK,
   ROOT_POWER,
   ROOT_INTERFACE,
   ROOT_APPS,
@@ -125,8 +127,8 @@ struct SettingDefinition {
 };
 
 const char *const kRootLabels[] = {
-    "Date & time", "Calibration", "Wi-Fi", "Power management",
-    "Interface", "Apps", "About"};
+    "Date & time", "Calibration", "Wi-Fi", "Network",
+    "Power management", "Interface", "Apps", "About"};
 const char *const kInterfaceLabels[] = {"General", "Home", "Lockscreen"};
 
 const SettingOption kTimeFormatOptions[] = {
@@ -701,6 +703,7 @@ const char *appOptionLabel(const AppConfigSetting &setting, const char *value) {
 
 void SettingsApp::reset() {
   releaseInput();
+  networkSettings.reset();
   page = Page::Root;
   group = GROUP_ROOT;
   editingSetting = kNoSetting;
@@ -713,7 +716,10 @@ void SettingsApp::reset() {
   resetList();
 }
 
-void SettingsApp::release() { releaseInput(); }
+void SettingsApp::release() {
+  releaseInput();
+  networkSettings.release();
+}
 
 void SettingsApp::resetList() {
   scrollOffset = 0;
@@ -837,10 +843,12 @@ bool SettingsApp::allocateInput(uint8_t capacity) {
   }
   inputCapacity = capacity;
   input[0] = '\0';
+  remoteTextInputRegister(this, input, inputCapacity);
   return true;
 }
 
 void SettingsApp::releaseInput() {
+  remoteTextInputUnregister(this);
   if (input != nullptr) {
     psram::release(input);
     input = nullptr;
@@ -854,6 +862,10 @@ bool SettingsApp::popupVisible() const {
 }
 
 void SettingsApp::draw(Adafruit_GFX &gfx) {
+  if (page == Page::Network) {
+    networkSettings.draw(gfx);
+    return;
+  }
   if (page == Page::Input || page == Page::AppInput) {
     inputKeyboard.draw(gfx, input != nullptr ? input : "",
                        inputCapacity > 0 ? inputCapacity - 1 : 0);
@@ -1126,6 +1138,9 @@ bool SettingsApp::handleTouch(const TouchPoint &point) {
     return false;
 #endif
   }
+  if (page == Page::Network) {
+    return networkSettings.handleTouch(point);
+  }
   return page == Page::Input || page == Page::AppInput
              ? handleInputTouch(point)
              : handleListTouch(point);
@@ -1193,6 +1208,9 @@ void SettingsApp::activateListIndex(uint16_t index) {
   if (page == Page::Root) {
     if (index == ROOT_APPS) {
       openAppList();
+    } else if (index == ROOT_NETWORK) {
+      networkSettings.reset();
+      page = Page::Network;
     } else if (index == ROOT_POWER) {
       openGroup(GROUP_POWER);
     } else if (index == ROOT_INTERFACE) {
@@ -1438,6 +1456,14 @@ bool SettingsApp::handleMenuButton() {
     resetList();
     return true;
   }
+  if (page == Page::Network) {
+    if (networkSettings.handleMenuButton()) {
+      return true;
+    }
+    page = Page::Root;
+    resetList();
+    return true;
+  }
   if (page == Page::AppInput || page == Page::AppOptions) {
     if (page == Page::AppInput) {
       releaseInput();
@@ -1487,6 +1513,9 @@ bool SettingsApp::handleMenuButton() {
 }
 
 bool SettingsApp::handlePowerButton() {
+  if (page == Page::Network) {
+    return networkSettings.handlePowerButton();
+  }
   if (page == Page::Input || page == Page::AppInput) {
     inputKeyboard.toggleCaps();
     return true;
@@ -1501,6 +1530,9 @@ bool SettingsApp::handlePowerButton() {
 bool SettingsApp::update() {
   bool changed = (page == Page::Input || page == Page::AppInput) &&
                  inputKeyboard.update();
+  if (page == Page::Network && networkSettings.update()) {
+    changed = true;
+  }
   if (popupUntil != 0 && static_cast<long>(millis() - popupUntil) >= 0) {
     popup[0] = '\0';
     popupUntil = 0;
@@ -1510,5 +1542,6 @@ bool SettingsApp::update() {
 }
 
 bool SettingsApp::hasActiveSession() const {
-  return page == Page::Input || page == Page::AppInput;
+  return page == Page::Input || page == Page::AppInput ||
+         (page == Page::Network && networkSettings.editing());
 }

@@ -38,6 +38,17 @@ public:
   void formatTime(char *out, size_t outSize, ConfigTimeFormat format) const;
   /// Formats local date according to system config.
   void formatDate(char *out, size_t outSize) const;
+  /// Formats local date using an explicit display format. Sleep-clock wakes use
+  /// this with the RTC-retained format before SD-backed configuration is ready.
+  void formatDate(char *out, size_t outSize, ConfigDateFormat format) const;
+  /// Formats an ISO date according to system config.
+  /// When includeYear is false, only the configured month/day portion is used.
+  static bool formatDateString(const char *isoDate, char *out, size_t outSize,
+                               bool includeYear = true);
+  /// Formats an ISO date using an explicit display format.
+  static bool formatDateString(const char *isoDate, char *out, size_t outSize,
+                               ConfigDateFormat format,
+                               bool includeYear = true);
 
 private:
   int64_t baseUnix = 0;

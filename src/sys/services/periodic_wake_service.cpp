@@ -186,7 +186,7 @@ void PeriodicWakeService::seedSleepClockPreviousFrame(
   char timeText[16];
   char dateText[16];
   deviceClock.formatTime(timeText, sizeof(timeText), sleepClock.timeFormat);
-  deviceClock.formatDate(dateText, sizeof(dateText));
+  deviceClock.formatDate(dateText, sizeof(dateText), sleepClock.dateFormat);
   drawLockscreenClockScreen(display, timeText, dateText,
                             sleepClock.timeEstimated);
   display.seedPartialBothImages();
@@ -232,11 +232,12 @@ void PeriodicWakeService::flushDisplay(PeriodicDisplayMode mode) {
 }
 
 void PeriodicWakeService::renderSleepClockScreen(
-    bool partialUpdate, ConfigTimeFormat timeFormat, bool timeEstimated) {
+    bool partialUpdate, ConfigTimeFormat timeFormat,
+    ConfigDateFormat dateFormat, bool timeEstimated) {
   char timeText[16];
   char dateText[16];
   deviceClock.formatTime(timeText, sizeof(timeText), timeFormat);
-  deviceClock.formatDate(dateText, sizeof(dateText));
+  deviceClock.formatDate(dateText, sizeof(dateText), dateFormat);
 
   display.lock();
   display.clear();
@@ -277,12 +278,13 @@ void PeriodicWakeService::enterSleepClockDeepSleep() {
                                   pinkPlan.nextDueMinute);
   const uint16_t intervalSeconds = wakeIntervalSeconds(clockSet, localUnix);
   const ConfigTimeFormat timeFormat = currentSystemConfig().time.timeFormat;
+  const ConfigDateFormat dateFormat = currentSystemConfig().time.dateFormat;
   lockscreenContentPrepareForSleep();
   sleepClockContextStart(clockSet, timeEstimated, localUnix,
                          deviceClock.utcOffsetSeconds(), intervalSeconds,
-                         timeFormat);
+                         timeFormat, dateFormat);
   wakeTraceSetSleep(WakeTracePhase::ContextStored, 1);
-  renderSleepClockScreen(false, timeFormat, timeEstimated);
+  renderSleepClockScreen(false, timeFormat, dateFormat, timeEstimated);
   wakeTraceSetSleep(WakeTracePhase::PreparingSleep, 2);
   prepareForPowerTransition();
   enterDeepSleep(wakeIntervalUs(intervalSeconds), kRetainEpdPower);
@@ -524,7 +526,7 @@ bool PeriodicWakeService::finishTimerWake(
     initializeDisplay(PeriodicDisplayMode::Partial, sleepClock);
     renderSleepClockScreen(
         initializedDisplay == PeriodicDisplayMode::Partial,
-        sleepClock.timeFormat, timeEstimated);
+        sleepClock.timeFormat, sleepClock.dateFormat, timeEstimated);
   }
 
   if (!deviceClock.snapshotLocalUnix(localUnix)) {
@@ -533,7 +535,8 @@ bool PeriodicWakeService::finishTimerWake(
   const uint16_t intervalSeconds = wakeIntervalSeconds(clockSet, localUnix);
   sleepClockContextUpdate(clockSet, timeEstimated, localUnix,
                           deviceClock.utcOffsetSeconds(), intervalSeconds,
-                          sleepClock.timeFormat, !keepPeriodicDisplay);
+                          sleepClock.timeFormat, sleepClock.dateFormat,
+                          !keepPeriodicDisplay);
   wakeTraceSetSleep(WakeTracePhase::ContextStored, 1);
   wakeTraceSetSleep(WakeTracePhase::PreparingSleep, 2);
   prepareForPowerTransition();

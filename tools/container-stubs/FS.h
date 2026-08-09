@@ -22,6 +22,7 @@ public:
   size_t position() const { return 0; }
   bool seek(uint32_t) { return false; }
   bool seek(uint32_t, SeekMode) { return false; }
+  void flush() {}
   void close() {}
   File openNextFile() { return File(); }
 };
@@ -32,6 +33,7 @@ public:
   File open(const char *, const char *) { return File(); }
   bool mkdir(const char *) { return false; }
   bool remove(const char *) { return false; }
+  bool rename(const char *, const char *) { return false; }
   bool exists(const char *) { return false; }
 };
 

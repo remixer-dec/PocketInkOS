@@ -1,6 +1,9 @@
 #include "ui/status_bar.h"
 #include "ui/icon_ascii_font.h"
 #include "sys/global.h"
+#include "sys/drivers/usb_status.h"
+#include "sys/services/connectivity_service.h"
+#include "sys/services/device_clock.h"
 
 namespace {
 
@@ -22,7 +25,7 @@ char batteryIconCharForPercentage(int percentage) {
   return 'E';
 }
 
-void drawGlyph(AppDisplay &display, char glyph, int16_t &cursorX) {
+void drawGlyph(Adafruit_GFX &display, char glyph, int16_t &cursorX) {
   char text[2] = {glyph, '\0'};
   int16_t glyphX;
   int16_t glyphY;
@@ -34,7 +37,7 @@ void drawGlyph(AppDisplay &display, char glyph, int16_t &cursorX) {
   display.print(text);
 }
 
-int16_t glyphWidth(AppDisplay &display, char glyph) {
+int16_t glyphWidth(Adafruit_GFX &display, char glyph) {
   char text[2] = {glyph, '\0'};
   int16_t textX;
   int16_t textY;
@@ -44,7 +47,7 @@ int16_t glyphWidth(AppDisplay &display, char glyph) {
   return static_cast<int16_t>(textW);
 }
 
-void drawRightAlignedText(AppDisplay &display, const char *text, int16_t y,
+void drawRightAlignedText(Adafruit_GFX &display, const char *text, int16_t y,
                           int16_t rightX) {
   int16_t textX;
   int16_t textY;
@@ -57,7 +60,43 @@ void drawRightAlignedText(AppDisplay &display, const char *text, int16_t y,
 
 } // namespace
 
-void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status) {
+void captureStatusBarSnapshot(StatusBarSnapshot &status, char *dateText,
+                              size_t dateSize, char *timeText,
+                              size_t timeSize) {
+  if (dateText != nullptr && dateSize > 0) {
+    dateText[0] = '\0';
+  }
+  if (timeText != nullptr && timeSize > 0) {
+    timeText[0] = '\0';
+  }
+  if (deviceClock.isSet()) {
+    if (dateText != nullptr && dateSize > 0) {
+      deviceClock.formatDate(dateText, dateSize);
+    }
+    if (timeText != nullptr && timeSize > 0) {
+      deviceClock.formatTime(timeText, timeSize);
+    }
+  }
+
+  const BatterySnapshot &battery = batteryMonitor.snapshot();
+  status = {};
+  status.dateText = dateText;
+  status.timeText = timeText;
+  status.battery = &battery;
+  status.wifiIcon = wifiStatusIcon();
+  status.usbConnected = usbConnected();
+}
+
+void drawStatusBar(Adafruit_GFX &display) {
+  char dateText[16] = "";
+  char timeText[16] = "";
+  StatusBarSnapshot status = {};
+  captureStatusBarSnapshot(status, dateText, sizeof(dateText), timeText,
+                           sizeof(timeText));
+  drawStatusBar(display, status);
+}
+
+void drawStatusBar(Adafruit_GFX &display, const StatusBarSnapshot &status) {
   display.fillRect(0, 0, EPD_WIDTH, kStatusBarHeight, 0);
   display.setTextColor(1);
   display.setTextSize(1);

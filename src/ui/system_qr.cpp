@@ -11,6 +11,23 @@ constexpr int kBlocks = 2;
 constexpr int kBlockDataCodewords = kDataCodewords / kBlocks;
 constexpr int kTotalCodewords = kDataCodewords + kEccCodewords * kBlocks;
 constexpr int kQuietModules = 4;
+constexpr int kModuleStorageBytes =
+    (SystemQrCode::moduleCount * SystemQrCode::moduleCount + 7) / 8;
+
+bool packedBit(const uint8_t *bits, int row, int column) {
+  const int index = row * SystemQrCode::moduleCount + column;
+  return (bits[index / 8] & (uint8_t(1U) << (index % 8))) != 0;
+}
+
+void setPackedBit(uint8_t *bits, int row, int column, bool value) {
+  const int index = row * SystemQrCode::moduleCount + column;
+  const uint8_t mask = uint8_t(1U) << (index % 8);
+  if (value) {
+    bits[index / 8] |= mask;
+  } else {
+    bits[index / 8] &= static_cast<uint8_t>(~mask);
+  }
+}
 
 uint8_t gfMul(uint8_t x, uint8_t y) {
   uint8_t result = 0;
@@ -64,15 +81,15 @@ bool SystemQrCode::encode(const char *text) {
     return false;
   }
 
-  bool reserved[moduleCount][moduleCount] = {};
+  uint8_t reserved[kModuleStorageBytes] = {};
   clear();
   auto setModule = [&](int row, int col, bool value, bool reserve) {
     if (row < 0 || row >= moduleCount || col < 0 || col >= moduleCount) {
       return;
     }
-    modules[row][col] = value;
+    setPackedBit(modules, row, col, value);
     if (reserve) {
-      reserved[row][col] = true;
+      setPackedBit(reserved, row, col, true);
     }
   };
   auto finder = [&](int row, int col) {
@@ -106,13 +123,13 @@ bool SystemQrCode::encode(const char *text) {
   setModule(moduleCount - 8, 8, true, true);
   for (int i = 0; i < 9; i++) {
     if (i != 6) {
-      reserved[8][i] = true;
-      reserved[i][8] = true;
+      setPackedBit(reserved, 8, i, true);
+      setPackedBit(reserved, i, 8, true);
     }
   }
   for (int i = 0; i < 8; i++) {
-    reserved[8][moduleCount - 1 - i] = true;
-    reserved[moduleCount - 1 - i][8] = true;
+    setPackedBit(reserved, 8, moduleCount - 1 - i, true);
+    setPackedBit(reserved, moduleCount - 1 - i, 8, true);
   }
 
   uint8_t data[kDataCodewords] = {};
@@ -169,13 +186,13 @@ bool SystemQrCode::encode(const char *text) {
     while (row >= 0 && row < moduleCount) {
       for (int offset = 0; offset < 2; offset++) {
         const int currentCol = col - offset;
-        if (!reserved[row][currentCol]) {
+        if (!packedBit(reserved, row, currentCol)) {
           bool value = bit < kTotalCodewords * 8 &&
                        (all[bit / 8] & (0x80U >> (bit % 8))) != 0;
           if ((row + currentCol) % 2 == 0) {
             value = !value;
           }
-          modules[row][currentCol] = value;
+          setPackedBit(modules, row, currentCol, value);
           bit++;
         }
       }
@@ -217,7 +234,7 @@ void SystemQrCode::draw(Adafruit_GFX &gfx, int16_t x, int16_t y, int16_t size,
   const int totalModules = moduleCount + kQuietModules * 2;
   for (int row = 0; row < moduleCount; row++) {
     for (int col = 0; col < moduleCount; col++) {
-      if (!modules[row][col]) {
+      if (!darkModule(row, col)) {
         continue;
       }
       const int16_t left =

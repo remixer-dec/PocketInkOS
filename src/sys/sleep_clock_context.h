@@ -23,6 +23,8 @@ struct SleepClockSnapshot {
   bool previousFrameValid;
   /// Clock presentation used for the previous e-paper frame.
   ConfigTimeFormat timeFormat;
+  /// Date presentation used for the previous e-paper frame.
+  ConfigDateFormat dateFormat;
 };
 
 /// Starts periodic sleep clock mode with the current clock state.
@@ -30,7 +32,8 @@ void sleepClockContextStart(bool clockSet, bool timeEstimated,
                             int64_t localUnix,
                             int32_t utcOffsetSeconds,
                             uint16_t wakeIntervalSeconds,
-                            ConfigTimeFormat timeFormat);
+                            ConfigTimeFormat timeFormat,
+                            ConfigDateFormat dateFormat);
 /// Loads periodic sleep clock state after wake.
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot);
 /// Updates periodic sleep clock state before returning to sleep.
@@ -39,6 +42,7 @@ void sleepClockContextUpdate(bool clockSet, bool timeEstimated,
                              int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
                              ConfigTimeFormat timeFormat,
+                             ConfigDateFormat dateFormat,
                              bool previousFrameValid = true);
 /// Clears periodic sleep clock state.
 void sleepClockContextClear();

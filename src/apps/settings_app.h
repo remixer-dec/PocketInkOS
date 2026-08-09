@@ -3,6 +3,7 @@
 
 #include "sys/system_config.h"
 #include "sys/services/touch_input.h"
+#include "ui/components/network_settings_component.h"
 #include "ui/components/t9_keyboard_component.h"
 
 #include <Adafruit_GFX.h>
@@ -33,6 +34,7 @@ private:
     AppSettings,
     AppOptions,
     AppInput,
+    Network,
     About,
   };
   Page page = Page::Root;
@@ -46,6 +48,7 @@ private:
   uint8_t inputCapacity = 0;
   uint16_t widgetMask = 0;
   T9KeyboardComponent inputKeyboard;
+  NetworkSettingsComponent networkSettings;
   char popup[20] = {};
   unsigned long popupUntil = 0;
 

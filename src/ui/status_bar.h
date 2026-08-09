@@ -3,12 +3,14 @@
 
 #include "sys/app_display.h"
 #include "sys/services/battery_monitor.h"
+#include <Adafruit_GFX.h>
+#include <stddef.h>
 #include <stdint.h>
 
-/// Data needed to render the top status bar for shell and app screens.
+/// Data needed to render the top status bar when the caller owns the snapshot.
 ///
-/// The status bar does not query services directly; callers provide one compact
-/// snapshot so app rendering remains predictable and cheap.
+/// The snapshot overload takes one compact view so app rendering remains
+/// predictable and cheap.
 struct StatusBarSnapshot {
   const char *dateText;
   const char *timeText;
@@ -17,7 +19,13 @@ struct StatusBarSnapshot {
   bool usbConnected;
 };
 
-/// Draws date/time, battery, and connectivity indicators into the display.
-void drawStatusBar(AppDisplay &display, const StatusBarSnapshot &status);
+/// Captures the live status values into caller-owned text buffers.
+void captureStatusBarSnapshot(StatusBarSnapshot &status, char *dateText,
+                              size_t dateSize, char *timeText,
+                              size_t timeSize);
+/// Draws the live date/time, battery, and connectivity indicators.
+void drawStatusBar(Adafruit_GFX &display);
+/// Draws date/time, battery, and connectivity indicators from a snapshot.
+void drawStatusBar(Adafruit_GFX &display, const StatusBarSnapshot &status);
 
 #endif

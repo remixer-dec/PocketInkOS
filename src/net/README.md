@@ -6,6 +6,13 @@
   protection, and close-vs-I/O synchronization.
 - `network_interface.*` reports the DHCP-assigned LAN address and owns the
   WPA2 hotspot/tethering interface.
+- `socks5_protocol.*` provides bounded RFC 1928/RFC 1929 framing.
+- `http_connect_protocol.*` provides bounded HTTP proxy CONNECT framing.
+- `socks5_tether.*` owns the shared transparent proxy hook. It redirects
+  hotspot traffic into SOCKS5, HTTP proxy, or TLS-protected HTTPS proxy
+  relays without exposing the internal redirect ports to clients.
+- `transparent_proxy_packet.*` performs the checksum-safe endpoint rewrite
+  used by the transparent adapter.
 - `http/http_parser.*` is the bounded, one-request HTTP/1 parser and canonical
   path mapper.
 - `http/http_server.*` provides exact routes, JSON/text responses, static
@@ -62,5 +69,25 @@ Plain returned objects are serialized as JSON. A `.pink` ABI 17 app uses
 `httpRoute`, `httpStart`, `httpNextRequest`, and `httpRespond`.
 
 The hotspot button in the Wi-Fi app creates a per-boot WPA2 password, shows it
-with the hotspot address, and can coexist with a station connection. It is a
-local device hotspot; it does not promise WAN/NAT forwarding.
+with the hotspot address, and can coexist with a station connection. Direct
+mode uses ESP32 NAPT. SOCKS5 mode supports two concurrent IPv4 TCP flows and
+one unfragmented UDP flow; other external packets are dropped. The single UDP
+association is intentional because SOCKS5 UDP replies contain no hotspot
+client identifier. SOCKS5 and username/password authentication are not
+encrypted protocols, so confidentiality still depends on the network path to
+the proxy.
+
+HTTP and HTTPS proxy modes support two concurrent IPv4 TCP tunnels. CONNECT is
+an internal protocol detail; the settings present the familiar `HTTP proxy`
+and `HTTPS proxy` names. UDP is not part of these modes and is dropped, so
+clients need a TCP-based resolver rather than ordinary UDP DNS. Basic proxy
+authentication is exposed in plaintext in HTTP proxy mode. HTTPS proxy mode
+verifies the proxy hostname with the ESP certificate bundle by default. The
+`Allow untrusted TLS` setting is an explicit opt-out for private proxies with
+untrusted certificates; enabling it disables certificate and hostname
+verification for that proxy connection.
+
+DoH mode is rejected while any external proxy route is selected. Silently
+sending device-owned DoH outside the proxy or downgrading it to ordinary UDP
+would violate the selected policy. Proxy setup, negotiation, certificate
+verification, response parsing, and resource exhaustion all fail closed.

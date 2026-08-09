@@ -31,7 +31,7 @@ struct StoredSleepClockContext {
   uint8_t timeEstimated;
   uint8_t timeFormat;
   uint8_t previousFrameValid;
-  uint8_t reserved;
+  uint8_t dateFormat;
   uint16_t wakeIntervalSeconds;
   int32_t utcOffsetSeconds;
   int64_t localUnix;
@@ -56,6 +56,7 @@ uint16_t contextChecksum(const StoredSleepClockContext &context) {
 void store(bool active, bool clockSet, bool timeEstimated, int64_t localUnix,
            int32_t utcOffsetSeconds,
            uint16_t wakeIntervalSeconds, ConfigTimeFormat timeFormat,
+           ConfigDateFormat dateFormat,
            bool previousFrameValid) {
   sleepClockContext.magic = SLEEP_CLOCK_MAGIC;
   sleepClockContext.active = active ? 1 : 0;
@@ -63,7 +64,7 @@ void store(bool active, bool clockSet, bool timeEstimated, int64_t localUnix,
   sleepClockContext.timeEstimated = timeEstimated ? 1 : 0;
   sleepClockContext.timeFormat = static_cast<uint8_t>(timeFormat);
   sleepClockContext.previousFrameValid = previousFrameValid ? 1U : 0U;
-  sleepClockContext.reserved = 0;
+  sleepClockContext.dateFormat = static_cast<uint8_t>(dateFormat);
   sleepClockContext.wakeIntervalSeconds = wakeIntervalSeconds;
   sleepClockContext.utcOffsetSeconds = utcOffsetSeconds;
   sleepClockContext.localUnix = localUnix;
@@ -76,9 +77,10 @@ void sleepClockContextStart(bool clockSet, bool timeEstimated,
                             int64_t localUnix,
                             int32_t utcOffsetSeconds,
                             uint16_t wakeIntervalSeconds,
-                            ConfigTimeFormat timeFormat) {
+                            ConfigTimeFormat timeFormat,
+                            ConfigDateFormat dateFormat) {
   store(true, clockSet, timeEstimated, localUnix, utcOffsetSeconds,
-        wakeIntervalSeconds, timeFormat, true);
+        wakeIntervalSeconds, timeFormat, dateFormat, true);
 }
 
 bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
@@ -97,6 +99,24 @@ bool sleepClockContextLoad(SleepClockSnapshot &snapshot) {
   snapshot.timeFormat = sleepClockContext.timeFormat == CONFIG_TIME_12H
                             ? CONFIG_TIME_12H
                             : CONFIG_TIME_24H;
+  switch (sleepClockContext.dateFormat) {
+  case CONFIG_DATE_MDY:
+    snapshot.dateFormat = CONFIG_DATE_MDY;
+    break;
+  case CONFIG_DATE_DMY:
+    snapshot.dateFormat = CONFIG_DATE_DMY;
+    break;
+  case CONFIG_DATE_DMY_DOT:
+    snapshot.dateFormat = CONFIG_DATE_DMY_DOT;
+    break;
+  case CONFIG_DATE_WEEKDAY:
+    snapshot.dateFormat = CONFIG_DATE_WEEKDAY;
+    break;
+  case CONFIG_DATE_ISO:
+  default:
+    snapshot.dateFormat = CONFIG_DATE_ISO;
+    break;
+  }
   return snapshot.active;
 }
 
@@ -105,9 +125,10 @@ void sleepClockContextUpdate(bool clockSet, bool timeEstimated,
                              int32_t utcOffsetSeconds,
                              uint16_t wakeIntervalSeconds,
                              ConfigTimeFormat timeFormat,
+                             ConfigDateFormat dateFormat,
                              bool previousFrameValid) {
   store(true, clockSet, timeEstimated, localUnix, utcOffsetSeconds,
-        wakeIntervalSeconds, timeFormat, previousFrameValid);
+        wakeIntervalSeconds, timeFormat, dateFormat, previousFrameValid);
 }
 
 void sleepClockContextClear() {
