@@ -12,8 +12,10 @@ struct InterfaceSnapshot {
   char tetherAddress[16] = {};
   char tetherSsid[33] = {};
   char tetherPassword[64] = {};
+  char routeStatus[24] = {};
   bool stationConnected = false;
   bool tethering = false;
+  bool routing = false;
 };
 
 /// Selects STA or AP+STA without discarding an active tethering interface.
@@ -28,6 +30,11 @@ bool startTethering(const char *ssid, const char *password);
 bool startGeneratedTethering();
 void stopTethering();
 bool tetheringActive();
+/// Reapplies fail-closed NAPT and hotspot DNS policy from regular cfg keys.
+bool applyTetherRouting();
+bool tetherRoutingActive();
+/// Called only by the transparent proxy lifecycle after its hooks are ready.
+void setTetherProxyRoutingActive(bool active);
 
 /// Returns station DHCP IP when available, otherwise the hotspot IP.
 bool localAddress(char *out, size_t outSize);

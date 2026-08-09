@@ -24,6 +24,9 @@
 #include "sys/services/sd_storage.h"
 #include "sys/drivers/usb_status.h"
 #include "sys/services/connectivity_service.h"
+#if ENABLE_NETWORK_APPS
+#include "net/network_services.h"
+#endif
 #include "sys/services/periodic_wake_service.h"
 #include "sys/services/system_stage_service.h"
 #include "sys/video/record.h"
@@ -250,6 +253,9 @@ void renderLowBatteryScreen() {
 void prepareForPowerTransition() {
   videoRecordStop();
   touch.end();
+#if ENABLE_NETWORK_APPS
+  net::networkServicesShutdown();
+#endif
   wifiTurnOff();
   disableWirelessForSleep();
   sdStorageEnd();
@@ -455,6 +461,9 @@ void loop() {
   if (wifiUpdate()) {
     shell.markDirty();
   }
+#if ENABLE_NETWORK_APPS
+  net::networkServicesUpdate(millis());
+#endif
 
   if (sdStorageUpdate()) {
     configReload();

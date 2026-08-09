@@ -9,6 +9,7 @@
 #include "netapps/lightweight_json_parser.h"
 #include "sys/global.h"
 #include "sys/psram_allocator.h"
+#include "sys/services/device_clock.h"
 #include "ui/components/chart_component.h"
 #include "ui/components/list_component.h"
 
@@ -16,6 +17,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -38,6 +40,14 @@ constexpr int16_t kRateRowHeight = 22;
 constexpr int16_t kListHeight = EPD_HEIGHT - kListY;
 constexpr int16_t kListSplitX = 180;
 constexpr int16_t kListValueRightX = 174;
+constexpr int16_t kChartBottomFiat = 156;
+constexpr int16_t kChartBottomCrypto = 148;
+constexpr int16_t kXAxisLabelGap = 7;
+constexpr int16_t kCryptoRangeButtonY = 168;
+constexpr int16_t kCryptoRangeButtonWidth = 44;
+constexpr int16_t kCryptoRangeButtonHeight = 26;
+constexpr int16_t kCryptoRangeButtonXs[] = {26, 78, 130};
+constexpr unsigned long kCryptoOneDayRefreshMs = 60000;
 
 void copyText(char *out, size_t outSize, const char *value) {
   if (out == nullptr || outSize == 0) {
@@ -97,8 +107,47 @@ bool dateDaysBefore(const char *date, uint8_t daysBefore, char *out,
   return snprintf(out, outSize, "%04d-%02d-%02d", year, month, day) == 10;
 }
 
-const char *shortDate(const char *date) {
-  return date != nullptr && strlen(date) == 10 ? date + 5 : "--";
+void civilFromUnixDays(int64_t days, int &year, unsigned &month,
+                       unsigned &day) {
+  const int64_t z = days + 719468;
+  const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const unsigned dayOfEra = static_cast<unsigned>(z - era * 146097);
+  const unsigned yearOfEra =
+      (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 -
+       dayOfEra / 146096) /
+      365;
+  year = static_cast<int>(yearOfEra) + static_cast<int>(era) * 400;
+  const unsigned dayOfYear =
+      dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
+  const unsigned monthPart = (5 * dayOfYear + 2) / 153;
+  day = dayOfYear - (153 * monthPart + 2) / 5 + 1;
+  month = monthPart + (monthPart < 10 ? 3 : -9);
+  year += month <= 2;
+}
+
+bool isoDateFromTimestamp(double timestamp, char *out, size_t outSize) {
+  if (out == nullptr || outSize == 0 || !std::isfinite(timestamp) ||
+      timestamp < 0.0) {
+    return false;
+  }
+  const int64_t unixSeconds =
+      static_cast<int64_t>(timestamp / 1000.0) + deviceClock.utcOffsetSeconds();
+  int64_t days = unixSeconds / 86400;
+  if (unixSeconds < 0 && unixSeconds % 86400 != 0) {
+    days--;
+  }
+  int year = 0;
+  unsigned month = 0;
+  unsigned day = 0;
+  civilFromUnixDays(days, year, month, day);
+  return snprintf(out, outSize, "%04d-%02u-%02u", year, month, day) == 10;
+}
+
+void formatDateLabel(const char *isoDate, char *out, size_t outSize,
+                     bool includeYear = false) {
+  if (!DeviceClock::formatDateString(isoDate, out, outSize, includeYear)) {
+    copyText(out, outSize, "--");
+  }
 }
 
 } // namespace
@@ -269,8 +318,10 @@ private:
 
 class CryptoHistoryJsonListener : public JsonStreamListener {
 public:
-  CryptoHistoryJsonListener(float *target, uint16_t capacity)
-      : values(target), maxValues(capacity) {}
+  CryptoHistoryJsonListener(float *target, uint16_t capacity, char *firstDate,
+                            char *lastDate)
+      : values(target), maxValues(capacity), firstDate(firstDate),
+        lastDate(lastDate) {}
 
   void onArrayStart(int depth, const char *key) override {
     if (depth == 2) {
@@ -280,6 +331,8 @@ public:
     }
     if (depth == 3 && inPrices) {
       pairIndex = 0;
+      timestamp = 0.0;
+      hasTimestamp = false;
     }
   }
 
@@ -295,8 +348,21 @@ public:
     if (depth != 3 || !inPrices) {
       return;
     }
-    if (pairIndex == 1 && count < maxValues) {
+    if (pairIndex == 0) {
+      timestamp = value;
+      hasTimestamp = true;
+    } else if (pairIndex == 1 && count < maxValues) {
       values[count++] = static_cast<float>(value);
+      char isoDate[11] = "";
+      if (hasTimestamp && isoDateFromTimestamp(timestamp, isoDate,
+                                               sizeof(isoDate))) {
+        if (firstDate != nullptr && firstDate[0] == '\0') {
+          copyText(firstDate, 11, isoDate);
+        }
+        if (lastDate != nullptr) {
+          copyText(lastDate, 11, isoDate);
+        }
+      }
     }
     pairIndex++;
   }
@@ -306,8 +372,12 @@ public:
 private:
   float *values;
   uint16_t maxValues;
+  char *firstDate;
+  char *lastDate;
   uint8_t pairIndex = 0;
   bool inPrices = false;
+  double timestamp = 0.0;
+  bool hasTimestamp = false;
 };
 
 void CurrencyExchangeApp::reset() {
@@ -319,6 +389,8 @@ void CurrencyExchangeApp::reset() {
   selectedRateSlot = -1;
   selectedCryptoIndex = -1;
   cryptoRange = CryptoRange::OneDay;
+  cryptoRangeEnteredAt = 0;
+  clearCryptoHistoryCaches();
   latestDate[0] = '\0';
   setStatus("");
   clearRates();
@@ -339,6 +411,7 @@ void CurrencyExchangeApp::release() {
     psram::release(historyRates);
     historyRates = nullptr;
   }
+  releaseCryptoHistoryCaches();
   rateCount = 0;
   cryptoCount = 0;
   historyCount = 0;
@@ -347,6 +420,7 @@ void CurrencyExchangeApp::release() {
   requestStarted = false;
   selectedRateSlot = -1;
   selectedCryptoIndex = -1;
+  cryptoRangeEnteredAt = 0;
 }
 
 bool CurrencyExchangeApp::hasActiveSession() const {
@@ -377,6 +451,15 @@ bool CurrencyExchangeApp::ensureHistoryStorage() {
   return historyRates != nullptr;
 }
 
+bool CurrencyExchangeApp::ensureCryptoHistoryCache(CryptoRange range) {
+  CryptoHistoryCache &cache = cryptoHistoryCaches[cryptoRangeIndex(range)];
+  if (cache.values == nullptr) {
+    cache.values = static_cast<float *>(
+        psram::allocate(sizeof(float) * MAX_HISTORY_POINTS));
+  }
+  return cache.values != nullptr;
+}
+
 void CurrencyExchangeApp::clearRates() {
   if (rates != nullptr) {
     for (uint8_t i = 0; i < MAX_RATE_COUNT; i++) {
@@ -404,6 +487,26 @@ void CurrencyExchangeApp::clearHistory() {
   historyCount = 0;
   historyFirstDate[0] = '\0';
   historyLastDate[0] = '\0';
+}
+
+void CurrencyExchangeApp::clearCryptoHistoryCaches() {
+  for (CryptoHistoryCache &cache : cryptoHistoryCaches) {
+    cache.count = 0;
+    cache.firstDate[0] = '\0';
+    cache.lastDate[0] = '\0';
+    cache.fetchedAt = 0;
+    cache.valid = false;
+  }
+}
+
+void CurrencyExchangeApp::releaseCryptoHistoryCaches() {
+  for (CryptoHistoryCache &cache : cryptoHistoryCaches) {
+    if (cache.values != nullptr) {
+      psram::release(cache.values);
+      cache.values = nullptr;
+    }
+  }
+  clearCryptoHistoryCaches();
 }
 
 void CurrencyExchangeApp::draw(Adafruit_GFX &gfx) {
@@ -439,6 +542,12 @@ void CurrencyExchangeApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool CurrencyExchangeApp::update() {
+  if (state == State::CryptoChart && cryptoHistoryNeedsRefresh()) {
+    state = State::LoadingCryptoHistory;
+    requestStarted = false;
+    return true;
+  }
+
   const bool loading = state == State::LoadingFiatRates ||
                        state == State::LoadingFiatHistory ||
                        state == State::LoadingCryptoMarkets ||
@@ -491,6 +600,8 @@ bool CurrencyExchangeApp::handleTouch(const TouchPoint &point) {
       return false;
     }
     listOffset = 0;
+    selectedRateSlot = -1;
+    selectedCryptoIndex = -1;
     requestStarted = false;
     state = result.index == 0 ? State::LoadingFiatRates
                               : State::LoadingCryptoMarkets;
@@ -498,11 +609,23 @@ bool CurrencyExchangeApp::handleTouch(const TouchPoint &point) {
   }
 
   if (state == State::CryptoChart) {
-    if (point.y < 166 || point.x < 52 || point.x >= 148) {
+    if (point.y < kCryptoRangeButtonY ||
+        point.y >= kCryptoRangeButtonY + kCryptoRangeButtonHeight) {
       return false;
     }
-    const CryptoRange range =
-        point.x < 100 ? CryptoRange::OneDay : CryptoRange::SevenDays;
+    CryptoRange range;
+    if (point.x >= kCryptoRangeButtonXs[0] &&
+        point.x < kCryptoRangeButtonXs[0] + kCryptoRangeButtonWidth) {
+      range = CryptoRange::OneDay;
+    } else if (point.x >= kCryptoRangeButtonXs[1] &&
+               point.x < kCryptoRangeButtonXs[1] + kCryptoRangeButtonWidth) {
+      range = CryptoRange::SevenDays;
+    } else if (point.x >= kCryptoRangeButtonXs[2] &&
+               point.x < kCryptoRangeButtonXs[2] + kCryptoRangeButtonWidth) {
+      range = CryptoRange::ThirtyDays;
+    } else {
+      return false;
+    }
     if (range == cryptoRange) {
       return false;
     }
@@ -528,6 +651,8 @@ bool CurrencyExchangeApp::handleTouch(const TouchPoint &point) {
                    point.y < kListY + kListHeight / 2 ? -pageRemainder
                                                      : pageRemainder);
     listOffset = nextOffset;
+    selectedRateSlot = -1;
+    selectedCryptoIndex = -1;
     return true;
   }
   listOffset = nextOffset;
@@ -535,8 +660,19 @@ bool CurrencyExchangeApp::handleTouch(const TouchPoint &point) {
     return false;
   }
   if (fiatList) {
+    const int16_t slot = rateSlotAt(result.index);
+    if (selectedRateSlot != slot) {
+      selectedRateSlot = slot;
+      setStatus("");
+      return true;
+    }
     openRate(result.index);
   } else {
+    if (selectedCryptoIndex != static_cast<int8_t>(result.index)) {
+      selectedCryptoIndex = static_cast<int8_t>(result.index);
+      setStatus("");
+      return true;
+    }
     openCrypto(result.index);
   }
   return true;
@@ -802,7 +938,8 @@ bool CurrencyExchangeApp::fetchCryptoHistory() {
     return false;
   }
 
-  CryptoHistoryJsonListener listener(historyRates, MAX_HISTORY_POINTS);
+  CryptoHistoryJsonListener listener(historyRates, MAX_HISTORY_POINTS,
+                                     historyFirstDate, historyLastDate);
   LightweightJsonParser parser;
   const bool parsed = parser.parse(
       http.getStreamPtr(), http.getSize(), FETCH_TIMEOUT_MS,
@@ -817,6 +954,7 @@ bool CurrencyExchangeApp::fetchCryptoHistory() {
     setStatus("No price history");
     return false;
   }
+  cacheCryptoHistory(cryptoRange);
   return true;
 }
 
@@ -835,7 +973,9 @@ void CurrencyExchangeApp::openCrypto(uint16_t index) {
     return;
   }
   selectedCryptoIndex = static_cast<int8_t>(index);
+  clearCryptoHistoryCaches();
   cryptoRange = CryptoRange::OneDay;
+  cryptoRangeEnteredAt = millis();
   requestStarted = false;
   state = State::LoadingCryptoHistory;
 }
@@ -845,8 +985,68 @@ void CurrencyExchangeApp::setCryptoRange(CryptoRange range) {
     return;
   }
   cryptoRange = range;
+  cryptoRangeEnteredAt = millis();
+  if (showCachedCryptoHistory(range)) {
+    return;
+  }
   requestStarted = false;
   state = State::LoadingCryptoHistory;
+}
+
+uint8_t CurrencyExchangeApp::cryptoRangeIndex(CryptoRange range) {
+  switch (range) {
+  case CryptoRange::SevenDays:
+    return 1;
+  case CryptoRange::ThirtyDays:
+    return 2;
+  case CryptoRange::OneDay:
+  default:
+    return 0;
+  }
+}
+
+bool CurrencyExchangeApp::showCachedCryptoHistory(CryptoRange range) {
+  const CryptoHistoryCache &cache = cryptoHistoryCaches[cryptoRangeIndex(range)];
+  if (!cache.valid || cache.values == nullptr || cache.count == 0 ||
+      !ensureHistoryStorage()) {
+    return false;
+  }
+  memcpy(historyRates, cache.values, sizeof(float) * cache.count);
+  historyCount = cache.count;
+  copyText(historyFirstDate, sizeof(historyFirstDate), cache.firstDate);
+  copyText(historyLastDate, sizeof(historyLastDate), cache.lastDate);
+  if (range == CryptoRange::OneDay) {
+    cryptoRangeEnteredAt = millis();
+  }
+  requestStarted = false;
+  state = State::CryptoChart;
+  return true;
+}
+
+void CurrencyExchangeApp::cacheCryptoHistory(CryptoRange range) {
+  if (!ensureCryptoHistoryCache(range)) {
+    return;
+  }
+  CryptoHistoryCache &cache = cryptoHistoryCaches[cryptoRangeIndex(range)];
+  memcpy(cache.values, historyRates, sizeof(float) * historyCount);
+  cache.count = historyCount;
+  copyText(cache.firstDate, sizeof(cache.firstDate), historyFirstDate);
+  copyText(cache.lastDate, sizeof(cache.lastDate), historyLastDate);
+  cache.fetchedAt = millis();
+  cache.valid = true;
+  if (range == CryptoRange::OneDay) {
+    cryptoRangeEnteredAt = cache.fetchedAt;
+  }
+}
+
+bool CurrencyExchangeApp::cryptoHistoryNeedsRefresh() const {
+  if (cryptoRange != CryptoRange::OneDay) {
+    return false;
+  }
+  const CryptoHistoryCache &cache = cryptoHistoryCaches[0];
+  return cache.valid && cryptoRangeEnteredAt != 0 &&
+         static_cast<unsigned long>(millis() - cryptoRangeEnteredAt) >=
+             kCryptoOneDayRefreshMs;
 }
 
 int16_t CurrencyExchangeApp::rateSlotAt(uint16_t visibleIndex) const {
@@ -890,7 +1090,9 @@ void CurrencyExchangeApp::drawLoading(Adafruit_GFX &gfx) const {
     copyText(text, sizeof(text), "Loading rates...");
   } else if (state == State::LoadingFiatHistory) {
     const RateEntry *entry = selectedRate();
-    drawHeader(gfx, "USD RATES", latestDate);
+    char latestDateText[20] = "";
+    formatDateLabel(latestDate, latestDateText, sizeof(latestDateText), true);
+    drawHeader(gfx, "USD RATES", latestDateText);
     if (inverseFiatRates) {
       snprintf(text, sizeof(text), "Loading %s/USD...",
                entry != nullptr ? entry->quote : "---");
@@ -903,8 +1105,11 @@ void CurrencyExchangeApp::drawLoading(Adafruit_GFX &gfx) const {
     copyText(text, sizeof(text), "Loading markets...");
   } else {
     const CryptoEntry *entry = selectedCrypto();
-    drawHeader(gfx, "CRYPTO USD",
-               cryptoRange == CryptoRange::OneDay ? "1D" : "7D");
+    const char *rangeLabel =
+        cryptoRange == CryptoRange::OneDay
+            ? "1D"
+            : cryptoRange == CryptoRange::SevenDays ? "7D" : "30D";
+    drawHeader(gfx, "CRYPTO USD", rangeLabel);
     snprintf(text, sizeof(text), "Loading %s prices...",
              entry != nullptr ? entry->symbol : "---");
   }
@@ -927,7 +1132,10 @@ void CurrencyExchangeApp::drawFailed(Adafruit_GFX &gfx) const {
 }
 
 void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
-  drawHeader(gfx, inverseFiatRates ? "1 UNIT = USD" : "1 USD =", latestDate);
+  char latestDateText[20] = "";
+  formatDateLabel(latestDate, latestDateText, sizeof(latestDateText), true);
+  drawHeader(gfx, inverseFiatRates ? "1 UNIT = USD" : "1 USD =",
+             latestDateText);
   if (rates == nullptr || rateCount == 0) {
     drawCentered(gfx, "No rates", 94);
     return;
@@ -944,6 +1152,11 @@ void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
     }
     const RateEntry &entry = rates[slot];
     const int16_t y = static_cast<int16_t>(kListY + row * kRateRowHeight);
+    const bool selected = slot == selectedRateSlot;
+    if (selected) {
+      gfx.fillRect(2, y - 3, kListSplitX - 6, kRateRowHeight - 1, 1);
+      gfx.setTextColor(0);
+    }
     gfx.setCursor(8, y + 7);
     gfx.print(entry.quote);
 
@@ -957,6 +1170,9 @@ void CurrencyExchangeApp::drawRateList(Adafruit_GFX &gfx) const {
     gfx.setCursor(kListValueRightX - static_cast<int16_t>(width) - x1,
                   y + 7);
     gfx.print(rateText);
+    if (selected) {
+      gfx.setTextColor(1);
+    }
     if (row + 1 < visible) {
       gfx.drawLine(4, y + kRateRowHeight - 1, kListSplitX - 5,
                    y + kRateRowHeight - 1, 1);
@@ -980,10 +1196,8 @@ void CurrencyExchangeApp::drawFiatChart(Adafruit_GFX &gfx) const {
   }
   char rateText[16] = "";
   formatRate(displayedFiatRate(entry->rate), rateText, sizeof(rateText));
-  drawPriceChart(gfx, title, rateText, 164);
-  gfx.setCursor(45, 174);
-  gfx.print(shortDate(historyFirstDate));
-  drawRightText(gfx, shortDate(historyLastDate), 174);
+  drawPriceChart(gfx, title, rateText, kChartBottomFiat);
+  drawXAxisLabels(gfx, kChartBottomFiat + kXAxisLabelGap);
 }
 
 void CurrencyExchangeApp::drawCryptoList(Adafruit_GFX &gfx) const {
@@ -1001,6 +1215,12 @@ void CurrencyExchangeApp::drawCryptoList(Adafruit_GFX &gfx) const {
     const uint16_t index = listOffset + row;
     const CryptoEntry &entry = crypto[index];
     const int16_t y = static_cast<int16_t>(kListY + row * kRateRowHeight);
+    const bool selected =
+        static_cast<int8_t>(index) == selectedCryptoIndex;
+    if (selected) {
+      gfx.fillRect(2, y - 3, kListSplitX - 6, kRateRowHeight - 1, 1);
+      gfx.setTextColor(0);
+    }
     gfx.setCursor(5, y + 7);
     gfx.print(static_cast<int>(index + 1));
     gfx.setCursor(28, y + 7);
@@ -1016,6 +1236,9 @@ void CurrencyExchangeApp::drawCryptoList(Adafruit_GFX &gfx) const {
     gfx.setCursor(kListValueRightX - static_cast<int16_t>(width) - x1,
                   y + 7);
     gfx.print(priceText);
+    if (selected) {
+      gfx.setTextColor(1);
+    }
     if (row + 1 < visible) {
       gfx.drawLine(4, y + kRateRowHeight - 1, kListSplitX - 5,
                    y + kRateRowHeight - 1, 1);
@@ -1066,22 +1289,28 @@ void CurrencyExchangeApp::drawCryptoChart(Adafruit_GFX &gfx) const {
   snprintf(title, sizeof(title), "%s/USD", entry->symbol);
   char priceText[18] = "";
   formatCryptoPrice(entry->price, priceText, sizeof(priceText));
-  drawPriceChart(gfx, title, priceText, 158);
+  drawPriceChart(gfx, title, priceText, kChartBottomCrypto);
+  drawXAxisLabels(gfx, kChartBottomCrypto + kXAxisLabelGap);
 
   const bool oneDay = cryptoRange == CryptoRange::OneDay;
-  gfx.drawRect(52, 170, 44, 24, 1);
-  gfx.drawRect(104, 170, 44, 24, 1);
-  if (oneDay) {
-    gfx.fillRect(52, 170, 44, 24, 1);
-  } else {
-    gfx.fillRect(104, 170, 44, 24, 1);
+  const bool sevenDays = cryptoRange == CryptoRange::SevenDays;
+  const int8_t selectedButton = oneDay ? 0 : sevenDays ? 1 : 2;
+  for (int8_t button = 0; button < 3; button++) {
+    const int16_t x = kCryptoRangeButtonXs[button];
+    gfx.drawRect(x, kCryptoRangeButtonY, kCryptoRangeButtonWidth,
+                 kCryptoRangeButtonHeight, 1);
+    if (button == selectedButton) {
+      gfx.fillRect(x, kCryptoRangeButtonY, kCryptoRangeButtonWidth,
+                   kCryptoRangeButtonHeight, 1);
+    }
   }
-  gfx.setTextColor(oneDay ? 0 : 1);
-  gfx.setCursor(68, 178);
-  gfx.print("1D");
-  gfx.setTextColor(oneDay ? 1 : 0);
-  gfx.setCursor(120, 178);
-  gfx.print("7D");
+  const char *labels[] = {"1D", "7D", "30D"};
+  for (int8_t button = 0; button < 3; button++) {
+    gfx.setTextColor(button == selectedButton ? 0 : 1);
+    drawCenteredInRect(gfx, labels[button], kCryptoRangeButtonXs[button],
+                       kCryptoRangeButtonY, kCryptoRangeButtonWidth,
+                       kCryptoRangeButtonHeight);
+  }
   gfx.setTextColor(1);
 }
 
@@ -1114,6 +1343,16 @@ void CurrencyExchangeApp::drawPriceChart(Adafruit_GFX &gfx,
       UiChartType::Area, &series, 1);
 }
 
+void CurrencyExchangeApp::drawXAxisLabels(Adafruit_GFX &gfx, int16_t y) const {
+  char firstDate[20] = "";
+  char lastDate[20] = "";
+  formatDateLabel(historyFirstDate, firstDate, sizeof(firstDate));
+  formatDateLabel(historyLastDate, lastDate, sizeof(lastDate));
+  gfx.setCursor(45, y);
+  gfx.print(firstDate);
+  drawRightText(gfx, lastDate, y);
+}
+
 void CurrencyExchangeApp::drawHeader(Adafruit_GFX &gfx, const char *left,
                                      const char *right) {
   gfx.setCursor(4, 6);
@@ -1130,6 +1369,20 @@ void CurrencyExchangeApp::drawCentered(Adafruit_GFX &gfx, const char *text,
   uint16_t height = 0;
   gfx.getTextBounds(text, 0, y, &x1, &y1, &width, &height);
   gfx.setCursor((EPD_WIDTH - static_cast<int16_t>(width)) / 2 - x1, y);
+  gfx.print(text);
+}
+
+void CurrencyExchangeApp::drawCenteredInRect(Adafruit_GFX &gfx,
+                                             const char *text, int16_t x,
+                                             int16_t y, int16_t width,
+                                             int16_t height) {
+  int16_t textX = 0;
+  int16_t textY = 0;
+  uint16_t textWidth = 0;
+  uint16_t textHeight = 0;
+  gfx.getTextBounds(text, 0, 0, &textX, &textY, &textWidth, &textHeight);
+  gfx.setCursor(x + (width - static_cast<int16_t>(textWidth)) / 2 - textX,
+                y + (height - static_cast<int16_t>(textHeight)) / 2 - textY);
   gfx.print(text);
 }
 

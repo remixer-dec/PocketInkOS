@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -47,6 +48,21 @@ inline heap_caps_tracking_snapshot_t &heap_caps_tracking_total_stats() {
   return stats;
 }
 
+inline std::atomic<std::ptrdiff_t> &heap_caps_failure_countdown() {
+  static std::atomic<std::ptrdiff_t> countdown{-1};
+  return countdown;
+}
+
+/// Test-only deterministic allocation failure: allow `successes` allocations,
+/// then fail subsequent allocations until disabled.
+inline void heap_caps_fail_after(std::ptrdiff_t successes) {
+  heap_caps_failure_countdown().store(successes, std::memory_order_release);
+}
+
+inline void heap_caps_disable_failures() {
+  heap_caps_failure_countdown().store(-1, std::memory_order_release);
+}
+
 inline void heap_caps_tracking_add(heap_caps_tracking_snapshot_t &stats,
                                    size_t n) {
   stats.current_bytes += n;
@@ -80,6 +96,18 @@ inline heap_caps_tracking_snapshot_t heap_caps_get_tracking(int caps) {
 
 inline void *heap_caps_malloc(size_t n, int caps) {
   constexpr uint32_t kMagic = 0x48434150U;
+  std::ptrdiff_t remaining =
+      heap_caps_failure_countdown().load(std::memory_order_acquire);
+  while (remaining >= 0) {
+    if (remaining == 0) {
+      return nullptr;
+    }
+    if (heap_caps_failure_countdown().compare_exchange_weak(
+            remaining, remaining - 1, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      break;
+    }
+  }
   void *raw = std::malloc(sizeof(heap_caps_tracking_header_t) + n);
   if (raw == nullptr) {
     return nullptr;

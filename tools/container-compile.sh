@@ -121,10 +121,19 @@ FILES=( \
   "$ROOT/src/sys/agentfiesta/feed_store.cpp" \
   "$ROOT/src/sys/agentfiesta/chat_completion.cpp" \
   "$ROOT/src/sys/agentfiesta/agentfiesta.cpp" \
+  "$ROOT/src/net/network_stack.cpp" \
+  "$ROOT/src/net/network_interface.cpp" \
+  "$ROOT/src/net/network_config.cpp" \
+  "$ROOT/src/net/http_connect_protocol.cpp" \
+  "$ROOT/src/net/socks5_protocol.cpp" \
+  "$ROOT/src/net/transparent_proxy_packet.cpp" \
+  "$ROOT/src/net/http/http_parser.cpp" \
+  "$ROOT/src/net/http/http_server.cpp" \
   "$ROOT/src/sys/ext_app_api/app_api.cpp" \
   "$ROOT/src/sys/ext_app_api/service_utils.cpp" \
   "$ROOT/src/sys/ext_app_api/permission_service.cpp" \
   "$ROOT/src/sys/ext_app_api/file_service.cpp" \
+  "$ROOT/src/sys/ext_app_api/http_service.cpp" \
   "$ROOT/src/sys/ext_app_api/modal_service.cpp" \
   "$ROOT/src/sys/ext_app_api/audio_capture_service.cpp" \
   "$ROOT/src/sys/ext_app_api/audio_service.cpp" \
@@ -193,6 +202,8 @@ FILES=( \
   "$ROOT/src/games/hangman_app.cpp" \
   "$ROOT/src/shell/shell_buttons.cpp" \
   "$ROOT/src/ui/components/audio_player_component.cpp" \
+  "$ROOT/src/ui/components/chart_component.cpp" \
+  "$ROOT/src/ui/components/network_settings_component.cpp" \
   "$ROOT/src/ui/components/date_time_picker_component.cpp" \
   "$ROOT/src/ui/components/file_picker_component.cpp" \
   "$ROOT/src/games/minesweeper_app.cpp" \
@@ -215,6 +226,7 @@ FILES=( \
   "$ROOT/src/games/sudoku_app.cpp" \
   "$ROOT/src/ui/components/t9_keyboard_component.cpp" \
   "$ROOT/src/ui/text_input_controller.cpp" \
+  "$ROOT/src/ui/remote_text_input.cpp" \
   "$ROOT/src/games/tictactoe_app.cpp" \
   "$ROOT/src/sys/services/touch_input.cpp" \
   "$ROOT/src/sys/drivers/usb_status.cpp" \
@@ -224,6 +236,14 @@ FILES=( \
 
 if [[ "$NETWORK_APPS" != "0" ]]; then
   FILES+=( \
+    "$ROOT/src/net/dns_message.cpp" \
+    "$ROOT/src/net/dns_forwarder.cpp" \
+    "$ROOT/src/net/ftp_server.cpp" \
+    "$ROOT/src/net/network_services.cpp" \
+    "$ROOT/src/net/socks5_tether.cpp" \
+    "$ROOT/src/net/share_paths.cpp" \
+    "$ROOT/src/net/web_service.cpp" \
+    "$ROOT/src/netapps/currency_exchange_app.cpp" \
     "$ROOT/src/netapps/hn_app.cpp" \
     "$ROOT/src/netapps/lightweight_json_parser.cpp" \
     "$ROOT/src/netapps/post_feed.cpp" \

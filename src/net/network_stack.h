@@ -46,17 +46,22 @@ class NetworkStack {
 public:
   struct Impl;
 
-  /// Opens a non-blocking TCP listener bound to every device IPv4 interface.
+  /// Opens a non-blocking TCP listener, optionally bound to one local IPv4.
   SocketResult openTcpServer(const char *owner, uint16_t port,
-                             uint8_t backlog, SocketHandle &out);
-  /// Opens a non-blocking UDP socket bound to every device IPv4 interface.
-  SocketResult openUdp(const char *owner, uint16_t port, SocketHandle &out);
+                             uint8_t backlog, SocketHandle &out,
+                             const char *localIpv4 = nullptr);
+  /// Opens a non-blocking UDP socket, optionally bound to one local IPv4.
+  SocketResult openUdp(const char *owner, uint16_t port, SocketHandle &out,
+                       const char *localIpv4 = nullptr);
   /// Starts a non-blocking IPv4 TCP connection.
   SocketResult openTcpClient(const char *owner, const char *ipv4,
                              uint16_t port, SocketHandle &out);
 
   /// Accepts one client from a TCP listener.
-  SocketResult accept(SocketHandle server, SocketHandle &out);
+  SocketResult accept(SocketHandle server, SocketHandle &out,
+                      char *remoteIpv4 = nullptr,
+                      size_t remoteIpv4Size = 0,
+                      uint16_t *remotePort = nullptr);
   /// Reads or writes at most size bytes. A successful zero-byte read is EOF.
   SocketResult receive(SocketHandle socket, uint8_t *out, size_t size,
                        size_t &received);

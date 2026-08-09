@@ -7,6 +7,7 @@
 #include "net/http/http_parser.h"
 #include "net/network_stack.h"
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -76,6 +77,7 @@ private:
 struct RequestContext {
   const Request &request;
   const char *path = nullptr;
+  const char *peerIpv4 = nullptr;
   uint32_t requestId = 0;
 };
 
@@ -132,15 +134,21 @@ public:
   bool basicAuth(const char *username, const char *password,
                  const char *realm = "PocketInk");
   bool cors(const CorsPolicy &policy);
+  /// Clears all routes, mounts, credentials, and CORS state. Call only after
+  /// the server using this router has stopped.
+  void reset();
 
   DispatchResult dispatch(const Request &request, uint32_t requestId,
-                          Response &response);
+                          Response &response,
+                          const char *peerIpv4 = nullptr);
   void decorate(const Request &request, Response &response) const;
 
 private:
   Impl *impl = nullptr;
+  mutable std::atomic_flag lifecycleLock = ATOMIC_FLAG_INIT;
 
   bool ensureImpl();
+  void decorateLocked(const Request &request, Response &response) const;
 };
 
 struct ServerConfig {
@@ -161,7 +169,8 @@ public:
   Server(const Server &) = delete;
   Server &operator=(const Server &) = delete;
 
-  bool start(const char *owner, uint16_t port);
+  bool start(const char *owner, uint16_t port,
+             const char *localIpv4 = nullptr);
   void stop();
   bool running() const;
   uint16_t port() const;

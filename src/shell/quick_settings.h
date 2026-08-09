@@ -46,6 +46,7 @@ private:
   PowerDialogPage page = PowerDialogPage::Power;
   unsigned long openedAt = 0;
   bool openFlag = false;
+  bool networkUnavailableNotice = false;
 
   PowerDialogPage previousPage() const;
   PowerDialogPage nextPage() const;

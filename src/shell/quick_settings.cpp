@@ -1,17 +1,27 @@
 #include "shell/quick_settings.h"
+#include "net/network_interface.h"
+#include "net/network_services.h"
 #include "sys/services/connectivity_service.h"
 #include "sys/services/device_controls.h"
 #include "sys/services/power_control.h"
 #include "sys/video/record.h"
 #include <Arduino.h>
 
+#ifndef ENABLE_NETWORK_APPS
+#define ENABLE_NETWORK_APPS 1
+#endif
+
 void QuickSettingsController::open(PowerDialogPage nextPage) {
   page = nextPage;
   openFlag = true;
+  networkUnavailableNotice = false;
   openedAt = millis();
 }
 
-void QuickSettingsController::close() { openFlag = false; }
+void QuickSettingsController::close() {
+  openFlag = false;
+  networkUnavailableNotice = false;
+}
 
 bool QuickSettingsController::isOpen() const { return openFlag; }
 
@@ -22,6 +32,16 @@ PowerDialogSnapshot QuickSettingsController::snapshot() const {
   result.wifiOn = wifiIsOn();
   result.wifiConnected = wifiIsConnected();
   result.bluetoothOn = controls.bluetoothOn;
+#if ENABLE_NETWORK_APPS
+  const net::NetworkServicesSnapshot services = net::networkServicesSnapshot();
+  result.hotspotOn = net::tetheringActive();
+  result.httpServerOn = services.http;
+  result.ftpServerOn = services.ftp;
+  const bool networkAvailable = result.wifiOn || result.hotspotOn;
+  result.httpServerAvailable = networkAvailable;
+  result.ftpServerAvailable = networkAvailable;
+  result.networkUnavailableNotice = networkUnavailableNotice;
+#endif
   result.cpuMhz = controls.cpuMhz;
   result.volume = controls.volume;
   result.muted = controls.muted;
@@ -37,7 +57,26 @@ PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) 
     return PowerDialogAction::None;
   }
 
+  if (networkUnavailableNotice) {
+    networkUnavailableNotice = false;
+    return PowerDialogAction::None;
+  }
+
   const PowerDialogAction action = powerDialogHitAction(point, page);
+  if (page == PowerDialogPage::Network) {
+    const PowerDialogSnapshot current = snapshot();
+    if (action == PowerDialogAction::HttpServerToggle &&
+        !current.httpServerAvailable) {
+      networkUnavailableNotice = true;
+      return PowerDialogAction::None;
+    }
+    if (action == PowerDialogAction::FtpServerToggle &&
+        !current.ftpServerAvailable) {
+      networkUnavailableNotice = true;
+      return PowerDialogAction::None;
+    }
+  }
+
   switch (action) {
   case PowerDialogAction::PreviousPage:
     page = previousPage();
@@ -51,6 +90,9 @@ PowerDialogAction QuickSettingsController::handleTouch(const TouchPoint &point) 
   case PowerDialogAction::PowerOff:
   case PowerDialogAction::DeepSleep:
   case PowerDialogAction::WifiToggle:
+  case PowerDialogAction::HotspotToggle:
+  case PowerDialogAction::HttpServerToggle:
+  case PowerDialogAction::FtpServerToggle:
   case PowerDialogAction::BluetoothToggle:
   case PowerDialogAction::CpuCycle:
   case PowerDialogAction::VolumeDown:
@@ -92,6 +134,26 @@ void QuickSettingsController::runAction(
     return;
   case PowerDialogAction::WifiToggle:
     wifiToggle();
+    return;
+  case PowerDialogAction::HotspotToggle:
+#if ENABLE_NETWORK_APPS
+    if (net::tetheringActive()) {
+      net::networkServicesShutdown();
+      net::stopTethering();
+    } else {
+      net::startGeneratedTethering();
+    }
+#endif
+    return;
+  case PowerDialogAction::HttpServerToggle:
+#if ENABLE_NETWORK_APPS
+    net::toggleHttpService();
+#endif
+    return;
+  case PowerDialogAction::FtpServerToggle:
+#if ENABLE_NETWORK_APPS
+    net::toggleFtpService();
+#endif
     return;
   case PowerDialogAction::BluetoothToggle:
     toggleBluetooth();
@@ -136,8 +198,14 @@ PowerDialogPage QuickSettingsController::previousPage() const {
     return PowerDialogPage::Screen;
   case PowerDialogPage::Device:
     return PowerDialogPage::Power;
-  case PowerDialogPage::Volume:
+  case PowerDialogPage::Network:
     return PowerDialogPage::Device;
+  case PowerDialogPage::Volume:
+#if ENABLE_NETWORK_APPS
+    return PowerDialogPage::Network;
+#else
+    return PowerDialogPage::Device;
+#endif
   case PowerDialogPage::Screen:
     return PowerDialogPage::Volume;
   }
@@ -149,6 +217,12 @@ PowerDialogPage QuickSettingsController::nextPage() const {
   case PowerDialogPage::Power:
     return PowerDialogPage::Device;
   case PowerDialogPage::Device:
+#if ENABLE_NETWORK_APPS
+    return PowerDialogPage::Network;
+#else
+    return PowerDialogPage::Volume;
+#endif
+  case PowerDialogPage::Network:
     return PowerDialogPage::Volume;
   case PowerDialogPage::Volume:
     return PowerDialogPage::Screen;

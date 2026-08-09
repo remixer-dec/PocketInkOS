@@ -129,6 +129,7 @@ net::http::ServerConfig HttpService::serverConfig() {
 ServiceResult HttpService::start(uint16_t port, const char *staticDirectory,
                                  const char *username,
                                  const char *password) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (port < 1024 || staticDirectory == nullptr || username == nullptr ||
       password == nullptr || strnlen(staticDirectory, 288) >= 288 ||
       strnlen(username, 192) >= 192 || strnlen(password, 192) >= 192 ||
@@ -139,10 +140,8 @@ ServiceResult HttpService::start(uint16_t port, const char *staticDirectory,
                                "invalid HTTP server options");
   }
   if (server.running()) {
-    return activePort == port
-               ? ServiceResult::ok()
-               : ServiceResult::fail(ServiceError::Busy,
-                                     "HTTP server already running");
+    return ServiceResult::fail(ServiceError::Busy,
+                               "HTTP server already running");
   }
   char resource[24] = {};
   snprintf(resource, sizeof(resource), "tcp:%u",
@@ -183,6 +182,7 @@ ServiceResult HttpService::start(uint16_t port, const char *staticDirectory,
 }
 
 ServiceResult HttpService::route(AppApiHttpMethod method, const char *path) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (path == nullptr || path[0] != '/' ||
       frameworkMethod(method) == net::http::Method::Unknown) {
     return ServiceResult::fail(ServiceError::InvalidArgument,
@@ -257,6 +257,7 @@ bool HttpService::enqueue(const net::http::RequestContext &request,
 }
 
 ServiceResult HttpService::next(AppApiHttpRequest &out) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   out = {};
   SpinGuard guard(pendingLock);
   for (Pending &entry : pending) {
@@ -279,6 +280,7 @@ ServiceResult HttpService::next(AppApiHttpRequest &out) {
 ServiceResult HttpService::respond(uint32_t requestId, int status,
                                    const char *contentType,
                                    const uint8_t *body, size_t bodySize) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (requestId == 0 || contentType == nullptr ||
       (bodySize > 0 && body == nullptr) || bodySize > 64U * 1024U) {
     return ServiceResult::fail(ServiceError::InvalidArgument,
@@ -327,6 +329,7 @@ ServiceResult HttpService::respond(uint32_t requestId, int status,
 }
 
 void HttpService::update(uint32_t nowMs) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (server.running()) {
     server.update(nowMs);
     for (uint8_t i = 0; i < kPendingCapacity; i++) {
@@ -383,6 +386,7 @@ void HttpService::clearPending(Pending &entry) {
 }
 
 void HttpService::release() {
+  SpinGuard lifecycleGuard(lifecycleLock);
   server.stop();
   {
     SpinGuard guard(pendingLock);
@@ -390,6 +394,7 @@ void HttpService::release() {
       clearPending(entry);
     }
   }
+  router.reset();
   activePort = 0;
   corsConfigured = false;
   staticMounted = false;

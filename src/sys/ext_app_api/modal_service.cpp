@@ -2,6 +2,7 @@
 
 #include "sys/global.h"
 #include "sys/ext_app_api/service_utils.h"
+#include "ui/remote_text_input.h"
 
 #include <cstring>
 
@@ -116,6 +117,7 @@ bool ModalService::handleTouch(const TouchPoint &point) {
     const KeyboardEvent event = keyboard.component.hitTest(
         point, keyboard.text, static_cast<int>(keyboard.maxLength) + 1);
     if (event.action == KEY_OK) {
+      remoteTextInputUnregister(this);
       keyboard.result = InputResult::Selected;
       activeModal = ActiveModal::None;
     }
@@ -156,6 +158,7 @@ bool ModalService::handlePowerButton() {
     return filePicker.handlePowerButton();
   }
   if (activeModal == ActiveModal::Keyboard) {
+    remoteTextInputUnregister(this);
     keyboard.result = InputResult::Cancelled;
     activeModal = ActiveModal::None;
     return true;
@@ -256,6 +259,8 @@ ServiceResult ModalService::keyboardInput(const char *initialText,
                                 : T9KeyboardComponent::Layout::Text);
   keyboard.result = InputResult::Active;
   activeModal = ActiveModal::Keyboard;
+  remoteTextInputRegister(this, keyboard.text,
+                          static_cast<size_t>(keyboard.maxLength) + 1U);
   return ServiceResult::pending();
 }
 
@@ -288,6 +293,7 @@ ServiceResult ModalService::dateInput(const DatePickerDate &initial,
 }
 
 void ModalService::release() {
+  remoteTextInputUnregister(this);
   filePicker.release();
   keyboard = {};
   date = {};

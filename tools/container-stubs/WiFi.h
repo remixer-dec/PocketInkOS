@@ -18,6 +18,8 @@ enum wl_status_t {
 #define WIFI_OFF 0
 #define WIFI_AP 2
 #define WIFI_AP_STA 3
+#define WIFI_SCAN_RUNNING -1
+#define WIFI_SCAN_FAILED -2
 
 class IPAddress {
 public:
@@ -57,6 +59,7 @@ public:
 
   int available() override { return 0; }
   int read() override { return -1; }
+  int read(uint8_t *, size_t) { return 0; }
   bool connect(const char *, uint16_t) { return true; }
   bool connect(IPAddress, uint16_t, int32_t = 0) { return true; }
   void stop() {}
@@ -67,8 +70,17 @@ public:
   void setTimeout(unsigned long) {}
 };
 
+class WiFiAPClass {
+public:
+  bool config(IPAddress, IPAddress, IPAddress, IPAddress, IPAddress) {
+    return true;
+  }
+  bool enableNAPT(bool) { return true; }
+};
+
 class WiFiClass {
 public:
+  WiFiAPClass AP;
   bool mode(int value) {
     modeValue = value;
     if (value == WIFI_OFF) {
@@ -86,7 +98,11 @@ public:
   }
   void disconnect(bool = false, bool = false) { statusValue = WL_DISCONNECTED; }
   wl_status_t status() const { return statusValue; }
-  int scanNetworks() { return 0; }
+  int16_t scanNetworks(bool async = false, bool = false, bool = false,
+                       uint32_t = 300, uint8_t = 0) {
+    return async ? WIFI_SCAN_RUNNING : 0;
+  }
+  int16_t scanComplete() const { return WIFI_SCAN_FAILED; }
   void scanDelete() {}
   String SSID() const { return savedSsid; }
   String SSID(int) const { return String(); }

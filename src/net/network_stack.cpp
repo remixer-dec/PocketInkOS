@@ -1,5 +1,6 @@
 #include "net/network_stack.h"
 
+#include "net/ipv4_address.h"
 #include "sys/psram_allocator.h"
 
 #include <atomic>
@@ -7,8 +8,8 @@
 #include <cstring>
 #include <new>
 
-#include <arpa/inet.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -231,8 +232,15 @@ static SocketResult commitOpening(NetworkStack::Impl &impl, uint8_t index,
 }
 
 SocketResult NetworkStack::openTcpServer(const char *owner, uint16_t port,
-                                         uint8_t backlog, SocketHandle &out) {
+                                         uint8_t backlog, SocketHandle &out,
+                                         const char *localIpv4) {
   out = kInvalidSocket;
+  in_addr bindAddress = {};
+  if (localIpv4 != nullptr &&
+      !parseIpv4Address(
+          localIpv4, reinterpret_cast<uint8_t *>(&bindAddress.s_addr))) {
+    return {SocketError::InvalidArgument, 0};
+  }
   if (backlog == 0 || !ensureImpl()) {
     return {backlog == 0 ? SocketError::InvalidArgument
                          : SocketError::NoMemory,
@@ -258,7 +266,8 @@ SocketResult NetworkStack::openTcpServer(const char *owner, uint16_t port,
   (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
   sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_addr.s_addr =
+      localIpv4 != nullptr ? bindAddress.s_addr : htonl(INADDR_ANY);
   address.sin_port = htons(port);
   if (::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0 ||
       ::listen(fd, backlog) != 0 || !setNonBlocking(fd)) {
@@ -278,8 +287,15 @@ SocketResult NetworkStack::openTcpServer(const char *owner, uint16_t port,
 }
 
 SocketResult NetworkStack::openUdp(const char *owner, uint16_t port,
-                                   SocketHandle &out) {
+                                   SocketHandle &out,
+                                   const char *localIpv4) {
   out = kInvalidSocket;
+  in_addr bindAddress = {};
+  if (localIpv4 != nullptr &&
+      !parseIpv4Address(
+          localIpv4, reinterpret_cast<uint8_t *>(&bindAddress.s_addr))) {
+    return {SocketError::InvalidArgument, 0};
+  }
   if (!ensureImpl()) {
     return {SocketError::NoMemory, 0};
   }
@@ -295,7 +311,8 @@ SocketResult NetworkStack::openUdp(const char *owner, uint16_t port,
   const int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_addr.s_addr =
+      localIpv4 != nullptr ? bindAddress.s_addr : htonl(INADDR_ANY);
   address.sin_port = htons(port);
   if (fd < 0 ||
       ::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0 ||
@@ -323,7 +340,8 @@ SocketResult NetworkStack::openTcpClient(const char *owner, const char *ipv4,
   char checkedOwner[kOwnerCapacity] = {};
   in_addr parsed = {};
   if (port == 0 || ipv4 == nullptr || !copyOwner(checkedOwner, owner) ||
-      inet_pton(AF_INET, ipv4, &parsed) != 1) {
+      !parseIpv4Address(ipv4,
+                        reinterpret_cast<uint8_t *>(&parsed.s_addr))) {
     return {SocketError::InvalidArgument, 0};
   }
   if (!ensureImpl()) {
@@ -384,8 +402,23 @@ SocketResult NetworkStack::openTcpClient(const char *owner, const char *ipv4,
   return {};
 }
 
-SocketResult NetworkStack::accept(SocketHandle server, SocketHandle &out) {
+SocketResult NetworkStack::accept(SocketHandle server, SocketHandle &out,
+                                  char *remoteIpv4,
+                                  size_t remoteIpv4Size,
+                                  uint16_t *remotePort) {
   out = kInvalidSocket;
+  if (remotePort != nullptr) {
+    *remotePort = 0;
+  }
+  if (remoteIpv4 == nullptr && remoteIpv4Size != 0) {
+    return {SocketError::InvalidArgument, 0};
+  }
+  if (remoteIpv4 != nullptr) {
+    if (remoteIpv4Size < INET_ADDRSTRLEN) {
+      return {SocketError::InvalidArgument, 0};
+    }
+    remoteIpv4[0] = '\0';
+  }
   Impl *current = state();
   if (current == nullptr) {
     return {SocketError::NotFound, 0};
@@ -411,10 +444,27 @@ SocketResult NetworkStack::accept(SocketHandle server, SocketHandle &out) {
     ::close(clientFd);
     return failure;
   }
+  if (length < sizeof(sockaddr_in) || address.sin_family != AF_INET) {
+    ::close(clientFd);
+    return {SocketError::Io, 0};
+  }
+  if (remoteIpv4 != nullptr &&
+      !formatIpv4Address(
+          reinterpret_cast<const uint8_t *>(&address.sin_addr.s_addr),
+          remoteIpv4, remoteIpv4Size)) {
+    ::close(clientFd);
+    return {SocketError::Io, errno};
+  }
+  if (remotePort != nullptr) {
+    *remotePort = ntohs(address.sin_port);
+  }
 
   SpinGuard guard(current->lock);
   uint8_t serverIndex = 0;
-  if (!current->indexFor(server, serverIndex)) {
+  if (!current->indexFor(server, serverIndex) ||
+      !current->records[serverIndex].active ||
+      !current->records[serverIndex].listening ||
+      current->records[serverIndex].transport != Transport::Tcp) {
     ::close(clientFd);
     return {SocketError::NotFound, 0};
   }
@@ -443,7 +493,8 @@ SocketResult NetworkStack::receive(SocketHandle socket, uint8_t *out,
                                    size_t size, size_t &received) {
   received = 0;
   Impl *current = state();
-  if ((size > 0 && out == nullptr) || current == nullptr) {
+  if (out == nullptr || size == 0 || size > static_cast<size_t>(SSIZE_MAX) ||
+      current == nullptr) {
     return {SocketError::InvalidArgument, 0};
   }
   int fd = -1;
@@ -466,7 +517,8 @@ SocketResult NetworkStack::send(SocketHandle socket, const uint8_t *data,
                                 size_t size, size_t &sent) {
   sent = 0;
   Impl *current = state();
-  if ((size > 0 && data == nullptr) || current == nullptr) {
+  if (data == nullptr || size == 0 || size > static_cast<size_t>(SSIZE_MAX) ||
+      current == nullptr) {
     return {SocketError::InvalidArgument, 0};
   }
   int fd = -1;
@@ -496,7 +548,8 @@ SocketResult NetworkStack::receiveFrom(SocketHandle socket, uint8_t *out,
                                        uint16_t &remotePort) {
   received = 0;
   remotePort = 0;
-  if ((size > 0 && out == nullptr) || remoteIpv4 == nullptr ||
+  if (out == nullptr || size == 0 || size > static_cast<size_t>(SSIZE_MAX) ||
+      remoteIpv4 == nullptr ||
       remoteIpv4Size < INET_ADDRSTRLEN) {
     return {SocketError::InvalidArgument, 0};
   }
@@ -522,8 +575,9 @@ SocketResult NetworkStack::receiveFrom(SocketHandle socket, uint8_t *out,
                : SocketResult{SocketError::Io, receivedError};
   }
   if (remote.sin_family != AF_INET ||
-      inet_ntop(AF_INET, &remote.sin_addr, remoteIpv4, remoteIpv4Size) ==
-          nullptr) {
+      !formatIpv4Address(
+          reinterpret_cast<const uint8_t *>(&remote.sin_addr.s_addr),
+          remoteIpv4, remoteIpv4Size)) {
     return {SocketError::Io, 0};
   }
   received = static_cast<size_t>(result);
@@ -537,8 +591,9 @@ SocketResult NetworkStack::sendTo(SocketHandle socket, const char *remoteIpv4,
   sent = 0;
   in_addr parsed = {};
   if (remoteIpv4 == nullptr || remotePort == 0 ||
-      (size > 0 && data == nullptr) ||
-      inet_pton(AF_INET, remoteIpv4, &parsed) != 1) {
+      data == nullptr || size == 0 || size > static_cast<size_t>(SSIZE_MAX) ||
+      !parseIpv4Address(
+          remoteIpv4, reinterpret_cast<uint8_t *>(&parsed.s_addr))) {
     return {SocketError::InvalidArgument, 0};
   }
   Impl *current = state();

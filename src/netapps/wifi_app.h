@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "sys/services/wifi_manager.h"
 #include "sys/services/touch_input.h"
+#include "ui/components/network_settings_component.h"
 #include "ui/components/t9_keyboard_component.h"
 #include "ui/system_qr.h"
 #include "ui/ui_helpers.h"
@@ -19,6 +20,7 @@ public:
     POPUP_ACTION_REMOVE,
     POPUP_ACTION_DEVICES,
     POPUP_ACTION_DISCONNECT,
+    POPUP_ACTION_SHARE,
   };
 
   void open();
@@ -35,7 +37,12 @@ public:
   void drawStatusIcon(Adafruit_GFX &gfx, int16_t x, int16_t y) const;
 
 private:
-  enum View : uint8_t { VIEW_NETWORKS, VIEW_PASSWORD, VIEW_DEVICES };
+  enum View : uint8_t {
+    VIEW_NETWORKS,
+    VIEW_PASSWORD,
+    VIEW_DEVICES,
+    VIEW_ROUTING
+  };
   enum SelectedKind : uint8_t { SELECT_NONE, SELECT_SAVED, SELECT_SCAN };
   enum DeviceTab : uint8_t { TAB_INFO, TAB_NETSCAN };
   enum ScanState : uint8_t {
@@ -53,6 +60,11 @@ private:
     PORT_MODE_QUICK,
     PORT_MODE_FULL
   };
+  enum MacResolveState : uint8_t {
+    MAC_RESOLVE_IDLE,
+    MAC_RESOLVE_RUNNING,
+    MAC_RESOLVE_DONE
+  };
 
   static const uint8_t MAX_SAVED_NETWORKS = 3;
   static const uint8_t MAX_SCANNED_NETWORKS = 6;
@@ -60,9 +72,11 @@ private:
   static const uint8_t WIFI_PASS_SIZE = 64;
   static const uint8_t WIFI_BSSID_SIZE = 18;
   static const uint16_t MAX_NET_DEVICES = 256;
-  static const uint16_t NET_SCAN_TRIES_PER_FRAME = 4;
+  static const uint16_t NET_SCAN_TRIES_PER_FRAME = 10;
   static const uint16_t MAX_PORT_RESULTS = 1024;
   static const uint16_t PORT_SCAN_TIMEOUT_MS = 500;
+  // 26 characters fit inside the device detail popup at the default font.
+  static const uint8_t MAC_COMPANY_SIZE = 27;
 
   struct SavedNetwork {
     char ssid[WIFI_SSID_SIZE];
@@ -81,7 +95,9 @@ private:
     uint32_t ip;
     uint16_t pingMs;
     char mac[18];
+    char company[MAC_COMPANY_SIZE];
     bool hasMac;
+    bool hasCompany;
     bool reachable;
   };
 
@@ -102,14 +118,18 @@ private:
   bool tetherPopupOpen = false;
   bool tetherQrOpen = false;
   SystemQrCode tetherQr;
+  bool networkQrOpen = false;
+  SystemQrCode networkQr;
   UiPressFeedback press;
   bool scanRequested = false;
   bool scanPending = false;
+  bool signalScanRunning = false;
   bool pendingSaveAfterConnect = false;
   char pendingSsid[WIFI_SSID_SIZE] = "";
   char pendingBssid[WIFI_BSSID_SIZE] = "";
   char passwordInput[WIFI_PASS_SIZE] = "";
   T9KeyboardComponent passwordKeyboard;
+  NetworkSettingsComponent routingSettings;
   SavedNetwork *savedNetworks = nullptr;
   ScanNetwork *scanNetworksCache = nullptr;
   DeviceTab deviceTab = TAB_INFO;
@@ -121,6 +141,9 @@ private:
   uint16_t networkScanDeviceCount = 0;
   NetworkDevice *networkDevices = nullptr;
   uint16_t netScanVisibleOffset = 0;
+  MacResolveState macResolveState = MAC_RESOLVE_IDLE;
+  uint16_t macResolveCurrent = 0;
+  bool macResolveWakeLockHeld = false;
   bool infoResolvedExtIp = false;
   char infoExtIpVal[46] = "";
   bool infoResolvedExtIpv6 = false;
@@ -136,6 +159,7 @@ private:
   uint16_t portScanTotal = 0;
   uint16_t portResultCount = 0;
   PortResult *portResults = nullptr;
+  bool fullPortScanWakeLockHeld = false;
   WifiPingSlot *pingSlots = nullptr;
   uint32_t lastPortProgressUpdateMs = 0;
   uint8_t portScanTargetIp[4];
@@ -160,6 +184,9 @@ private:
   int8_t findSavedNetwork(const char *ssid) const;
   void beginPasswordEntry(const char *ssid, const char *bssid);
   bool startSta();
+  void startSignalScan();
+  bool advanceSignalScan();
+  void updateSavedNetworkSignals(int found);
   void connectTo(const char *ssid, const char *password);
   void scanNetworks();
   void scanDevices();
@@ -194,6 +221,11 @@ private:
   void handleDevicePopupTouch(const TouchPoint &point);
   void handlePortScanTouch(const TouchPoint &point);
   bool fetchPlainTextUrl(const char *url, char *out, size_t outSize) const;
+  bool fetchMacCompany(const char *mac, char *out, size_t outSize) const;
+  void startMacResolution();
+  void advanceMacResolution();
+  void releaseMacResolutionWakeLock();
+  void resetMacResolution();
   void populateDeviceMac(NetworkDevice &device) const;
   uint8_t selectedPopupActions(PopupAction *actions, uint8_t capacity,
                                char *ssid, size_t ssidSize, char *password,
@@ -204,6 +236,8 @@ private:
   void advanceNetworkScan();
   void startPortScan(uint8_t ip0, uint8_t ip1, uint8_t ip2, uint8_t ip3,
                      PortScanMode mode);
+  void releaseFullPortScanWakeLock();
+  void completePortScan();
   void advancePortScan();
   void freeNetDevices();
   void freePortResults();

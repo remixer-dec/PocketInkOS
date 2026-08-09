@@ -91,6 +91,40 @@ void drawIconStateButton(AppDisplay &display, const UiRect &rect, char icon,
   TouchButton(rect, content).draw(display, selected);
 }
 
+void drawTextStateButton(AppDisplay &display, const UiRect &rect,
+                         const char *label, const char *state,
+                         bool selected = false) {
+  TouchButtonContent content;
+  content.text = state;
+  content.icon = label;
+  content.iconUsesIconFont = false;
+  content.iconPlacement = TouchButtonIconPlacement::AboveText;
+  content.iconOffsetY = -1;
+  content.textOffsetY = 1;
+  TouchButton(rect, content).draw(display, selected);
+}
+
+const char *networkServiceState(bool on, bool available) {
+  if (!available) {
+    return "N/A";
+  }
+  return on ? "ON" : "OFF";
+}
+
+void drawNetworkUnavailableNotice(AppDisplay &display) {
+  display.fillRect(24, 62, 152, 86, 0);
+  display.drawRect(24, 62, 152, 86, 1);
+  display.drawLine(24, 148, 175, 148, 1);
+  display.drawLine(24, 149, 175, 149, 1);
+  display.drawLine(24, 150, 175, 150, 1);
+  display.setTextColor(1);
+  display.setTextSize(1);
+  drawCenteredText(display, "Not available", 80);
+  drawCenteredText(display, "Turn on WiFi or", 96);
+  drawCenteredText(display, "hotspot first", 108);
+  uiDrawButton(display, {76, 120, 48, 24}, "OK");
+}
+
 void drawPowerDialogFrame(AppDisplay &display, const char *title) {
   display.fillRect(14, 56, 172, 94, 0);
   display.drawRect(14, 56, 172, 94, 1);
@@ -110,6 +144,8 @@ const char *powerPageTitle(PowerDialogPage page) {
     return "Power";
   case PowerDialogPage::Device:
     return "Device";
+  case PowerDialogPage::Network:
+    return "Network";
   case PowerDialogPage::Volume:
     return "Volume";
   case PowerDialogPage::Screen:
@@ -198,6 +234,25 @@ void drawPowerDialog(AppDisplay &display, const StatusBarSnapshot &status,
     return;
   }
 
+  if (snapshot.page == PowerDialogPage::Network) {
+    drawIconStateButton(display, POWER_LEFT_BUTTON,
+                        snapshot.hotspotOn ? 'g' : 'f',
+                        snapshot.hotspotOn ? "ON" : "OFF",
+                        pressed == PowerDialogAction::HotspotToggle);
+    drawTextStateButton(display, POWER_MIDDLE_BUTTON, "http",
+                        networkServiceState(snapshot.httpServerOn,
+                                            snapshot.httpServerAvailable),
+                        pressed == PowerDialogAction::HttpServerToggle);
+    drawTextStateButton(display, POWER_RIGHT_BUTTON, "ftp",
+                        networkServiceState(snapshot.ftpServerOn,
+                                            snapshot.ftpServerAvailable),
+                        pressed == PowerDialogAction::FtpServerToggle);
+    if (snapshot.networkUnavailableNotice) {
+      drawNetworkUnavailableNotice(display);
+    }
+    return;
+  }
+
   if (snapshot.page == PowerDialogPage::Screen) {
     drawIconButton(display, POWER_LEFT_BUTTON, ';',
                    pressed == PowerDialogAction::Screenshot);
@@ -247,6 +302,16 @@ PowerDialogAction powerDialogHitAction(const TouchPoint &point,
   }
   if (page == PowerDialogPage::Device && uiContains(POWER_RIGHT_BUTTON, point)) {
     return PowerDialogAction::CpuCycle;
+  }
+  if (page == PowerDialogPage::Network && uiContains(POWER_LEFT_BUTTON, point)) {
+    return PowerDialogAction::HotspotToggle;
+  }
+  if (page == PowerDialogPage::Network &&
+      uiContains(POWER_MIDDLE_BUTTON, point)) {
+    return PowerDialogAction::HttpServerToggle;
+  }
+  if (page == PowerDialogPage::Network && uiContains(POWER_RIGHT_BUTTON, point)) {
+    return PowerDialogAction::FtpServerToggle;
   }
   if (page == PowerDialogPage::Volume && uiContains(POWER_LEFT_BUTTON, point)) {
     return PowerDialogAction::VolumeDown;

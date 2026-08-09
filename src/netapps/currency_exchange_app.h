@@ -50,6 +50,7 @@ private:
   enum class CryptoRange : uint8_t {
     OneDay = 1,
     SevenDays = 7,
+    ThirtyDays = 30,
   };
 
   static const unsigned long FETCH_TIMEOUT_MS = 10000;
@@ -77,6 +78,15 @@ private:
   static_assert(sizeof(CryptoEntry) == 64,
                 "Crypto entries should span exactly two cache lines");
 
+  struct CryptoHistoryCache {
+    float *values = nullptr;
+    uint16_t count = 0;
+    char firstDate[11] = "";
+    char lastDate[11] = "";
+    unsigned long fetchedAt = 0;
+    bool valid = false;
+  };
+
   State state = State::Choice;
   State failedRequest = State::Choice;
   bool requestStarted = false;
@@ -88,8 +98,10 @@ private:
   int8_t selectedCryptoIndex = -1;
   uint16_t historyCount = 0;
   CryptoRange cryptoRange = CryptoRange::OneDay;
+  unsigned long cryptoRangeEnteredAt = 0;
   RateEntry *rates = nullptr;
   CryptoEntry *crypto = nullptr;
+  CryptoHistoryCache cryptoHistoryCaches[3];
   float *historyRates = nullptr;
   char latestDate[11] = "";
   char historyFirstDate[11] = "";
@@ -99,9 +111,12 @@ private:
   bool ensureRateStorage();
   bool ensureCryptoStorage();
   bool ensureHistoryStorage();
+  bool ensureCryptoHistoryCache(CryptoRange range);
   void clearRates();
   void clearCrypto();
   void clearHistory();
+  void clearCryptoHistoryCaches();
+  void releaseCryptoHistoryCaches();
   bool fetchRates();
   bool fetchFiatHistory();
   bool fetchCryptoMarkets();
@@ -109,6 +124,10 @@ private:
   void openRate(uint16_t visibleIndex);
   void openCrypto(uint16_t index);
   void setCryptoRange(CryptoRange range);
+  bool showCachedCryptoHistory(CryptoRange range);
+  void cacheCryptoHistory(CryptoRange range);
+  static uint8_t cryptoRangeIndex(CryptoRange range);
+  bool cryptoHistoryNeedsRefresh() const;
   int16_t rateSlotAt(uint16_t visibleIndex) const;
   const RateEntry *selectedRate() const;
   const CryptoEntry *selectedCrypto() const;
@@ -122,9 +141,13 @@ private:
   void drawListScrollbar(Adafruit_GFX &gfx, uint16_t itemCount) const;
   void drawPriceChart(Adafruit_GFX &gfx, const char *title,
                       const char *priceText, int16_t bottom) const;
+  void drawXAxisLabels(Adafruit_GFX &gfx, int16_t y) const;
   static void drawHeader(Adafruit_GFX &gfx, const char *left,
                          const char *right);
   static void drawCentered(Adafruit_GFX &gfx, const char *text, int16_t y);
+  static void drawCenteredInRect(Adafruit_GFX &gfx, const char *text,
+                                 int16_t x, int16_t y, int16_t width,
+                                 int16_t height);
   static void drawRightText(Adafruit_GFX &gfx, const char *text, int16_t y);
   static void formatRate(float value, char *out, size_t outSize);
   static void formatCryptoPrice(float value, char *out, size_t outSize);

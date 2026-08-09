@@ -3,6 +3,7 @@
 #endif
 
 #include "net/network_interface.h"
+#include "net/network_config.h"
 #include "sys/psram_allocator.h"
 
 #if ENABLE_NETWORK_APPS
@@ -24,6 +25,7 @@ struct TetheringState {
 };
 
 TetheringState *tether = nullptr;
+bool routingEnabled = false;
 std::atomic_flag interfaceLock = ATOMIC_FLAG_INIT;
 
 class InterfaceGuard {
@@ -55,12 +57,57 @@ bool validCredentialText(const char *text, size_t minimum, size_t maximum,
 }
 
 #if ENABLE_NETWORK_APPS
-void copyAddress(char *out, size_t outSize, const IPAddress &address) {
+bool copyAddress(char *out, size_t outSize, const IPAddress &address) {
   if (out == nullptr || outSize == 0) {
-    return;
+    return false;
   }
-  snprintf(out, outSize, "%u.%u.%u.%u", address[0], address[1], address[2],
-           address[3]);
+  const int written =
+      snprintf(out, outSize, "%u.%u.%u.%u", address[0], address[1],
+               address[2], address[3]);
+  if (written <= 0 || static_cast<size_t>(written) >= outSize) {
+    out[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
+IPAddress configuredApDns() {
+  switch (configuredDnsMode()) {
+  case DnsMode::Cloudflare:
+    return IPAddress(1, 1, 1, 1);
+  case DnsMode::Doh:
+    // DoH clients query the device-local UDP forwarder.
+    return IPAddress(192, 168, 4, 1);
+  case DnsMode::Default:
+    if (WiFi.status() == WL_CONNECTED) {
+      return WiFi.dnsIP();
+    }
+    return IPAddress(1, 1, 1, 1);
+  }
+  return IPAddress(1, 1, 1, 1);
+}
+
+bool applyTetherRoutingLocked() {
+  if (tether == nullptr) {
+    routingEnabled = false;
+    return false;
+  }
+  const IPAddress apAddress(192, 168, 4, 1);
+  const IPAddress apMask(255, 255, 255, 0);
+  const IPAddress leaseStart(192, 168, 4, 2);
+  // Reconfiguration always starts closed so a failed AP/DHCP update cannot
+  // leave the previous direct route active after selecting a proxy profile.
+  WiFi.AP.enableNAPT(false);
+  routingEnabled = false;
+  if (!WiFi.AP.config(apAddress, apAddress, apMask, leaseStart,
+                      configuredApDns())) {
+    return false;
+  }
+  const bool direct = configuredTetherRoute() == TetherRoute::Direct;
+  // Proxy profiles never fall back to direct forwarding: doing so would leak
+  // client traffic outside the selected tunnel.
+  routingEnabled = WiFi.AP.enableNAPT(direct) && direct;
+  return routingEnabled;
 }
 #endif
 
@@ -108,7 +155,12 @@ bool startTethering(const char *ssid, const char *password) {
   if (previous != nullptr) {
     WiFi.softAPdisconnect(false);
   }
+  const IPAddress apAddress(192, 168, 4, 1);
+  const IPAddress apMask(255, 255, 255, 0);
+  const IPAddress leaseStart(192, 168, 4, 2);
   if (!WiFi.mode(station ? WIFI_AP_STA : WIFI_AP) ||
+      !WiFi.AP.config(apAddress, apAddress, apMask, leaseStart,
+                      configuredApDns()) ||
       !WiFi.softAP(ssid, password)) {
     WiFi.softAPdisconnect(false);
     if (previous != nullptr) {
@@ -119,6 +171,9 @@ bool startTethering(const char *ssid, const char *password) {
         psram::release(previous);
         tether = nullptr;
         WiFi.mode(station ? WIFI_STA : WIFI_OFF);
+      } else {
+        routingEnabled = false;
+        applyTetherRoutingLocked();
       }
     } else {
       WiFi.mode(station ? WIFI_STA : WIFI_OFF);
@@ -129,6 +184,8 @@ bool startTethering(const char *ssid, const char *password) {
     return false;
   }
   tether = created;
+  routingEnabled = false;
+  applyTetherRoutingLocked();
   if (previous != nullptr) {
     memset(previous->password, 0, sizeof(previous->password));
     previous->~TetheringState();
@@ -191,6 +248,8 @@ void stopTethering() {
   if (tether == nullptr) {
     return;
   }
+  WiFi.AP.enableNAPT(false);
+  routingEnabled = false;
   const bool station = WiFi.status() == WL_CONNECTED;
   WiFi.softAPdisconnect(!station);
   memset(tether->password, 0, sizeof(tether->password));
@@ -206,20 +265,50 @@ bool tetheringActive() {
   return tether != nullptr;
 }
 
+bool applyTetherRouting() {
+#if ENABLE_NETWORK_APPS
+  InterfaceGuard guard;
+  return applyTetherRoutingLocked();
+#else
+  return false;
+#endif
+}
+
+bool tetherRoutingActive() {
+  InterfaceGuard guard;
+  return tether != nullptr && routingEnabled;
+}
+
+void setTetherProxyRoutingActive(bool active) {
+#if ENABLE_NETWORK_APPS
+  InterfaceGuard guard;
+  if (!active) {
+    routingEnabled = false;
+    return;
+  }
+  const TetherRoute route = configuredTetherRoute();
+  if (route == TetherRoute::Socks5 || route == TetherRoute::HttpConnect ||
+      route == TetherRoute::HttpsConnect) {
+    routingEnabled = tether != nullptr && WiFi.status() == WL_CONNECTED &&
+                     active;
+  }
+#else
+  (void)active;
+#endif
+}
+
 bool localAddress(char *out, size_t outSize) {
-  if (out == nullptr || outSize < 8) {
+  if (out == nullptr || outSize < 16U) {
     return false;
   }
   out[0] = '\0';
 #if ENABLE_NETWORK_APPS
   InterfaceGuard guard;
   if (WiFi.status() == WL_CONNECTED) {
-    copyAddress(out, outSize, WiFi.localIP());
-    return out[0] != '\0';
+    return copyAddress(out, outSize, WiFi.localIP());
   }
   if (tether != nullptr) {
-    copyAddress(out, outSize, WiFi.softAPIP());
-    return out[0] != '\0';
+    return copyAddress(out, outSize, WiFi.softAPIP());
   }
 #endif
   return false;
@@ -231,6 +320,7 @@ InterfaceSnapshot interfaceSnapshot() {
   InterfaceGuard guard;
   snapshot.stationConnected = WiFi.status() == WL_CONNECTED;
   snapshot.tethering = tether != nullptr;
+  snapshot.routing = tether != nullptr && routingEnabled;
   if (snapshot.stationConnected) {
     copyAddress(snapshot.stationAddress, sizeof(snapshot.stationAddress),
                 WiFi.localIP());
@@ -241,6 +331,17 @@ InterfaceSnapshot interfaceSnapshot() {
     memcpy(snapshot.tetherSsid, tether->ssid, sizeof(snapshot.tetherSsid));
     memcpy(snapshot.tetherPassword, tether->password,
            sizeof(snapshot.tetherPassword));
+    const TetherRoute route = configuredTetherRoute();
+    const char *activeStatus = route == TetherRoute::Socks5
+                                   ? "socks5"
+                               : route == TetherRoute::HttpConnect
+                                   ? "http proxy"
+                               : route == TetherRoute::HttpsConnect
+                                   ? "https proxy"
+                                   : "direct";
+    const char *status = routingEnabled ? activeStatus
+                                        : configuredRouteStatus();
+    strncpy(snapshot.routeStatus, status, sizeof(snapshot.routeStatus) - 1U);
   }
 #endif
   return snapshot;

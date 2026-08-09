@@ -1,11 +1,9 @@
 #include "shell/shell_controller.h"
-#include "sys/services/connectivity_service.h"
 #include "shell/shell_dialog_layout.h"
 #include "shell/shell_home_layout.h"
 #include "shell/shell_menu_layout.h"
 #include "shell/shell_context.h"
 #include "shell/toast.h"
-#include "sys/services/battery_monitor.h"
 #include "sys/agentfiesta/agentfiesta.h"
 #include "sys/ext_app_api/app_api.h"
 #include "sys/services/device_clock.h"
@@ -18,7 +16,7 @@
 #include "sys/services/sd_storage.h"
 #include "sys/video/record.h"
 #include "sys/system_config.h"
-#include "sys/drivers/usb_status.h"
+#include "ui/status_bar.h"
 #include <Arduino.h>
 #include <cstring>
 
@@ -397,24 +395,13 @@ void ShellController::handlePowerLongButton() {
 
 ShellData ShellController::currentShellData(char *dateText, size_t dateSize,
                                             char *timeText, size_t timeSize) {
-  dateText[0] = '\0';
-  timeText[0] = '\0';
-  if (deviceClock.isSet()) {
-    deviceClock.formatDate(dateText, dateSize);
-    deviceClock.formatTime(timeText, timeSize);
-  }
-
-  const BatterySnapshot &battery = batteryMonitor.snapshot();
   const EnvironmentSnapshot &env = environmentMonitor.snapshot();
   const SdStorageSnapshot &sd = currentSdStorageSnapshot();
 
   ShellData data = {};
-  data.status.dateText = dateText;
-  data.status.timeText = timeText;
-  data.status.battery = &battery;
-  data.status.wifiIcon = wifiStatusIcon();
-  data.status.usbConnected = usbConnected();
-  data.battery = &battery;
+  captureStatusBarSnapshot(data.status, dateText, dateSize, timeText,
+                           timeSize);
+  data.battery = data.status.battery;
   data.environment = &env;
   data.sd = &sd;
   return data;

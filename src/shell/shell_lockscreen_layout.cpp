@@ -152,10 +152,9 @@ void drawLockscreenClockScreen(AppDisplay &display, const char *timeText,
   display.getTextBounds(period, 0, 0, &periodX, &periodY, &periodW, &periodH);
 
   const int16_t gap = periodW > 0 ? kPeriodGap : 0;
-  // Keep the large clock face centered. AM/PM is a smaller trailing annotation
-  // and should not pull the primary time to the left.
-  const int16_t timeLeft =
-      (EPD_WIDTH - static_cast<int16_t>(timeW)) / 2;
+  const int16_t groupW = static_cast<int16_t>(timeW) + gap +
+                         static_cast<int16_t>(periodW);
+  const int16_t timeLeft = (EPD_WIDTH - groupW) / 2;
 
   display.setTextSize(kClockTextSize);
   display.setCursor(timeLeft - timeX, kClockY);

@@ -493,11 +493,15 @@ struct Router::Impl {
 
 Router::Router() = default;
 
-Router::~Router() {
+Router::~Router() { reset(); }
+
+void Router::reset() {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (impl != nullptr) {
     memset(impl->auth, 0, sizeof(impl->auth));
     impl->~Impl();
     psram::release(impl);
+    impl = nullptr;
   }
 }
 
@@ -515,6 +519,7 @@ bool Router::ensureImpl() {
 
 bool Router::route(Method method, const char *path, RouteHandler handler,
                    void *context) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (method == Method::Unknown || method == Method::Options ||
       handler == nullptr || !ensureImpl()) {
     return false;
@@ -547,6 +552,7 @@ bool Router::route(Method method, const char *path, RouteHandler handler,
 
 bool Router::staticFiles(const char *prefix, const char *directory,
                          StaticOpen open, void *context) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (open == nullptr || !ensureImpl()) {
     return false;
   }
@@ -582,6 +588,7 @@ bool Router::staticFiles(const char *prefix, const char *directory,
 
 bool Router::basicAuth(const char *username, const char *password,
                        const char *realm) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (!ensureImpl() || username == nullptr || password == nullptr ||
       realm == nullptr) {
     return false;
@@ -617,6 +624,7 @@ bool Router::basicAuth(const char *username, const char *password,
 }
 
 bool Router::cors(const CorsPolicy &policy) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   if (!ensureImpl()) {
     return false;
   }
@@ -640,7 +648,7 @@ bool Router::cors(const CorsPolicy &policy) {
   return true;
 }
 
-void Router::decorate(const Request &, Response &response) const {
+void Router::decorateLocked(const Request &, Response &response) const {
   if (impl == nullptr) {
     return;
   }
@@ -655,8 +663,14 @@ void Router::decorate(const Request &, Response &response) const {
   response.setHeader("Access-Control-Allow-Origin", origin);
 }
 
+void Router::decorate(const Request &request, Response &response) const {
+  SpinGuard lifecycleGuard(lifecycleLock);
+  decorateLocked(request, response);
+}
+
 DispatchResult Router::dispatch(const Request &request, uint32_t requestId,
-                                Response &response) {
+                                Response &response, const char *peerIpv4) {
+  SpinGuard lifecycleGuard(lifecycleLock);
   char path[kRoutePathCapacity] = {};
   if (request.method == Method::Options && strcmp(request.target, "*") == 0) {
     memcpy(path, "/", 2);
@@ -679,7 +693,7 @@ DispatchResult Router::dispatch(const Request &request, uint32_t requestId,
     snprintf(challenge, sizeof(challenge), "Basic realm=\"%s\"",
              realm);
     response.setHeader("WWW-Authenticate", challenge);
-    decorate(request, response);
+    decorateLocked(request, response);
     return DispatchResult::Responded;
   }
   if (request.method == Method::Options) {
@@ -730,17 +744,18 @@ DispatchResult Router::dispatch(const Request &request, uint32_t requestId,
   }
   if (handler != nullptr) {
     const DispatchResult result =
-        handler({request, path, requestId}, response, handlerContext);
+        handler({request, path, peerIpv4, requestId}, response,
+                handlerContext);
     if (result == DispatchResult::Responded) {
       response.suppressBody = request.method == Method::Head;
-      decorate(request, response);
+      decorateLocked(request, response);
     }
     return result;
   }
   if (pathExists) {
     textOrEmpty(response, "Method not allowed\n", 405);
     response.setHeader("Allow", "GET, HEAD, POST, PUT, DELETE, OPTIONS");
-    decorate(request, response);
+    decorateLocked(request, response);
     return DispatchResult::Responded;
   }
 
@@ -781,12 +796,12 @@ DispatchResult Router::dispatch(const Request &request, uint32_t requestId,
         textOrEmpty(response, "Service unavailable\n", 503);
       }
       response.suppressBody = request.method == Method::Head;
-      decorate(request, response);
+      decorateLocked(request, response);
       return DispatchResult::Responded;
     }
   }
   textOrEmpty(response, "Not found\n", 404);
-  decorate(request, response);
+  decorateLocked(request, response);
   return DispatchResult::Responded;
 }
 
@@ -815,6 +830,7 @@ struct Server::Impl {
     uint32_t deadline = 0;
     ClientState state = ClientState::Free;
     char header[kHeaderOutputCapacity] = {};
+    char remoteIpv4[16] = {};
   };
 
   Client *clients = nullptr;
@@ -867,11 +883,12 @@ static void resetClient(Server::Impl::Client &client) {
   client.headerSize = 0;
   client.headerSent = 0;
   client.requestId = 0;
+  client.remoteIpv4[0] = '\0';
   client.deadline = 0;
   client.state = Server::Impl::ClientState::Free;
 }
 
-bool Server::start(const char *owner, uint16_t port) {
+bool Server::start(const char *owner, uint16_t port, const char *localIpv4) {
   SpinGuard lifecycleGuard(lifecycleLock);
   if (impl != nullptr && impl->listener != kInvalidSocket) {
     return impl->port == port;
@@ -898,7 +915,8 @@ bool Server::start(const char *owner, uint16_t port) {
   }
   SocketHandle listener = kInvalidSocket;
   const SocketResult opened =
-      networkStack().openTcpServer(owner, port, config.maxConnections, listener);
+      networkStack().openTcpServer(owner, port, config.maxConnections,
+                                   listener, localIpv4);
   if (!opened.ok()) {
     for (uint8_t i = 0; i < config.maxConnections; i++) {
       created->clients[i].~Client();
@@ -1024,7 +1042,9 @@ void Server::update(uint32_t nowMs) {
       break;
     }
     SocketHandle accepted = kInvalidSocket;
-    const SocketResult result = networkStack().accept(impl->listener, accepted);
+    const SocketResult result = networkStack().accept(
+        impl->listener, accepted, slot->remoteIpv4,
+        sizeof(slot->remoteIpv4));
     if (!result.ok()) {
       break;
     }
@@ -1094,7 +1114,8 @@ void Server::update(uint32_t nowMs) {
             }
           } while (client.requestId == 0 || collision);
           const DispatchResult dispatched = router.dispatch(
-              client.parser.request(), client.requestId, client.response);
+              client.parser.request(), client.requestId, client.response,
+              client.remoteIpv4);
           if (dispatched == DispatchResult::Deferred) {
             client.deadline = nowMs + config.deferredTimeoutMs;
             client.state = Impl::ClientState::Deferred;
@@ -1112,12 +1133,18 @@ void Server::update(uint32_t nowMs) {
     }
 
     if (client.state == Impl::ClientState::SendingHeaders) {
+      if (client.headerSize > sizeof(client.header) ||
+          client.headerSent > client.headerSize) {
+        resetClient(client);
+        continue;
+      }
       size_t sent = 0;
+      const size_t remaining = client.headerSize - client.headerSent;
       const SocketResult result = networkStack().send(
           client.socket,
           reinterpret_cast<const uint8_t *>(client.header) + client.headerSent,
-          client.headerSize - client.headerSent, sent);
-      if (!result.ok() && !result.wouldBlock()) {
+          remaining, sent);
+      if ((!result.ok() && !result.wouldBlock()) || sent > remaining) {
         resetClient(client);
         continue;
       }
@@ -1139,12 +1166,22 @@ void Server::update(uint32_t nowMs) {
       continue;
     }
     const size_t total = client.response.contentLength();
+    if (total == 0) {
+      resetClient(client);
+      continue;
+    }
     if (client.response.bodyKind == Response::BodyKind::Memory) {
+      if (client.bodySent > total ||
+          (total > 0 && client.response.memory == nullptr)) {
+        resetClient(client);
+        continue;
+      }
       size_t sent = 0;
+      const size_t remaining = total - client.bodySent;
       const SocketResult result = networkStack().send(
           client.socket, client.response.memory + client.bodySent,
-          total - client.bodySent, sent);
-      if (!result.ok() && !result.wouldBlock()) {
+          remaining, sent);
+      if ((!result.ok() && !result.wouldBlock()) || sent > remaining) {
         resetClient(client);
         continue;
       }
@@ -1153,6 +1190,11 @@ void Server::update(uint32_t nowMs) {
         client.deadline = nowMs + config.sendTimeoutMs;
       }
     } else {
+      if (client.bodySent > total || client.chunkSent > client.chunkSize ||
+          client.chunkSize > config.streamChunkBytes) {
+        resetClient(client);
+        continue;
+      }
       if (client.chunk == nullptr) {
         client.chunk =
             static_cast<uint8_t *>(psram::allocate(config.streamChunkBytes));
@@ -1181,7 +1223,9 @@ void Server::update(uint32_t nowMs) {
         const SocketResult result = networkStack().send(
             client.socket, client.chunk + client.chunkSent,
             client.chunkSize - client.chunkSent, sent);
-        if (!result.ok() && !result.wouldBlock()) {
+        const size_t remaining = client.chunkSize - client.chunkSent;
+        if ((!result.ok() && !result.wouldBlock()) || sent > remaining ||
+            sent > total - client.bodySent) {
           resetClient(client);
           continue;
         }
@@ -1215,7 +1259,11 @@ bool Server::respond(uint32_t requestId, Response &&response) {
         client.parser.request().method == Method::Head;
     client.response = static_cast<Response &&>(response);
     client.deadline = impl->nowMs + config.sendTimeoutMs;
-    return prepareHeaders(client);
+    if (!prepareHeaders(client)) {
+      resetClient(client);
+      return false;
+    }
+    return true;
   }
   return false;
 }

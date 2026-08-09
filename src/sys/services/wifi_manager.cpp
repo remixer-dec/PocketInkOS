@@ -149,6 +149,7 @@ bool WifiManager::update() {
 
   if (state == STATE_CONNECTING && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
+    net::applyTetherRouting();
     return true;
   }
 
@@ -161,11 +162,13 @@ bool WifiManager::update() {
 
   if (state != STATE_CONNECTED && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
+    net::applyTetherRouting();
     return true;
   }
 
   if (state == STATE_CONNECTED && WiFi.status() != WL_CONNECTED) {
     state = STATE_FAILED;
+    net::applyTetherRouting();
     timeSync.setStatus("Disconnected");
     return true;
   }

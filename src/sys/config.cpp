@@ -13,6 +13,9 @@ namespace {
 static const char *kConfigDir = "/cfg";
 static const char *kSystemConfigPath = "/cfg/system.cfg";
 static const char *kDefaultTimeSyncServer = "https://time.now/developer/api/ip";
+static constexpr size_t kConfigLineCapacity = 128;
+static constexpr size_t kMaximumConfigFileBytes = 32U * 1024U;
+static constexpr size_t kMaximumConfigKeyBytes = 63;
 
 SystemConfig currentConfig;
 
@@ -74,11 +77,15 @@ char *trim(char *text) {
 }
 
 bool validKey(const char *key) {
-  if (key == nullptr || key[0] == '\0') {
+  if (key == nullptr) {
     return false;
   }
-  for (const char *cursor = key; *cursor != '\0'; cursor++) {
-    const char c = *cursor;
+  const size_t length = strnlen(key, kMaximumConfigKeyBytes + 1U);
+  if (length == 0 || length > kMaximumConfigKeyBytes) {
+    return false;
+  }
+  for (size_t i = 0; i < length; i++) {
+    const char c = key[i];
     if (!isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' &&
         c != '-') {
       return false;
@@ -91,8 +98,12 @@ bool validValue(const char *value) {
   if (value == nullptr) {
     return false;
   }
-  for (const char *cursor = value; *cursor != '\0'; cursor++) {
-    if (*cursor == '\n' || *cursor == '\r') {
+  const size_t length = strnlen(value, CONFIG_VALUE_MAX);
+  if (length >= CONFIG_VALUE_MAX) {
+    return false;
+  }
+  for (size_t i = 0; i < length; i++) {
+    if (value[i] == '\n' || value[i] == '\r') {
       return false;
     }
   }
@@ -467,33 +478,23 @@ bool visitConfigFile(const char *path, ConfigVisitHandler handler,
   if (!file) {
     return false;
   }
+  if (file.size() > kMaximumConfigFileBytes) {
+    file.close();
+    return false;
+  }
 
-  char line[128];
+  char line[kConfigLineCapacity] = {};
   size_t length = 0;
-  while (file.available() > 0) {
-    const int raw = file.read();
-    if (raw < 0) {
-      break;
-    }
-    const char c = static_cast<char>(raw);
-    if (c == '\n' || c == '\r') {
-      line[length] = '\0';
-      length = 0;
-    } else if (length + 1 < sizeof(line)) {
-      line[length++] = c;
-      continue;
-    } else {
-      length = 0;
-      continue;
-    }
-
+  bool discardingLongLine = false;
+  const auto visitLine = [&]() {
+    line[length] = '\0';
     char *text = trim(line);
     if (text[0] == '\0' || text[0] == '#' || text[0] == ';') {
-      continue;
+      return;
     }
     char *equals = strchr(text, '=');
     if (equals == nullptr) {
-      continue;
+      return;
     }
     *equals = '\0';
     char *key = trim(text);
@@ -501,20 +502,33 @@ bool visitConfigFile(const char *path, ConfigVisitHandler handler,
     if (validKey(key)) {
       handler(key, value, context);
     }
+  };
+  while (file.available() > 0) {
+    const int raw = file.read();
+    if (raw < 0) {
+      break;
+    }
+    const char c = static_cast<char>(raw);
+    if (c == '\n' || c == '\r') {
+      if (!discardingLongLine && length > 0) {
+        visitLine();
+      }
+      length = 0;
+      discardingLongLine = false;
+    } else if (discardingLongLine) {
+      continue;
+    } else if (length + 1U < sizeof(line)) {
+      line[length++] = c;
+      continue;
+    } else {
+      length = 0;
+      discardingLongLine = true;
+      continue;
+    }
   }
 
-  if (length > 0) {
-    line[length] = '\0';
-    char *text = trim(line);
-    char *equals = strchr(text, '=');
-    if (equals != nullptr) {
-      *equals = '\0';
-      char *key = trim(text);
-      char *value = trim(equals + 1);
-      if (validKey(key)) {
-        handler(key, value, context);
-      }
-    }
+  if (!discardingLongLine && length > 0) {
+    visitLine();
   }
   return true;
 }
@@ -528,6 +542,7 @@ struct LookupContext {
   char *out;
   size_t outSize;
   bool found;
+  bool truncated;
 };
 
 void lookupVisitor(const char *key, const char *value, void *context) {
@@ -535,7 +550,13 @@ void lookupVisitor(const char *key, const char *value, void *context) {
   if (lookup == nullptr || strcmp(key, lookup->key) != 0) {
     return;
   }
-  copyValue(lookup->out, lookup->outSize, value);
+  const size_t length = strnlen(value, lookup->outSize);
+  lookup->truncated = length >= lookup->outSize;
+  if (lookup->truncated) {
+    lookup->out[0] = '\0';
+  } else {
+    memcpy(lookup->out, value, length + 1U);
+  }
   lookup->found = true;
 }
 
@@ -746,7 +767,19 @@ bool configGet(const char *key, char *out, size_t outSize) {
     return false;
   }
   out[0] = '\0';
-  return systemCurrentValue(key, out, outSize);
+  if (systemCurrentValue(key, out, outSize)) {
+    return true;
+  }
+
+  // Network and future modular settings intentionally do not enlarge the
+  // always-resident SystemConfig struct. Unknown, valid system keys remain
+  // available as ordinary cfg records and are read only when requested.
+  LookupContext lookup = {key, out, outSize, false, false};
+  if (!visitConfigFile(kSystemConfigPath, lookupVisitor, &lookup)) {
+    out[0] = '\0';
+    return false;
+  }
+  return lookup.found && !lookup.truncated;
 }
 
 static bool configLineHasKey(const char *line, const char *key) {
@@ -774,25 +807,52 @@ static bool rewriteConfigFile(const char *path, const char *key,
   }
 
   const size_t keyLen = strlen(key);
-  char lineBuf[128];
+  const size_t valueLen = value != nullptr ? strlen(value) : 0;
+  if (value != nullptr && keyLen + 1U + valueLen >= kConfigLineCapacity) {
+    return false;
+  }
+  char lineBuf[kConfigLineCapacity];
   char *lines = nullptr;
   size_t linesLen = 0;
   size_t linesCap = 0;
 
   File readFile = SD_MMC.open(path);
   if (readFile) {
+    if (readFile.size() > kMaximumConfigFileBytes) {
+      readFile.close();
+      return false;
+    }
     while (readFile.available() > 0) {
       size_t len = 0;
-      while (readFile.available() > 0 && len + 1 < sizeof(lineBuf)) {
+      bool complete = false;
+      bool tooLong = false;
+      while (readFile.available() > 0) {
         const int raw = readFile.read();
-        if (raw < 0) break;
+        if (raw < 0) {
+          break;
+        }
         const char c = static_cast<char>(raw);
-        if (c == '\n' || c == '\r') break;
-        lineBuf[len++] = c;
+        if (c == '\n' || c == '\r') {
+          complete = true;
+          break;
+        }
+        if (len + 1U < sizeof(lineBuf)) {
+          lineBuf[len++] = c;
+        } else {
+          tooLong = true;
+        }
+      }
+      if (tooLong) {
+        free(lines);
+        readFile.close();
+        return false;
       }
       lineBuf[len] = '\0';
 
       if (len == 0) {
+        if (!complete && readFile.available() <= 0) {
+          break;
+        }
         continue;
       }
 
@@ -800,21 +860,47 @@ static bool rewriteConfigFile(const char *path, const char *key,
         continue;
       }
 
-      if (linesLen + len + 2 > linesCap) {
-        linesCap = linesCap == 0 ? 256 : linesCap * 2;
-        char *bigger = static_cast<char *>(realloc(lines, linesCap));
+      if (linesLen >= kMaximumConfigFileBytes ||
+          len > kMaximumConfigFileBytes - linesLen - 1U) {
+        free(lines);
+        readFile.close();
+        return false;
+      }
+      const size_t required = linesLen + len + 1U;
+      if (required > linesCap) {
+        size_t nextCapacity = linesCap == 0 ? 256U : linesCap;
+        while (nextCapacity < required) {
+          if (nextCapacity > kMaximumConfigFileBytes / 2U) {
+            nextCapacity = kMaximumConfigFileBytes;
+            break;
+          }
+          nextCapacity *= 2U;
+        }
+        if (nextCapacity < required) {
+          free(lines);
+          readFile.close();
+          return false;
+        }
+        char *bigger = static_cast<char *>(realloc(lines, nextCapacity));
         if (bigger == nullptr) {
           free(lines);
           readFile.close();
           return false;
         }
         lines = bigger;
+        linesCap = nextCapacity;
       }
       memcpy(lines + linesLen, lineBuf, len);
       linesLen += len;
       lines[linesLen++] = '\n';
     }
     readFile.close();
+  }
+
+  if (value != nullptr &&
+      linesLen > kMaximumConfigFileBytes - keyLen - valueLen - 2U) {
+    free(lines);
+    return false;
   }
 
   SD_MMC.mkdir(kConfigDir);
@@ -831,7 +917,6 @@ static bool rewriteConfigFile(const char *path, const char *key,
   free(lines);
 
   if (value != nullptr) {
-    const size_t valueLen = strlen(value);
     ok = ok &&
          writeFile.write(reinterpret_cast<const uint8_t *>(key), keyLen) == keyLen &&
          writeFile.write(reinterpret_cast<const uint8_t *>("="), 1) == 1 &&
@@ -872,9 +957,9 @@ bool configGetForApp(const char *appId, const char *key, char *out,
     return false;
   }
   out[0] = '\0';
-  LookupContext lookup = {key, out, outSize, false};
+  LookupContext lookup = {key, out, outSize, false, false};
   visitConfigFile(path, lookupVisitor, &lookup);
-  return lookup.found;
+  return lookup.found && !lookup.truncated;
 }
 
 bool configSetForApp(const char *appId, const char *key, const char *value) {

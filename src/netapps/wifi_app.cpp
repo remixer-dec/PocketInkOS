@@ -6,10 +6,12 @@
 
 #include "netapps/wifi_app.h"
 #include "net/network_interface.h"
+#include "net/network_services.h"
 #include "sys/psram_allocator.h"
 #include "sys/global.h"
 #include "sys/system_config.h"
-#include "ui/icon_ascii_font.h"
+#include "sys/services/lockscreen_guard.h"
+#include "ui/status_bar.h"
 #include "ui/components/list_component.h"
 #include "ui/components/select_button_component.h"
 #include "ui/ui_helpers.h"
@@ -18,6 +20,7 @@
 #include <esp_heap_caps.h>
 #include <IPAddress.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <atomic>
 #include <ctype.h>
@@ -67,11 +70,14 @@ static const UiRect WIFI_TOGGLE_BUTTON = {136, 172, 60, 24};
 static const UiRect POPUP_RECT = {10, 50, 180, 110};
 static const UiRect TETHER_POPUP_RECT = {10, 42, 180, 120};
 static const UiRect TETHER_QR_BUTTON = {150, 86, 26, 24};
-static const UiRect TETHER_CLOSE_BUTTON = {24, 132, 68, 24};
-static const UiRect TETHER_STOP_BUTTON = {108, 132, 68, 24};
+static const UiRect TETHER_SETTINGS_BUTTON = {16, 132, 52, 24};
+static const UiRect TETHER_CLOSE_BUTTON = {74, 132, 52, 24};
+static const UiRect TETHER_STOP_BUTTON = {132, 132, 52, 24};
 static const UiRect PASSWORD_CANCEL_BUTTON = {4, 4, 58, 20};
-static const UiRect DEVICE_BACK_BUTTON = {4, 172, 60, 24};
-static const UiRect DEVICE_SCAN_BUTTON = {136, 172, 60, 24};
+static const int16_t DEVICE_ACTION_Y = 170;
+static const UiRect DEVICE_BACK_BUTTON = {4, DEVICE_ACTION_Y, 60, 24};
+static const UiRect DEVICE_SCAN_BUTTON = {70, DEVICE_ACTION_Y, 60, 24};
+static const UiRect DEVICE_RESOLVE_BUTTON = {136, DEVICE_ACTION_Y, 60, 24};
 static const UiRect DEVICE_POPUP_RECT = {20, 50, 160, 104};
 static const uint8_t NETWORK_ROW_COUNT = 4;
 static const int16_t NETWORK_ROW_Y = 20;
@@ -96,11 +102,13 @@ static const int16_t NET_SPLIT_X = 140;
 static const int16_t PORT_SCAN_MAX_WIDTH = 192;
 static const char *PUBLIC_IPV4_URL = "http://api4.ipify.org";
 static const char *PUBLIC_IPV6_URL = "http://api6.ipify.org";
+static const char *MAC_LOOKUP_URL =
+    "https://api.maclookup.app/v2/macs/%s/company/name";
 static const int16_t DIALOG_BACKDROP_TOP_Y = 20;
 static const int16_t DIALOG_HATCH_STEP = 6;
 
 static const uint16_t QUICK_PORTS[] = {
-  22, 23, 68, 80, 135, 443, 445, 515, 631, 2999,
+  22, 23, 53, 68, 80, 135, 443, 445, 515, 631, 2999,
   2222, 2631, 3389, 4000, 4096, 4500, 4600, 5000, 5001, 5060,
   5228, 5229, 5230, 5235, 5236, 5353, 5555, 5577, 5900, 5901,
   6000, 6100, 7080, 8080, 8081, 8230, 8258, 8282, 8382, 8682,
@@ -118,6 +126,30 @@ static void copyText(char *out, size_t outSize, const char *value) {
 
 static void copyString(char *out, size_t outSize, const String &value) {
   copyText(out, outSize, value.c_str());
+}
+
+static bool copyTrimmedText(const String &body, char *out, size_t outSize) {
+  if (out == nullptr || outSize == 0) {
+    return false;
+  }
+  out[0] = '\0';
+
+  const char *text = body.c_str();
+  while (*text != '\0' && isspace(static_cast<unsigned char>(*text))) {
+    text++;
+  }
+
+  size_t len = strlen(text);
+  while (len > 0 && isspace(static_cast<unsigned char>(text[len - 1]))) {
+    len--;
+  }
+  if (len == 0 || len >= outSize) {
+    return false;
+  }
+
+  memcpy(out, text, len);
+  out[len] = '\0';
+  return true;
 }
 
 static void copyUtf8Prefix(char *out, size_t outSize, const char *value,
@@ -184,10 +216,51 @@ static bool arpMacToText(uint32_t raw, char *out, size_t outSize) {
     return false;
   }
 
-  snprintf(out, outSize, "%02x:%02x:%02x:%02x:%02x:%02x",
+  snprintf(out, outSize, "%02X:%02X:%02X:%02X:%02X:%02X",
            eth->addr[0], eth->addr[1], eth->addr[2], eth->addr[3],
            eth->addr[4], eth->addr[5]);
   return true;
+}
+
+static void uppercaseText(char *text) {
+  if (text == nullptr) {
+    return;
+  }
+  for (; *text != '\0'; text++) {
+    if (*text >= 'a' && *text <= 'z') {
+      *text = static_cast<char>(*text - 'a' + 'A');
+    }
+  }
+}
+
+static void macPrivacyRng(char *mac) {
+  randomSeed(static_cast<unsigned long>(millis()));
+  uint8_t changed = 0;
+  for (size_t i = strlen(mac); i > 0 && changed < 3; i--) {
+    if (mac[i - 1] == ':') {
+      continue;
+    }
+    mac[i - 1] = static_cast<char>('0' + random(10));
+    changed++;
+  }
+}
+
+static void drawNetworkScanProgress(Adafruit_GFX &gfx, uint32_t start,
+                                     uint32_t current, uint32_t end) {
+  const int16_t y = EPD_HEIGHT - 1;
+  gfx.fillRect(0, y, EPD_WIDTH, 1, 0);
+
+  if (end <= start || current <= start) {
+    return;
+  }
+
+  const uint32_t total = end - start;
+  const uint32_t completed = current >= end ? total : current - start;
+  const int16_t width = static_cast<int16_t>(
+      (static_cast<uint64_t>(completed) * EPD_WIDTH) / total);
+  if (width > 0) {
+    gfx.fillRect(0, y, width, 1, 1);
+  }
 }
 
 static void *appAlloc(size_t size) {
@@ -237,8 +310,22 @@ static const char *popupActionLabel(WifiApp::PopupAction action) {
     return "DEVICES";
   case WifiApp::POPUP_ACTION_DISCONNECT:
     return "DISCONNECT";
+  case WifiApp::POPUP_ACTION_SHARE:
+    return "SHARE";
   }
   return "";
+}
+
+static bool encodeWifiQr(SystemQrCode &qr, const char *ssid,
+                         const char *password) {
+  char payload[SystemQrCode::maxPayload + 1] = {};
+  const bool secured = password != nullptr && password[0] != '\0';
+  const int length = snprintf(
+      payload, sizeof(payload),
+      secured ? "WIFI:T:WPA;S:%s;P:%s;;" : "WIFI:T:nopass;S:%s;;", ssid,
+      secured ? password : "");
+  return length > 0 && length <= SystemQrCode::maxPayload &&
+         qr.encode(payload);
 }
 
 static void drawDialogRect(Adafruit_GFX &gfx, const UiRect &rect) {
@@ -249,12 +336,13 @@ static void drawDialogRect(Adafruit_GFX &gfx, const UiRect &rect) {
                rect.y + rect.h + 1, 1);
 }
 
-static void drawDialogBackdropHatch(Adafruit_GFX &gfx) {
+static void drawDialogBackdropHatch(Adafruit_GFX &gfx,
+                                    int16_t topY = DIALOG_BACKDROP_TOP_Y) {
   for (int16_t start = 0; start < EPD_WIDTH + EPD_HEIGHT;
        start += DIALOG_HATCH_STEP) {
     int16_t x0 = start;
-    int16_t y0 = DIALOG_BACKDROP_TOP_Y;
-    int16_t x1 = start - (EPD_HEIGHT - 1 - DIALOG_BACKDROP_TOP_Y);
+    int16_t y0 = topY;
+    int16_t x1 = start - (EPD_HEIGHT - 1 - topY);
     int16_t y1 = EPD_HEIGHT - 1;
     if (x0 >= EPD_WIDTH) {
       y0 += x0 - (EPD_WIDTH - 1);
@@ -264,11 +352,15 @@ static void drawDialogBackdropHatch(Adafruit_GFX &gfx) {
       y1 += x1;
       x1 = 0;
     }
-    if (y0 >= DIALOG_BACKDROP_TOP_Y && y0 < EPD_HEIGHT &&
-        y1 >= DIALOG_BACKDROP_TOP_Y && y1 < EPD_HEIGHT) {
+    if (y0 >= topY && y0 < EPD_HEIGHT && y1 >= topY && y1 < EPD_HEIGHT) {
       gfx.drawLine(x0, y0, x1, y1, 1);
     }
   }
+}
+
+static void drawFullModalBackdrop(Adafruit_GFX &gfx) {
+  gfx.fillRect(0, 0, EPD_WIDTH, EPD_HEIGHT, 0);
+  drawDialogBackdropHatch(gfx, 0);
 }
 
 static void drawListScrollbar(Adafruit_GFX &gfx, int16_t x, int16_t y,
@@ -314,18 +406,23 @@ static void drawCenteredPopupTitle(Adafruit_GFX &gfx, const char *text) {
 
 void WifiApp::open() {
   loadSavedNetworks();
+  startSignalScan();
 }
 
 void WifiApp::release() {
+  routingSettings.release();
   popupOpen = false;
   popupConfirm = false;
   tetherPopupOpen = false;
   tetherQrOpen = false;
   tetherQr.clear();
+  networkQrOpen = false;
+  networkQr.clear();
   devicePopupOpen = false;
   pendingSaveAfterConnect = false;
   view = VIEW_NETWORKS;
   networkScanState = SCAN_IDLE;
+  releaseFullPortScanWakeLock();
   portScanState = PORT_IDLE;
   freeNetDevices();
   freePortResults();
@@ -428,6 +525,7 @@ void WifiApp::releasePingSlotsIfIdle() {
 }
 
 void WifiApp::reset() {
+  routingSettings.reset();
   clearScanCache();
   scanRequested = false;
   savedCount = 0;
@@ -440,10 +538,13 @@ void WifiApp::reset() {
   tetherPopupOpen = false;
   tetherQrOpen = false;
   tetherQr.clear();
+  networkQrOpen = false;
+  networkQr.clear();
   press.clear();
   devicePopupOpen = false;
   passwordInput[0] = '\0';
   networkScanState = SCAN_IDLE;
+  releaseFullPortScanWakeLock();
   portScanState = PORT_IDLE;
   infoResolvedExtIp = false;
   infoExtIpVal[0] = '\0';
@@ -473,8 +574,11 @@ void WifiApp::disconnect() {
 
 bool WifiApp::hasActiveSession() const {
   return wifiManager.hasActiveSession() ||
+         signalScanRunning ||
          networkScanState == SCAN_RUNNING || portScanState == PORT_RUNNING ||
-         net::tetheringActive();
+         macResolveState == MAC_RESOLVE_RUNNING ||
+         net::tetheringActive() ||
+         (view == VIEW_ROUTING && routingSettings.editing());
 }
 
 WifiDisplayState WifiApp::displayState() const {
@@ -486,6 +590,8 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
     drawPassword(gfx);
   } else if (view == VIEW_DEVICES) {
     drawDevices(gfx);
+  } else if (view == VIEW_ROUTING) {
+    routingSettings.draw(gfx);
   } else {
     drawNetworks(gfx);
   }
@@ -493,7 +599,14 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
 
 bool WifiApp::update() {
   bool dirty = wifiManager.update();
+  if (view == VIEW_ROUTING && routingSettings.update()) {
+    dirty = true;
+  }
   if (press.update()) {
+    dirty = true;
+  }
+
+  if (advanceSignalScan()) {
     dirty = true;
   }
 
@@ -515,32 +628,22 @@ bool WifiApp::update() {
     clearScanCache();
     const int found = WiFi.scanNetworks();
     scanDone = true;
-    if (found > 0) {
-      for (int i = 0; i < found && scanCount < MAX_SCANNED_NETWORKS; i++) {
-        char ssid[WIFI_SSID_SIZE];
-        copyString(ssid, sizeof(ssid), WiFi.SSID(i));
-        if (ssid[0] == '\0' || findSavedNetwork(ssid) >= 0 ||
-            preferredMatches(ssid) || scannedSsidCached(ssid)) {
-          continue;
-        }
-        ScanNetwork &target = scanNetworksCache[scanCount++];
-        copyText(target.ssid, sizeof(target.ssid), ssid);
-        copyString(target.bssid, sizeof(target.bssid), WiFi.BSSIDstr(i));
-        target.rssi = WiFi.RSSI(i);
-      }
-      for (int i = 0; i < found; i++) {
-        char ssid[WIFI_SSID_SIZE];
-        copyString(ssid, sizeof(ssid), WiFi.SSID(i));
-        if (ssid[0] == '\0') continue;
-        for (uint8_t s = 0; s < savedCount; s++) {
-          if (strcmp(savedNetworks[s].ssid, ssid) == 0) {
-            copyString(savedNetworks[s].bssid, sizeof(savedNetworks[s].bssid),
-                       WiFi.BSSIDstr(i));
-            savedNetworks[s].rssi = WiFi.RSSI(i);
-            break;
+    if (found >= 0) {
+      if (found > 0) {
+        for (int i = 0; i < found && scanCount < MAX_SCANNED_NETWORKS; i++) {
+          char ssid[WIFI_SSID_SIZE];
+          copyString(ssid, sizeof(ssid), WiFi.SSID(i));
+          if (ssid[0] == '\0' || findSavedNetwork(ssid) >= 0 ||
+              preferredMatches(ssid) || scannedSsidCached(ssid)) {
+            continue;
           }
+          ScanNetwork &target = scanNetworksCache[scanCount++];
+          copyText(target.ssid, sizeof(target.ssid), ssid);
+          copyString(target.bssid, sizeof(target.bssid), WiFi.BSSIDstr(i));
+          target.rssi = WiFi.RSSI(i);
         }
       }
+      updateSavedNetworkSignals(found);
       WiFi.scanDelete();
     }
     return true;
@@ -570,6 +673,10 @@ bool WifiApp::update() {
       advancePortScan();
       return true;
     }
+    if (macResolveState == MAC_RESOLVE_RUNNING) {
+      advanceMacResolution();
+      return true;
+    }
     if (networkScanState == SCAN_PENDING) {
       startNetworkScan();
       return true;
@@ -584,6 +691,8 @@ bool WifiApp::handleTouch(const TouchPoint &point) {
     handlePasswordTouch(point);
   } else if (view == VIEW_DEVICES) {
     handleDevicesTouch(point);
+  } else if (view == VIEW_ROUTING) {
+    routingSettings.handleTouch(point);
   } else if (tetherPopupOpen) {
     handleTetherTouch(point);
   } else if (popupOpen) {
@@ -595,6 +704,13 @@ bool WifiApp::handleTouch(const TouchPoint &point) {
 }
 
 bool WifiApp::handleMenuButton() {
+  if (view == VIEW_ROUTING) {
+    if (routingSettings.handleMenuButton()) {
+      return true;
+    }
+    view = VIEW_NETWORKS;
+    return true;
+  }
   if (view == VIEW_PASSWORD) {
     view = VIEW_NETWORKS;
     pendingSaveAfterConnect = false;
@@ -606,6 +722,7 @@ bool WifiApp::handleMenuButton() {
       return true;
     }
     if (portScanState != PORT_IDLE) {
+      releaseFullPortScanWakeLock();
       portScanState = PORT_IDLE;
       freePortResults();
       return true;
@@ -799,6 +916,69 @@ void WifiApp::beginPasswordEntry(const char *ssid, const char *bssid) {
   view = VIEW_PASSWORD;
 }
 
+void WifiApp::startSignalScan() {
+  if (signalScanRunning || displayState() == WIFI_DISPLAY_OFF) {
+    return;
+  }
+
+  if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) {
+    signalScanRunning = true;
+    return;
+  }
+
+  const int16_t result = WiFi.scanNetworks(true, false, false, 40, 0);
+  if (result == WIFI_SCAN_RUNNING) {
+    signalScanRunning = true;
+  } else if (result >= 0) {
+    updateSavedNetworkSignals(result);
+    WiFi.scanDelete();
+  }
+}
+
+bool WifiApp::advanceSignalScan() {
+  if (!signalScanRunning) {
+    return false;
+  }
+
+  const int16_t result = WiFi.scanComplete();
+  if (result == WIFI_SCAN_RUNNING) {
+    return false;
+  }
+
+  signalScanRunning = false;
+  if (result >= 0) {
+    updateSavedNetworkSignals(result);
+    WiFi.scanDelete();
+  }
+  return true;
+}
+
+void WifiApp::updateSavedNetworkSignals(int found) {
+  if (savedNetworks == nullptr) {
+    return;
+  }
+
+  for (uint8_t i = 0; i < savedCount; i++) {
+    savedNetworks[i].rssi = -999;
+  }
+
+  for (int i = 0; i < found; i++) {
+    char ssid[WIFI_SSID_SIZE];
+    copyString(ssid, sizeof(ssid), WiFi.SSID(i));
+    const int8_t savedIndex = findSavedNetwork(ssid);
+    if (savedIndex < 0) {
+      continue;
+    }
+
+    SavedNetwork &network = savedNetworks[savedIndex];
+    const int32_t rssi = WiFi.RSSI(i);
+    if (network.rssi <= -200 || rssi > network.rssi) {
+      network.rssi = rssi;
+      copyString(network.bssid, sizeof(network.bssid), WiFi.BSSIDstr(i));
+    }
+  }
+}
+
 void WifiApp::scanNetworks() {
   if (!startSta()) {
     return;
@@ -816,6 +996,7 @@ void WifiApp::scanDevices() {
   view = VIEW_DEVICES;
   deviceTab = TAB_INFO;
   networkScanState = SCAN_IDLE;
+  releaseFullPortScanWakeLock();
   portScanState = PORT_IDLE;
   devicePopupOpen = false;
   infoResolvedExtIp = false;
@@ -826,6 +1007,7 @@ void WifiApp::scanDevices() {
 }
 
 void WifiApp::freeNetDevices() {
+  resetMacResolution();
   if (networkDevices != nullptr) {
     heap_caps_free(networkDevices);
     networkDevices = nullptr;
@@ -843,12 +1025,35 @@ void WifiApp::freePortResults() {
 }
 
 bool WifiApp::closePopup() {
+  if (networkQrOpen) {
+    networkQrOpen = false;
+    return true;
+  }
   if (!popupOpen) {
     return false;
   }
   popupOpen = false;
   popupConfirm = false;
   return true;
+}
+
+static uint8_t signalBarsForRssi(int32_t rssi) {
+  if (rssi >= -50) {
+    return 5;
+  }
+  if (rssi >= -60) {
+    return 4;
+  }
+  if (rssi >= -70) {
+    return 3;
+  }
+  if (rssi >= -80) {
+    return 2;
+  }
+  if (rssi >= -90) {
+    return 1;
+  }
+  return 0;
 }
 
 void WifiApp::drawNetworkRow(Adafruit_GFX &gfx, int16_t y, const char *ssid,
@@ -886,19 +1091,18 @@ void WifiApp::drawNetworkRow(Adafruit_GFX &gfx, int16_t y, const char *ssid,
   gfx.print(info);
 
   if (connected) {
-    gfx.setFont(&iconASCII12pt7b);
-    gfx.setTextSize(1);
-    int16_t iconX;
-    int16_t iconY;
-    uint16_t iconW;
-    uint16_t iconH;
-    gfx.getTextBounds("g", 0, 0, &iconX, &iconY, &iconW, &iconH);
-    gfx.setCursor(NETWORK_ROW_X + 192 - 5 - static_cast<int16_t>(iconW) -
-                      iconX,
-                  y + 17);
-    gfx.print("g");
-    gfx.setFont();
-    gfx.setTextSize(1);
+    static const int16_t BAR_HEIGHTS[] = {3, 6, 9, 12, 15};
+    const int16_t barX = 168;
+    const int16_t barBottom = y + 18;
+    const uint8_t filledBars = signalBarsForRssi(rssi);
+    for (uint8_t i = 0; i < 5; i++) {
+      const int16_t x = barX + i * 5;
+      const int16_t top = barBottom - BAR_HEIGHTS[i];
+      gfx.drawRect(x, top, 4, BAR_HEIGHTS[i], 1);
+      if (i < filledBars && BAR_HEIGHTS[i] > 2) {
+        gfx.fillRect(x + 1, top + 1, 2, BAR_HEIGHTS[i] - 2, 1);
+      }
+    }
   }
 }
 
@@ -949,7 +1153,7 @@ void WifiApp::drawNetworks(Adafruit_GFX &gfx) {
   gfx.print("WiFi");
   gfx.setCursor(42, 4);
   if (WiFi.status() == WL_CONNECTED) {
-    gfx.print("connected ");
+    gfx.print("connected to ");
     gfx.print(currentSystemConfig().wifi.displayName[0] != '\0'
                   ? currentSystemConfig().wifi.displayName
                   : WiFi.SSID().c_str());
@@ -1071,6 +1275,7 @@ void WifiApp::drawTetherPopup(Adafruit_GFX &gfx) {
   gfx.setCursor(18, 118);
   gfx.print("IP   ");
   gfx.print(snapshot.tetherAddress);
+  uiDrawButton(gfx, TETHER_SETTINGS_BUTTON, "CFG");
   uiDrawButton(gfx, TETHER_CLOSE_BUTTON, "CLOSE");
   uiDrawButton(gfx, TETHER_STOP_BUTTON, "STOP");
 }
@@ -1123,6 +1328,9 @@ uint8_t WifiApp::selectedPopupActions(PopupAction *actions, uint8_t capacity,
   } else if (actionCount < capacity) {
     actions[actionCount++] = POPUP_ACTION_REMOVE;
   }
+  if (actionCount < capacity) {
+    actions[actionCount++] = POPUP_ACTION_SHARE;
+  }
   return actionCount;
 }
 
@@ -1147,11 +1355,22 @@ void WifiApp::performPopupAction(PopupAction action, const char *ssid,
     scanDevices();
   } else if (action == POPUP_ACTION_DISCONNECT) {
     disconnect();
+  } else if (action == POPUP_ACTION_SHARE) {
+    networkQrOpen = encodeWifiQr(networkQr, ssid, password);
+    if (networkQrOpen) {
+      return;
+    }
   }
   popupOpen = false;
 }
 
 void WifiApp::drawPopup(Adafruit_GFX &gfx) {
+  if (networkQrOpen) {
+    gfx.fillRect(0, 0, EPD_WIDTH, EPD_HEIGHT, 0);
+    networkQr.draw(gfx, 0, 0, EPD_WIDTH);
+    return;
+  }
+
   drawDialogBackdropHatch(gfx);
   gfx.fillRect(POPUP_RECT.x, POPUP_RECT.y, POPUP_RECT.w, POPUP_RECT.h, 0);
   drawDialogRect(gfx, POPUP_RECT);
@@ -1222,12 +1441,7 @@ void WifiApp::drawDevices(Adafruit_GFX &gfx) {
   gfx.setTextColor(1);
   gfx.setTextSize(1);
 
-  if (portScanState != PORT_IDLE) {
-    drawPortScan(gfx);
-    return;
-  }
-
-  if (devicePopupOpen) {
+  if (portScanState == PORT_IDLE && devicePopupOpen) {
     drawDevicePopup(gfx);
     return;
   }
@@ -1237,6 +1451,10 @@ void WifiApp::drawDevices(Adafruit_GFX &gfx) {
     drawInfoTab(gfx);
   } else {
     drawNetScanTab(gfx);
+  }
+
+  if (portScanState != PORT_IDLE) {
+    drawPortScan(gfx);
   }
 }
 
@@ -1327,22 +1545,29 @@ void WifiApp::drawNetworkDeviceRow(Adafruit_GFX &gfx, uint16_t index,
   uint16_t pw;
   uint16_t ph;
   gfx.getTextBounds(pingStr, 0, 0, &px, &py, &pw, &ph);
-  gfx.setCursor(197 - static_cast<int16_t>(pw), rowY + 3);
+  gfx.setCursor(193 - static_cast<int16_t>(pw), rowY + 3);
   gfx.print(pingStr);
 
-  char label[24];
-  const char *marker = index == 0 ? "* " : (index == 1 ? "r " : "");
+  char label[40];
   if (dev.hasMac) {
-    snprintf(label, sizeof(label), "%s%s", marker, dev.mac);
-  } else if (index == 0) {
-    copyText(label, sizeof(label), "* this device");
-  } else if (index == 1) {
-    copyText(label, sizeof(label), "r router");
+    const char *displayName = dev.hasCompany ? dev.company : dev.mac;
+    copyText(label, sizeof(label), displayName);
   } else {
     copyText(label, sizeof(label), "no mac");
   }
   gfx.setCursor(8, rowY + 13);
   gfx.print(label);
+
+  const char *role = index == 0 ? "self" : (index == 1 ? "router" : nullptr);
+  if (role != nullptr) {
+    int16_t roleX;
+    int16_t roleY;
+    uint16_t roleW;
+    uint16_t roleH;
+    gfx.getTextBounds(role, 0, 0, &roleX, &roleY, &roleW, &roleH);
+    gfx.setCursor(193 - static_cast<int16_t>(roleW), rowY + 13);
+    gfx.print(role);
+  }
 }
 
 void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
@@ -1371,6 +1596,8 @@ void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
       drawNetworkDeviceRow(gfx, idx, i);
     }
     drawLoadingIndicator(gfx, 0, 0);
+    drawNetworkScanProgress(gfx, networkScanStart, networkScanCurrent,
+                            networkScanEnd);
     uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
     return;
   }
@@ -1397,20 +1624,48 @@ void WifiApp::drawNetScanTab(Adafruit_GFX &gfx) {
   }
 
   gfx.setCursor(4, NET_ROW_Y + NET_VISIBLE_ROWS * NET_ROW_H + 4);
-  gfx.print("Found: ");
+  if (macResolveState == MAC_RESOLVE_RUNNING) {
+    gfx.print("Resolving: ");
+    gfx.print(macResolveCurrent);
+    gfx.print("/");
+  } else if (macResolveState == MAC_RESOLVE_DONE) {
+    gfx.print("Resolved: ");
+    gfx.print(macResolveCurrent);
+    gfx.print("/");
+  } else {
+    gfx.print("Found: ");
+  }
   gfx.print(static_cast<int>(networkScanDeviceCount));
 
   uiDrawButton(gfx, DEVICE_SCAN_BUTTON, "SCAN", press.isPressed(5));
+  if (networkScanState == SCAN_DONE && networkScanDeviceCount > 0) {
+    uiDrawButton(
+        gfx, DEVICE_RESOLVE_BUTTON,
+        macResolveState == MAC_RESOLVE_RUNNING ? "LOOKUP" : "RESOLVE",
+        press.isPressed(6));
+  }
   uiDrawButton(gfx, DEVICE_BACK_BUTTON, "BACK", press.isPressed(4));
 }
 
 void WifiApp::drawDevicePopup(Adafruit_GFX &gfx) {
-  drawDialogBackdropHatch(gfx);
+  drawFullModalBackdrop(gfx);
   gfx.fillRect(DEVICE_POPUP_RECT.x, DEVICE_POPUP_RECT.y,
                DEVICE_POPUP_RECT.w, DEVICE_POPUP_RECT.h, 0);
   drawDialogRect(gfx, DEVICE_POPUP_RECT);
   gfx.setTextSize(1);
   gfx.setTextColor(1);
+
+  const char *title = "PORT SCAN";
+  int16_t titleX;
+  int16_t titleY;
+  uint16_t titleW;
+  uint16_t titleH;
+  gfx.getTextBounds(title, 0, 0, &titleX, &titleY, &titleW, &titleH);
+  gfx.setCursor(
+      DEVICE_POPUP_RECT.x +
+          (DEVICE_POPUP_RECT.w - static_cast<int16_t>(titleW)) / 2 - titleX,
+      DEVICE_POPUP_RECT.y + 8);
+  gfx.print(title);
 
   if (networkDevices != nullptr && selectedDeviceIndex >= 0 &&
       static_cast<uint16_t>(selectedDeviceIndex) < networkScanDeviceCount) {
@@ -1428,11 +1683,12 @@ void WifiApp::drawDevicePopup(Adafruit_GFX &gfx) {
     gfx.print(ipStr);
 
     if (dev.hasMac) {
-      gfx.getTextBounds(dev.mac, 0, 0, &textX, &textY, &textW, &textH);
+      const char *displayName = dev.hasCompany ? dev.company : dev.mac;
+      gfx.getTextBounds(displayName, 0, 0, &textX, &textY, &textW, &textH);
       gfx.setCursor(
           DEVICE_POPUP_RECT.x + (DEVICE_POPUP_RECT.w - static_cast<int16_t>(textW)) / 2 - textX,
           DEVICE_POPUP_RECT.y + 44);
-      gfx.print(dev.mac);
+      gfx.print(displayName);
     }
   }
 
@@ -1457,14 +1713,13 @@ void WifiApp::drawPortProgress(Adafruit_GFX &gfx, int16_t x, int16_t y,
 }
 
 void WifiApp::drawPortScan(Adafruit_GFX &gfx) {
-  drawDialogBackdropHatch(gfx);
+  drawFullModalBackdrop(gfx);
+  drawStatusBar(gfx);
   gfx.fillRect(10, 34, 180, 130, 0);
   drawDialogRect(gfx, {10, 34, 180, 130});
 
   gfx.setTextSize(1);
   gfx.setTextColor(1);
-  gfx.setCursor(18, 42);
-  gfx.print("Port scan");
   gfx.setCursor(18, 56);
   if (portScanMode == PORT_MODE_QUICK) {
     gfx.print("Mode: quick");
@@ -1526,6 +1781,22 @@ void WifiApp::drawPortScan(Adafruit_GFX &gfx) {
     gfx.setTextColor(1);
   }
 
+  // Paint the title last so it remains above every modal layer.
+  const char *title = "PORT SCAN";
+  int16_t titleX;
+  int16_t titleY;
+  uint16_t titleW;
+  uint16_t titleH;
+  gfx.setFont();
+  gfx.setTextSize(1);
+  gfx.setTextColor(1);
+  gfx.getTextBounds(title, 0, 0, &titleX, &titleY, &titleW, &titleH);
+  gfx.setCursor(10 + (180 - static_cast<int16_t>(titleW)) / 2 - titleX,
+                42);
+  gfx.print(title);
+
+  gfx.fillRect(DEVICE_BACK_BUTTON.x, DEVICE_BACK_BUTTON.y,
+               DEVICE_BACK_BUTTON.w, DEVICE_BACK_BUTTON.h, 0);
   uiDrawButton(gfx, DEVICE_BACK_BUTTON,
                portScanState == PORT_DONE ? "DONE" : "CANCEL",
                press.isPressed(4));
@@ -1560,9 +1831,12 @@ void WifiApp::drawWifiIcon(Adafruit_GFX &gfx, int16_t x, int16_t y) const {
 
 void WifiApp::populateDeviceMac(NetworkDevice &device) const {
   device.mac[0] = '\0';
+  device.company[0] = '\0';
   device.hasMac = false;
+  device.hasCompany = false;
   if (device.ip == ipToRaw(WiFi.localIP())) {
     copyString(device.mac, sizeof(device.mac), WiFi.macAddress());
+    uppercaseText(device.mac);
     device.hasMac = device.mac[0] != '\0';
     return;
   }
@@ -1664,10 +1938,11 @@ void WifiApp::advanceNetworkScan() {
       return;
     }
 
-    uint32_t target = networkScanCurrent++;
+    const uint32_t target = networkScanCurrent;
 
     if (target == ipToRaw(WiFi.localIP()) ||
         target == ipToRaw(WiFi.gatewayIP())) {
+      networkScanCurrent++;
       continue;
     }
 
@@ -1690,13 +1965,18 @@ void WifiApp::advanceNetworkScan() {
 
     esp_ping_handle_t ping;
     esp_err_t err = esp_ping_new_session(&config, &callbacks, &ping);
-    if (err == ESP_OK) {
-      pingSlots[i].ip = target;
-      pingSlots[i].pingMs = 0;
-      pingSlots[i].reachable = false;
-      pingSlots[i].done.store(false, std::memory_order_relaxed);
-      esp_ping_start(ping);
+    if (err != ESP_OK) {
+      // Keep the target for the next update if the ping stack is temporarily
+      // out of session resources.
+      break;
     }
+
+    networkScanCurrent++;
+    pingSlots[i].ip = target;
+    pingSlots[i].pingMs = 0;
+    pingSlots[i].reachable = false;
+    pingSlots[i].done.store(false, std::memory_order_relaxed);
+    esp_ping_start(ping);
   }
 }
 
@@ -1716,6 +1996,12 @@ void WifiApp::startPortScan(uint8_t ip0, uint8_t ip1, uint8_t ip2,
   lastPortProgressUpdateMs = 0;
   freePortResults();
 
+  releaseFullPortScanWakeLock();
+  if (mode == PORT_MODE_FULL) {
+    lockscreenGuardAcquire();
+    fullPortScanWakeLockHeld = true;
+  }
+
   if (mode == PORT_MODE_QUICK) {
     portScanTotal = QUICK_PORT_COUNT;
     portResults = static_cast<PortResult *>(
@@ -1733,14 +2019,27 @@ void WifiApp::startPortScan(uint8_t ip0, uint8_t ip1, uint8_t ip2,
   }
 }
 
+void WifiApp::releaseFullPortScanWakeLock() {
+  if (!fullPortScanWakeLockHeld) {
+    return;
+  }
+  lockscreenGuardRelease();
+  fullPortScanWakeLockHeld = false;
+}
+
+void WifiApp::completePortScan() {
+  portScanState = PORT_DONE;
+  releaseFullPortScanWakeLock();
+}
+
 void WifiApp::advancePortScan() {
   if (portResults == nullptr) {
-    portScanState = PORT_DONE;
+    completePortScan();
     return;
   }
 
   if (portScanCurrent >= portScanTotal) {
-    portScanState = PORT_DONE;
+    completePortScan();
     return;
   }
 
@@ -1766,7 +2065,7 @@ void WifiApp::advancePortScan() {
   portScanCurrent++;
 
   if (portScanCurrent >= portScanTotal) {
-    portScanState = PORT_DONE;
+    completePortScan();
   }
 }
 
@@ -1834,14 +2133,14 @@ void WifiApp::handleTetherTouch(const TouchPoint &point) {
   }
   if (uiContains(TETHER_QR_BUTTON, point)) {
     const net::InterfaceSnapshot snapshot = net::interfaceSnapshot();
-    char payload[SystemQrCode::maxPayload + 1] = {};
-    const int length = snprintf(payload, sizeof(payload),
-                                "WIFI:T:WPA;S:%s;P:%s;;",
-                                snapshot.tetherSsid,
+    tetherQrOpen = encodeWifiQr(tetherQr, snapshot.tetherSsid,
                                 snapshot.tetherPassword);
-    tetherQrOpen = length > 0 &&
-                   length <= SystemQrCode::maxPayload &&
-                   tetherQr.encode(payload);
+    return;
+  }
+  if (uiContains(TETHER_SETTINGS_BUTTON, point)) {
+    routingSettings.reset();
+    tetherPopupOpen = false;
+    view = VIEW_ROUTING;
     return;
   }
   if (uiContains(TETHER_CLOSE_BUTTON, point)) {
@@ -1849,6 +2148,7 @@ void WifiApp::handleTetherTouch(const TouchPoint &point) {
     return;
   }
   if (uiContains(TETHER_STOP_BUTTON, point)) {
+    net::networkServicesShutdown();
     net::stopTethering();
     tetherPopupOpen = false;
     return;
@@ -1859,6 +2159,11 @@ void WifiApp::handleTetherTouch(const TouchPoint &point) {
 }
 
 void WifiApp::handlePopupTouch(const TouchPoint &point) {
+  if (networkQrOpen) {
+    networkQrOpen = false;
+    return;
+  }
+
   if (!uiContains(POPUP_RECT, point)) {
     popupOpen = false;
     popupConfirm = false;
@@ -1967,23 +2272,106 @@ bool WifiApp::fetchPlainTextUrl(const char *url, char *out,
 
   String body = http.getString();
   http.end();
+  return copyTrimmedText(body, out, outSize);
+}
 
-  const char *text = body.c_str();
-  while (*text != '\0' && isspace(static_cast<unsigned char>(*text))) {
-    text++;
-  }
-
-  size_t len = strlen(text);
-  while (len > 0 && isspace(static_cast<unsigned char>(text[len - 1]))) {
-    len--;
-  }
-  if (len == 0 || len >= outSize) {
+bool WifiApp::fetchMacCompany(const char *mac, char *out,
+                              size_t outSize) const {
+  if (mac == nullptr || mac[0] == '\0' || out == nullptr || outSize == 0) {
     return false;
   }
 
-  memcpy(out, text, len);
-  out[len] = '\0';
-  return true;
+  char lookupMac[18];
+  copyText(lookupMac, sizeof(lookupMac), mac);
+  macPrivacyRng(lookupMac);
+
+  char url[128];
+  const int urlLength = snprintf(url, sizeof(url), MAC_LOOKUP_URL, lookupMac);
+  if (urlLength < 0 || static_cast<size_t>(urlLength) >= sizeof(url)) {
+    return false;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(5000);
+  if (!http.begin(client, url)) {
+    return false;
+  }
+
+  const int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    http.end();
+    return false;
+  }
+
+  const int responseSize = http.getSize();
+  if (responseSize >= 0 && responseSize >= static_cast<int>(outSize)) {
+    http.end();
+    return false;
+  }
+
+  String body = http.getString();
+  http.end();
+  return copyTrimmedText(body, out, outSize);
+}
+
+void WifiApp::startMacResolution() {
+  if (networkDevices == nullptr || networkScanDeviceCount == 0 ||
+      networkScanState != SCAN_DONE ||
+      macResolveState == MAC_RESOLVE_RUNNING) {
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiManager.setStatus("WiFi not connected");
+    return;
+  }
+
+  for (uint16_t i = 0; i < networkScanDeviceCount; i++) {
+    networkDevices[i].company[0] = '\0';
+    networkDevices[i].hasCompany = false;
+  }
+  macResolveCurrent = 0;
+  macResolveState = MAC_RESOLVE_RUNNING;
+  lockscreenGuardAcquire();
+  macResolveWakeLockHeld = true;
+}
+
+void WifiApp::advanceMacResolution() {
+  if (networkDevices == nullptr ||
+      macResolveCurrent >= networkScanDeviceCount) {
+    macResolveState = MAC_RESOLVE_DONE;
+    releaseMacResolutionWakeLock();
+    return;
+  }
+
+  NetworkDevice &device = networkDevices[macResolveCurrent];
+  if (device.hasMac) {
+    char company[MAC_COMPANY_SIZE];
+    if (fetchMacCompany(device.mac, company, sizeof(company))) {
+      copyText(device.company, sizeof(device.company), company);
+      device.hasCompany = true;
+    }
+  }
+  macResolveCurrent++;
+  if (macResolveCurrent >= networkScanDeviceCount) {
+    macResolveState = MAC_RESOLVE_DONE;
+    releaseMacResolutionWakeLock();
+  }
+}
+
+void WifiApp::releaseMacResolutionWakeLock() {
+  if (!macResolveWakeLockHeld) {
+    return;
+  }
+  lockscreenGuardRelease();
+  macResolveWakeLockHeld = false;
+}
+
+void WifiApp::resetMacResolution() {
+  releaseMacResolutionWakeLock();
+  macResolveState = MAC_RESOLVE_IDLE;
+  macResolveCurrent = 0;
 }
 
 void WifiApp::handleInfoTabTouch(const TouchPoint &point) {
@@ -2035,6 +2423,15 @@ void WifiApp::handleNetScanTabTouch(const TouchPoint &point) {
       networkScanState = SCAN_PENDING;
       networkScanDeviceCount = 0;
       freeNetDevices();
+    }
+    return;
+  }
+
+  if (uiContains(DEVICE_RESOLVE_BUTTON, point)) {
+    if (networkScanState == SCAN_DONE &&
+        macResolveState != MAC_RESOLVE_RUNNING) {
+      press.press(6);
+      startMacResolution();
     }
     return;
   }
@@ -2096,6 +2493,7 @@ void WifiApp::handleDevicePopupTouch(const TouchPoint &point) {
 void WifiApp::handlePortScanTouch(const TouchPoint &point) {
   if (uiContains(DEVICE_BACK_BUTTON, point)) {
     press.press(4);
+    releaseFullPortScanWakeLock();
     portScanState = PORT_IDLE;
     freePortResults();
     return;

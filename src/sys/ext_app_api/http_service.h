@@ -50,6 +50,7 @@ private:
   net::http::Router router;
   net::http::Server server;
   Pending pending[kPendingCapacity];
+  mutable std::atomic_flag lifecycleLock = ATOMIC_FLAG_INIT;
   mutable std::atomic_flag pendingLock = ATOMIC_FLAG_INIT;
   uint16_t activePort = 0;
   bool corsConfigured = false;

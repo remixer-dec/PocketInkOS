@@ -22,6 +22,9 @@ enum class PowerDialogAction : uint8_t {
   PowerOff,
   DeepSleep,
   WifiToggle,
+  HotspotToggle,
+  HttpServerToggle,
+  FtpServerToggle,
   BluetoothToggle,
   CpuCycle,
   VolumeDown,
@@ -36,6 +39,7 @@ enum class PowerDialogAction : uint8_t {
 enum class PowerDialogPage : uint8_t {
   Power,
   Device,
+  Network,
   Volume,
   Screen,
 };
@@ -46,6 +50,12 @@ struct PowerDialogSnapshot {
   bool wifiOn = false;
   bool wifiConnected = false;
   bool bluetoothOn = false;
+  bool hotspotOn = false;
+  bool httpServerOn = false;
+  bool ftpServerOn = false;
+  bool httpServerAvailable = false;
+  bool ftpServerAvailable = false;
+  bool networkUnavailableNotice = false;
   uint16_t cpuMhz = 240;
   uint8_t volume = 60;
   bool muted = false;
