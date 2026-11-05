@@ -175,28 +175,19 @@ bool configuredProxyReady() {
 }
 
 const char *configuredRouteStatus() {
-  switch (configuredTetherRoute()) {
-  case TetherRoute::Direct:
+  const TetherRoute route = configuredTetherRoute();
+  if (!proxyRoute(route)) {
     return "direct";
-  case TetherRoute::Socks5:
-    if (configuredDnsMode() == DnsMode::Doh) {
-      return "DoH incompatible";
-    }
-    return configuredProxyReady() ? "socks5 starting" : "proxy incomplete";
-  case TetherRoute::HttpConnect:
-    if (configuredDnsMode() == DnsMode::Doh) {
-      return "DoH incompatible";
-    }
-    return configuredProxyReady() ? "http proxy starting"
-                                  : "proxy incomplete";
-  case TetherRoute::HttpsConnect:
-    if (configuredDnsMode() == DnsMode::Doh) {
-      return "DoH incompatible";
-    }
-    return configuredProxyReady() ? "https proxy starting"
-                                  : "proxy incomplete";
   }
-  return "unavailable";
+  if (configuredDnsMode() == DnsMode::Doh) {
+    return "DoH incompatible";
+  }
+  if (!configuredProxyReady()) {
+    return "proxy incomplete";
+  }
+  return route == TetherRoute::Socks5        ? "socks5 starting"
+         : route == TetherRoute::HttpConnect ? "http proxy starting"
+                                             : "https proxy starting";
 }
 
 } // namespace net

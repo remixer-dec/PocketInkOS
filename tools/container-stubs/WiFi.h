@@ -91,6 +91,7 @@ public:
     }
     return true;
   }
+  int getMode() const { return modeValue; }
   void persistent(bool) {}
   void begin(const char *ssid, const char *) {
     savedSsid = ssid ? ssid : "";

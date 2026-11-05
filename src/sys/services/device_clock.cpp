@@ -228,8 +228,11 @@ bool DeviceClock::formatDateString(const char *isoDate, char *out,
     break;
   case CONFIG_DATE_ISO:
   default:
-    snprintf(out, outSize, includeYear ? "%04d-%02u-%02u" : "%02u-%02u",
-             year, month, day);
+    if (includeYear) {
+      snprintf(out, outSize, "%04d-%02u-%02u", year, month, day);
+    } else {
+      snprintf(out, outSize, "%02u-%02u", month, day);
+    }
     break;
   }
   return out[0] != '\0';

@@ -326,7 +326,7 @@ bool updateMidiViewer(FileViewerRuntime &runtime) {
     return true;
   }
   if (state.pressedAction != AudioPlayerAction::None &&
-      now >= state.pressedUntil) {
+      static_cast<long>(now - state.pressedUntil) >= 0) {
     state.pressedAction = AudioPlayerAction::None;
     return true;
   }

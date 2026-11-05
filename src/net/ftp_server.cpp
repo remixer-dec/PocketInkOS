@@ -285,7 +285,9 @@ void processCommand(FtpServer::Impl &state, uint32_t now) {
       }
       queueReply(state, "530 Login incorrect.\r\n");
       if (state.failedPasswords >= 3) {
-        state.acceptAfter = now + 5000U;
+        // Lockouts grow while failures continue across reconnects.
+        const uint32_t lockouts = state.consecutiveAuthFailures / 3U;
+        state.acceptAfter = now + 5000U * (lockouts < 12U ? lockouts : 12U);
         state.closeAfterReply = true;
       }
     }
@@ -605,8 +607,11 @@ void FtpServer::update(uint32_t nowMs) {
   }
   Impl &state = *impl;
   if (state.control == kInvalidSocket) {
-    if (!expired(nowMs, state.acceptAfter)) {
-      return;
+    if (state.acceptAfter != 0) {
+      if (!expired(nowMs, state.acceptAfter)) {
+        return;
+      }
+      state.acceptAfter = 0;
     }
     SocketHandle accepted = kInvalidSocket;
     char peer[16] = {};

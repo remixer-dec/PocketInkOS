@@ -467,6 +467,7 @@ void loop() {
 
   if (sdStorageUpdate()) {
     configReload();
+    batteryMonitor.applyConfig();
     shellLayoutConfigReload();
     pinkCodecRefresh();
     pinkExecutableRefreshApps();

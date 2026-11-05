@@ -123,6 +123,8 @@ private:
   UiPressFeedback press;
   bool scanRequested = false;
   bool scanPending = false;
+  /// Last observed manager state, used to rescan after a failed attempt.
+  WifiManager::ConnectionState lastConnectionState = WifiManager::STATE_IDLE;
   bool signalScanRunning = false;
   bool pendingSaveAfterConnect = false;
   char pendingSsid[WIFI_SSID_SIZE] = "";

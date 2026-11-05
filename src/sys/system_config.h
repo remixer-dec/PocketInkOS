@@ -140,6 +140,11 @@ struct SystemConfig {
   } sensors;
 
   struct {
+    /// Multiplier from measured ADC voltage to true battery voltage.
+    float voltageScale;
+  } battery;
+
+  struct {
     /// Fastest cadence apps are allowed to request; zero disables all hooks.
     uint16_t minIntervalMinutes;
     /// Suppresses app hooks, but not the sleep clock, on low battery.

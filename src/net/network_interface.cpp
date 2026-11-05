@@ -71,6 +71,12 @@ bool copyAddress(char *out, size_t outSize, const IPAddress &address) {
   return true;
 }
 
+// STA may be enabled while still associating or rediscovering; hotspot mode
+// changes must keep it so repeater uplinks can recover.
+bool stationEnabled() {
+  return (WiFi.getMode() & WIFI_STA) != 0 || WiFi.status() == WL_CONNECTED;
+}
+
 IPAddress configuredApDns() {
   switch (configuredDnsMode()) {
   case DnsMode::Cloudflare:
@@ -151,7 +157,7 @@ bool startTethering(const char *ssid, const char *password) {
   memcpy(created->ssid, ssid, ssidLength + 1U);
   memcpy(created->password, password, passwordLength + 1U);
   TetheringState *previous = tether;
-  const bool station = WiFi.status() == WL_CONNECTED;
+  const bool station = stationEnabled();
   if (previous != nullptr) {
     WiFi.softAPdisconnect(false);
   }
@@ -206,25 +212,15 @@ bool startGeneratedTethering() {
   }
   char ssid[33] = {};
   char password[13] = {};
+  // Suffix with the final four MAC hex digits, keeping "INK0" if absent.
   const String mac = WiFi.macAddress();
   char suffix[5] = "INK0";
-  size_t suffixAt = 0;
-  for (size_t i = 0; i < mac.length() && suffixAt < 4; i++) {
-    const char c = mac.c_str()[i];
+  size_t suffixAt = 4;
+  for (size_t i = mac.length(); i > 0 && suffixAt > 0; i--) {
+    const char c = mac.c_str()[i - 1U];
     if (c != ':') {
-      suffix[suffixAt++] = c;
+      suffix[--suffixAt] = c;
     }
-  }
-  // Use the final MAC bytes when the standard colon-separated form is present.
-  if (mac.length() >= 5) {
-    suffixAt = 0;
-    for (size_t i = mac.length() - 5; i < mac.length() && suffixAt < 4; i++) {
-      const char c = mac.c_str()[i];
-      if (c != ':') {
-        suffix[suffixAt++] = c;
-      }
-    }
-    suffix[suffixAt] = '\0';
   }
   snprintf(ssid, sizeof(ssid), "PocketInk-%s", suffix);
   const uint32_t first = esp_random();
@@ -250,7 +246,7 @@ void stopTethering() {
   }
   WiFi.AP.enableNAPT(false);
   routingEnabled = false;
-  const bool station = WiFi.status() == WL_CONNECTED;
+  const bool station = stationEnabled();
   WiFi.softAPdisconnect(!station);
   memset(tether->password, 0, sizeof(tether->password));
   tether->~TetheringState();
@@ -286,11 +282,8 @@ void setTetherProxyRoutingActive(bool active) {
     routingEnabled = false;
     return;
   }
-  const TetherRoute route = configuredTetherRoute();
-  if (route == TetherRoute::Socks5 || route == TetherRoute::HttpConnect ||
-      route == TetherRoute::HttpsConnect) {
-    routingEnabled = tether != nullptr && WiFi.status() == WL_CONNECTED &&
-                     active;
+  if (proxyRoute(configuredTetherRoute())) {
+    routingEnabled = tether != nullptr && WiFi.status() == WL_CONNECTED;
   }
 #else
   (void)active;

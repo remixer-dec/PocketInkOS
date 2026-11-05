@@ -8,6 +8,10 @@ constexpr float BATTERY_EMPTY_VOLTAGE = 2.80f;
 /// Voltage treated as 100 percent when estimating battery state of charge.
 constexpr float BATTERY_FULL_VOLTAGE = 3.95f;
 
+/// Accepted range for the user calibration factor applied to ADC voltage.
+constexpr float BATTERY_SCALE_MIN = 0.80f;
+constexpr float BATTERY_SCALE_MAX = 1.20f;
+
 /// One voltage-to-percentage point in the battery state-of-charge curve.
 struct BatterySocPoint {
   /// Measured battery voltage.
@@ -40,8 +44,10 @@ struct BatteryMonitorConfig {
 struct BatterySnapshot {
   /// True after at least one successful reading.
   bool valid;
-  /// Latest measured battery voltage.
+  /// Latest battery voltage after calibration.
   float voltage;
+  /// Latest battery voltage before calibration, used to derive new factors.
+  float rawVoltage;
   /// Estimated charge percentage from 0 to 100.
   int percentage;
 };
@@ -57,10 +63,15 @@ public:
   void configure(const BatteryMonitorConfig &config);
   /// Returns the latest cached battery reading.
   const BatterySnapshot &snapshot() const;
+  /// Applies the calibration factor from system config. The factor is kept in
+  /// RTC memory so low-power wakes without SD config still use it.
+  void applyConfig();
+  /// Returns true when scale is an acceptable calibration factor.
+  static bool validVoltageScale(float scale);
 
 private:
   BatteryMonitorConfig config_ = {};
-  BatterySnapshot data_ = {false, 0.0f, 0};
+  BatterySnapshot data_ = {false, 0.0f, 0.0f, 0};
   bool initialized_ = false;
 };
 

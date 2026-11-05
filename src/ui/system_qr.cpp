@@ -11,8 +11,6 @@ constexpr int kBlocks = 2;
 constexpr int kBlockDataCodewords = kDataCodewords / kBlocks;
 constexpr int kTotalCodewords = kDataCodewords + kEccCodewords * kBlocks;
 constexpr int kQuietModules = 4;
-constexpr int kModuleStorageBytes =
-    (SystemQrCode::moduleCount * SystemQrCode::moduleCount + 7) / 8;
 
 bool packedBit(const uint8_t *bits, int row, int column) {
   const int index = row * SystemQrCode::moduleCount + column;
@@ -81,7 +79,7 @@ bool SystemQrCode::encode(const char *text) {
     return false;
   }
 
-  uint8_t reserved[kModuleStorageBytes] = {};
+  uint8_t reserved[sizeof(modules)] = {};
   clear();
   auto setModule = [&](int row, int col, bool value, bool reserve) {
     if (row < 0 || row >= moduleCount || col < 0 || col >= moduleCount) {

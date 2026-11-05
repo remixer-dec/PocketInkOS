@@ -228,6 +228,21 @@ bool TimeSyncService::fetchNtpTime() {
       }
 
       unixTime = static_cast<int64_t>(secondsSince1900 - NTP_TO_UNIX_SECONDS);
+      // Use the transmit fraction plus half the round trip, then start both
+      // clocks on the next whole second: the RTC keeps whole seconds only, so
+      // plain truncation would leave it up to a second behind after each sync.
+      const uint32_t fraction = (static_cast<uint32_t>(packet[44]) << 24) |
+                                (static_cast<uint32_t>(packet[45]) << 16) |
+                                (static_cast<uint32_t>(packet[46]) << 8) |
+                                static_cast<uint32_t>(packet[47]);
+      uint32_t millisIntoSecond =
+          static_cast<uint32_t>((static_cast<uint64_t>(fraction) * 1000ULL) >>
+                                32U) +
+          static_cast<uint32_t>((millis() - startedAt) / 2U);
+      unixTime += millisIntoSecond / 1000U;
+      millisIntoSecond %= 1000U;
+      delay(1000U - millisIntoSecond);
+      unixTime += 1;
       if (!parseConfiguredUtcOffset(utcOffsetSeconds)) {
         utcOffsetSeconds = 0;
       }

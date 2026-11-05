@@ -9,12 +9,19 @@
 #define ENABLE_RTC_CLOCK 1
 #endif
 
+/// Selects the 12.5 pF crystal load (Control_1 CAP_SEL). The chip powers up
+/// at 7 pF; leaving a 12.5 pF crystal under-loaded makes the clock run fast
+/// by tens of ppm, i.e. seconds per day. Set to 0 for a 7 pF crystal.
+#ifndef RTC_CRYSTAL_LOAD_12PF5
+#define RTC_CRYSTAL_LOAD_12PF5 1
+#endif
+
 #if ENABLE_RTC_CLOCK
 
 /// Minimal access for reading and writing the battery-backed PCF85063.
 class Pcf85063Clock {
 public:
-  /// Attaches the RTC to the shared I2C bus when it is available.
+  /// Attaches the RTC to the shared I2C bus and applies the crystal load.
   void begin();
   /// Reads the date and time fields and converts them to a local seconds count.
   bool readLocalUnix(int64_t &localUnix);

@@ -1,4 +1,5 @@
 #include "sys/system_config.h"
+#include "sys/services/battery_monitor.h"
 #include "sys/services/sd_storage.h"
 #include "secrets_config.h"
 
@@ -168,6 +169,20 @@ bool parseUnsignedRange(const char *value, uint16_t minimum, uint16_t maximum,
   return true;
 }
 
+bool parseBatteryScale(const char *value, float &out) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  char *end = nullptr;
+  const float parsed = strtof(value, &end);
+  if (end == value || *end != '\0' ||
+      !BatteryMonitor::validVoltageScale(parsed)) {
+    return false;
+  }
+  out = parsed;
+  return true;
+}
+
 bool parseSyncIntervalHours(const char *value, uint8_t &out) {
   uint16_t hours = 0;
   if (!parseUnsignedRange(value, 0, 24, hours) ||
@@ -251,6 +266,10 @@ bool validSystemValue(const char *key, const char *value) {
     return asciiEqualIgnoreCase(value, "fixed") ||
            asciiEqualIgnoreCase(value, "balanced");
   }
+  if (strcmp(key, "battery.voltageScale") == 0) {
+    float scale = 0.0f;
+    return parseBatteryScale(value, scale);
+  }
   return true;
 }
 
@@ -307,6 +326,7 @@ void resetSystemDefaults() {
   copyValue(currentConfig.time.syncServer, sizeof(currentConfig.time.syncServer),
             kDefaultTimeSyncServer);
   currentConfig.sensors.temperatureOffsetC = 0.0f;
+  currentConfig.battery.voltageScale = 1.0f;
   copyValue(currentConfig.sensors.unit, sizeof(currentConfig.sensors.unit), "c");
   currentConfig.periodic.minIntervalMinutes = 1;
   currentConfig.periodic.disableOnLowBattery = true;
@@ -439,6 +459,11 @@ void applySystemKey(const char *key, const char *value) {
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     currentConfig.sensors.temperatureOffsetC =
         static_cast<float>(atof(value != nullptr ? value : "0"));
+  } else if (strcmp(key, "battery.voltageScale") == 0) {
+    float scale = 0.0f;
+    if (parseBatteryScale(value, scale)) {
+      currentConfig.battery.voltageScale = scale;
+    }
   } else if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
     uint16_t minutes = 0;
     if (parseUnsignedRange(value, 0,
@@ -621,6 +646,8 @@ bool systemCurrentValue(const char *key, char *out, size_t outSize) {
                                       currentConfig.time.syncIntervalHours));
   } else if (strcmp(key, "sensor.tempOffsetC") == 0) {
     snprintf(out, outSize, "%.2f", currentConfig.sensors.temperatureOffsetC);
+  } else if (strcmp(key, "battery.voltageScale") == 0) {
+    snprintf(out, outSize, "%.4f", currentConfig.battery.voltageScale);
   } else if (strcmp(key, "periodic.minIntervalMinutes") == 0) {
     snprintf(out, outSize, "%u", static_cast<unsigned>(
                                       currentConfig.periodic.minIntervalMinutes));
