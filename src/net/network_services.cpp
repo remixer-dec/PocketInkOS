@@ -42,6 +42,13 @@ public:
   ~ServiceGuard() { serviceLock.clear(std::memory_order_release); }
 };
 
+void stopAll(State &current) {
+  current.dns.stop();
+  current.proxy.stop();
+  current.web.stop();
+  current.ftp.stop();
+}
+
 bool due(uint32_t now, uint32_t deadline) {
   return deadline == 0 || static_cast<int32_t>(now - deadline) >= 0;
 }
@@ -162,9 +169,7 @@ void networkServicesUpdate(uint32_t nowMs) {
     if (tetheringActive()) {
       const TetherRoute route = configuredTetherRoute();
       const DnsMode dnsMode = configuredDnsMode();
-      if (route == TetherRoute::Socks5 ||
-          route == TetherRoute::HttpConnect ||
-          route == TetherRoute::HttpsConnect ||
+      if (proxyRoute(route) ||
           (tetherRoutingActive() && route == TetherRoute::Direct &&
            dnsMode == DnsMode::Doh)) {
         State *created = ensureState();
@@ -181,18 +186,12 @@ void networkServicesUpdate(uint32_t nowMs) {
     }
   }
   if (!tetheringActive()) {
-    state->dns.stop();
-    state->proxy.stop();
-    state->web.stop();
-    state->ftp.stop();
+    stopAll(*state);
     return;
   }
   refreshPolicy(*state, nowMs);
   const InterfaceSnapshot interface = interfaceSnapshot();
-  if ((state->route == TetherRoute::Socks5 ||
-       state->route == TetherRoute::HttpConnect ||
-       state->route == TetherRoute::HttpsConnect) &&
-      interface.stationConnected) {
+  if (proxyRoute(state->route) && interface.stationConnected) {
     if (!state->proxy.running() && due(nowMs, state->proxyRetryAt)) {
       if (!state->proxy.start()) {
         state->proxyRetryAt = nowMs + 5000U;
@@ -224,10 +223,7 @@ void networkServicesConfigChanged() {
     // Credentials, ports, route and trust settings are read only at service
     // start. Stop every live consumer before applying the new policy so old
     // authorization cannot remain usable and proxy routes never fall back.
-    state->dns.stop();
-    state->proxy.stop();
-    state->web.stop();
-    state->ftp.stop();
+    stopAll(*state);
     state->proxyRetryAt = 0;
     state->policyKnown = false;
     state->policyRefreshAt = 0;
@@ -240,10 +236,7 @@ void networkServicesShutdown() {
   if (state == nullptr) {
     return;
   }
-  state->dns.stop();
-  state->proxy.stop();
-  state->web.stop();
-  state->ftp.stop();
+  stopAll(*state);
   state->~State();
   psram::release(state);
   state = nullptr;

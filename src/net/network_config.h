@@ -25,6 +25,12 @@ uint16_t configPort(const char *key, uint16_t fallback);
 bool validProxyHost(const char *host);
 bool validDohEndpoint(const char *url);
 
+/// True for routes that tunnel hotspot traffic through an upstream proxy.
+inline bool proxyRoute(TetherRoute route) {
+  return route == TetherRoute::Socks5 || route == TetherRoute::HttpConnect ||
+         route == TetherRoute::HttpsConnect;
+}
+
 TetherRoute configuredTetherRoute();
 DnsMode configuredDnsMode();
 

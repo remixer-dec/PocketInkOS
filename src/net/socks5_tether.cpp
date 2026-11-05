@@ -1772,8 +1772,7 @@ bool Socks5Tether::start() {
   }
   const TetherRoute route = configuredTetherRoute();
   if (!tetheringActive() || WiFi.status() != WL_CONNECTED ||
-      (route != TetherRoute::Socks5 && route != TetherRoute::HttpConnect &&
-       route != TetherRoute::HttpsConnect)) {
+      !proxyRoute(route)) {
     return false;
   }
   void *memory = psram::allocate(sizeof(Socks5TetherImpl));
