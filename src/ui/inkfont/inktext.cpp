@@ -193,7 +193,7 @@ Line breakLine(const Face &face, const char *p, const char *end, int32_t maxWidt
   const char *breakEnd = nullptr;
   const char *breakNext = nullptr;
   int32_t breakWidth = 0;
-  bool prevWide = false;
+  uint32_t prev = ' ';
   while (items.next(item)) {
     if (item.cp == '\n') {
       line.next = item.end;
@@ -209,16 +209,16 @@ Line breakLine(const Face &face, const char *p, const char *end, int32_t maxWidt
         breakWidth = line.width;
         breakNext = item.end;
       }
-      prevWide = false;
+      prev = ' ';
       continue;
     }
-    const bool wide = inkBreaksAnywhere(item.base);
-    if ((wide || prevWide) && line.end > p) {
+    // Zero-advance glyphs are marks on the previous character: never split.
+    if (advance > 0 && line.end > p && inkBreakBetween(prev, item.base)) {
       breakEnd = line.end;
       breakWidth = line.width;
       breakNext = item.start;
     }
-    if (width + advance > maxWidth && line.end > p) {
+    if (advance > 0 && width + advance > maxWidth && line.end > p) {
       if (breakEnd != nullptr) {
         line.end = breakEnd;
         line.width = breakWidth;
@@ -238,7 +238,7 @@ Line breakLine(const Face &face, const char *p, const char *end, int32_t maxWidt
       breakWidth = width;
       breakNext = item.end;
     }
-    prevWide = wide;
+    prev = item.base;
   }
   line.fullWidth = width;
   return line;
@@ -470,6 +470,30 @@ int32_t drawEllipsis(Adafruit_GFX &gfx, const Face &face, int32_t pen,
   return pen;
 }
 
+// Draws glyphs left to right. Zero-advance marks come in two conventions:
+// overlaying from the pen (negative offset) or anchored at the start of their
+// base glyph (non-negative offset), so the latter are pulled back over it.
+struct Pen {
+  Adafruit_GFX &gfx;
+  const Face &face;
+  int32_t x;
+  int16_t baseline;
+  int32_t lastAdvance = 0;
+
+  void put(const Shaped &s) {
+    int32_t at = x;
+    if (s.advance == 0 && !s.tofu && s.glyph.xOffset >= 0) {
+      at -= lastAdvance;
+    } else if (s.advance != 0) {
+      lastAdvance = s.advance;
+    }
+    if (s.draw) {
+      drawGlyph(gfx, face, s, at, baseline);
+    }
+    x += s.advance;
+  }
+};
+
 void drawLine(Adafruit_GFX &gfx, const Face &face, const char *start,
               const char *end, int32_t pen, int16_t top, bool rtl,
               bool ellipsis) {
@@ -481,6 +505,7 @@ void drawLine(Adafruit_GFX &gfx, const Face &face, const char *start,
   }
   mixed = mixed && count <= kMaxBidiGlyphs;
 
+  Pen out{gfx, face, pen, baseline};
   BidiGlyph glyphs[kMaxBidiGlyphs];
   uint16_t n = 0;
   Items items(start, end);
@@ -488,34 +513,23 @@ void drawLine(Adafruit_GFX &gfx, const Face &face, const char *start,
   while (items.next(item)) {
     if (mixed) {
       glyphs[n++] = {item.cp, item.base, inkBidiClass(item.base), 0};
-      continue;
+    } else {
+      out.put(shape(face, item.cp, item.base));
     }
-    const Shaped s = shape(face, item.cp, item.base);
-    if (s.draw) {
-      drawGlyph(gfx, face, s, pen, baseline);
+  }
+  if (ellipsis && mixed && rtl) {
+    out.x = drawEllipsis(gfx, face, out.x, baseline);
+  }
+  if (mixed) {
+    reorder(glyphs, n, rtl);
+    for (uint16_t i = 0; i < n; i++) {
+      const uint32_t cp =
+          glyphs[i].level & 1 ? inkBidiMirror(glyphs[i].cp) : glyphs[i].cp;
+      out.put(shape(face, cp, glyphs[i].base));
     }
-    pen += s.advance;
   }
-  if (!mixed) {
-    if (ellipsis) {
-      drawEllipsis(gfx, face, pen, baseline);
-    }
-    return;
-  }
-  if (ellipsis && rtl) {
-    pen = drawEllipsis(gfx, face, pen, baseline);
-  }
-  reorder(glyphs, n, rtl);
-  for (uint16_t i = 0; i < n; i++) {
-    const uint32_t cp = glyphs[i].level & 1 ? inkBidiMirror(glyphs[i].cp) : glyphs[i].cp;
-    const Shaped s = shape(face, cp, glyphs[i].base);
-    if (s.draw) {
-      drawGlyph(gfx, face, s, pen, baseline);
-    }
-    pen += s.advance;
-  }
-  if (ellipsis && !rtl) {
-    drawEllipsis(gfx, face, pen, baseline);
+  if (ellipsis && !(mixed && rtl)) {
+    drawEllipsis(gfx, face, out.x, baseline);
   }
 }
 

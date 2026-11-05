@@ -48,12 +48,16 @@ JS and `.pink` apps reach the same fonts through the existing font registry:
 
 ## Script support
 
-Line breaking at spaces, dashes, `\n`, ZWSP and between CJK characters
-(overlong words are split). Arabic/Persian/Urdu contextual shaping and lam-alef
+Line breaking at spaces, dashes, `\n`, ZWSP and between CJK characters;
+Thai, Lao, Khmer and Myanmar break between character clusters (true word
+breaks would need a dictionary). Overlong words are split, never before a
+combining mark. Combining marks are zero-advance overlays (the converter
+strips Unifont's dotted-circle placeholders). Arabic/Persian/Urdu contextual shaping and lam-alef
 ligatures via presentation forms. Simplified bidi reordering per line
 (paragraph direction from the first strong character, numbers stay LTR,
 brackets mirrored). Not supported: explicit bidi embeddings, Indic shaping
-and complex mark positioning, kerning.
+(Devanagari etc. render letters but without reordering or conjuncts), precise
+stacking of several marks on one letter, kerning.
 
 ## Fonts
 

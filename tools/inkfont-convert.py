@@ -139,6 +139,47 @@ def crop(adv, w, h, xo, yo, px):
     return Glyph(adv, c1 - c0, r1 - r0, xo + c0, yo + r0, out)
 
 
+def attach_marks(glyphs):
+    """Turns spacing renderings of combining marks into zero-advance overlays.
+
+    Some pixel fonts (Unifont) draw each mark in its own cell over a dotted
+    circle placeholder. Pixels shared by most marks of one cell width are that
+    placeholder; they are removed and the mark is shifted back over the
+    preceding character's cell.
+    """
+    by_width = {}
+    for cp, g in glyphs.items():
+        if g.adv and unicodedata.category(chr(cp)) in ("Mn", "Me"):
+            by_width.setdefault(g.adv, []).append(cp)
+
+    def common_pixels(cps, minimum):
+        counts = {}
+        for cp in cps:
+            g = glyphs[cp]
+            for i, v in enumerate(g.px):
+                if v:
+                    key = (g.xo + i % g.w, g.yo + i // g.w)
+                    counts[key] = counts.get(key, 0) + 1
+        if len(cps) < minimum:
+            return set()
+        return {k for k, n in counts.items() if n >= 0.75 * len(cps)}
+
+    for adv, cps in by_width.items():
+        # Scripts place the placeholder differently, so prefer a per-block
+        # pattern and fall back to the pattern shared by the whole width.
+        shared = common_pixels(cps, 20)
+        blocks = {}
+        for cp in cps:
+            blocks.setdefault(cp >> 7, []).append(cp)
+        for block in blocks.values():
+            placeholder = common_pixels(block, 8) or shared
+            for cp in block:
+                g = glyphs[cp]
+                px = [0 if (g.xo + i % g.w, g.yo + i // g.w) in placeholder
+                      else v for i, v in enumerate(g.px)]
+                glyphs[cp] = crop(0, g.w, g.h, g.xo - adv, g.yo, px)
+
+
 def load_outline(paths, size, bpp, ranges):
     try:
         from PIL import ImageFont
@@ -147,12 +188,17 @@ def load_outline(paths, size, bpp, ranges):
     glyphs = {}
     metrics = None
     for path in paths:
-        font = ImageFont.truetype(path, size)
+        added = {}
+        # Basic layout renders each glyph as is; the shaping engine would
+        # prefix lone combining marks with a dotted circle.
+        font = ImageFont.truetype(path, size,
+                                  layout_engine=ImageFont.Layout.BASIC)
         if metrics is None:
             metrics = font.getmetrics()
         mode = "1" if bpp == 1 else "L"
         for cp in sorted(sfnt_cmap(path)):
-            if cp in glyphs or cp < 0x20 or not in_ranges(cp, ranges):
+            if cp in glyphs or cp in added or cp < 0x20 or \
+                    not in_ranges(cp, ranges):
                 continue
             ch = chr(cp)
             adv = int(round(font.getlength(ch, mode=mode)))
@@ -164,7 +210,9 @@ def load_outline(paths, size, bpp, ranges):
             px = list(mask) if w and h else []
             if bpp == 1:
                 px = [255 if v else 0 for v in px]
-            glyphs[cp] = crop(min(adv, 255), w, h, ox, oy, px)
+            added[cp] = crop(min(adv, 255), w, h, ox, oy, px)
+        attach_marks(added)
+        glyphs.update(added)
     return glyphs, metrics
 
 
@@ -195,6 +243,7 @@ def load_bdf(path, ranges):
                 px += [255 if bits >> (total - 1 - x) & 1 else 0
                        for x in range(w)]
             glyphs[cp] = crop(adv or w, w, h, bx, -(by + h), px)
+    attach_marks(glyphs)
     return glyphs, (ascent, descent)
 
 

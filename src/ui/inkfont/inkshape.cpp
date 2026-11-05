@@ -210,8 +210,30 @@ bool inkInvisible(uint32_t cp) {
          cp == 0xFEFF || between(cp, 0xFE00, 0xFE0F);
 }
 
-bool inkBreaksAnywhere(uint32_t cp) {
-  return between(cp, 0x2E80, 0x9FFF) || between(cp, 0xAC00, 0xD7A3) ||
-         between(cp, 0xF900, 0xFAFF) || between(cp, 0xFF00, 0xFF60) ||
-         between(cp, 0x20000, 0x3FFFF);
+namespace {
+
+bool breaksAnywhere(uint32_t cp) {
+  return between(cp, 0x0E00, 0x0EFF) || between(cp, 0x1000, 0x109F) ||
+         between(cp, 0x1780, 0x17FF) || between(cp, 0x2E80, 0x9FFF) ||
+         between(cp, 0xAC00, 0xD7A3) || between(cp, 0xF900, 0xFAFF) ||
+         between(cp, 0xFF00, 0xFF60) || between(cp, 0x20000, 0x3FFFF);
+}
+
+// Thai and Lao vowels written before their consonant, which must stay with it.
+bool leadingVowel(uint32_t cp) {
+  return between(cp, 0x0E40, 0x0E44) || between(cp, 0x0EC0, 0x0EC4);
+}
+
+// Spacing vowels and signs that attach to the preceding syllable.
+bool followingSign(uint32_t cp) {
+  return cp == 0x0E30 || between(cp, 0x0E32, 0x0E33) || between(cp, 0x0E45, 0x0E46) ||
+         cp == 0x0EB0 || between(cp, 0x0EB2, 0x0EB3) || cp == 0x0EC6 ||
+         between(cp, 0x17B6, 0x17D3) || between(cp, 0x102B, 0x103E);
+}
+
+} // namespace
+
+bool inkBreakBetween(uint32_t prev, uint32_t cp) {
+  return (breaksAnywhere(prev) || breaksAnywhere(cp)) && !leadingVowel(prev) &&
+         !followingSign(cp);
 }

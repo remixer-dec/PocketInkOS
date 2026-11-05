@@ -28,7 +28,10 @@ uint32_t inkLamAlef(uint32_t alef, bool joinsPrev);
 
 /// Zero-width formatting characters that are never drawn.
 bool inkInvisible(uint32_t cp);
-/// Ideographs, kana and Hangul allow line breaks between any two characters.
-bool inkBreaksAnywhere(uint32_t cp);
+/// Line-break opportunity between two adjacent visible characters of scripts
+/// written without spaces: CJK, Hangul, and (per character cluster, since
+/// word breaks would need a dictionary) Thai, Lao, Khmer and Myanmar. Callers
+/// must never break before zero-advance marks.
+bool inkBreakBetween(uint32_t prev, uint32_t cp);
 
 #endif
