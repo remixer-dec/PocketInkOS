@@ -599,6 +599,17 @@ void WifiApp::draw(Adafruit_GFX &gfx) {
 
 bool WifiApp::update() {
   bool dirty = wifiManager.update();
+  const WifiManager::ConnectionState connectionState =
+      wifiManager.connectionState();
+  if (lastConnectionState == WifiManager::STATE_CONNECTING &&
+      connectionState == WifiManager::STATE_FAILED &&
+      displayState() != WIFI_DISPLAY_OFF) {
+    // A timed-out attempt keeps the radio on; refresh the list so another
+    // network can be chosen without toggling Wi-Fi.
+    scanNetworks();
+    dirty = true;
+  }
+  lastConnectionState = connectionState;
   if (view == VIEW_ROUTING && routingSettings.update()) {
     dirty = true;
   }

@@ -79,11 +79,20 @@ public:
 
 private:
   static const unsigned long CONNECT_TIMEOUT_MS = 15000;
+  static const unsigned long REDISCOVERY_MIN_MS = 30000;
+  static const unsigned long REDISCOVERY_MAX_MS = 600000;
+
+  void connectPreferred(bool rediscovery);
 
   ConnectionState state = STATE_IDLE;
   unsigned long startedAt = 0;
+  /// Pause before retrying the preferred network after a failed attempt.
+  unsigned long rediscoveryDelayMs = 0;
   bool autoConnectPending = false;
   bool staStarted = false;
+  /// True while failures of the preferred network should be retried, so
+  /// repeater uplinks recover without user input.
+  bool rediscoverPreferred = false;
 };
 
 /// Process-wide Wi-Fi manager instance.

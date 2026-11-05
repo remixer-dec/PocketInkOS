@@ -65,11 +65,19 @@ bool WifiManager::startSta() {
   return true;
 }
 
-void WifiManager::connect() {
+void WifiManager::connect() { connectPreferred(false); }
+
+void WifiManager::connectPreferred(bool rediscovery) {
+  const unsigned long delayMs = rediscoveryDelayMs;
   connectTo(currentSystemConfig().wifi.ssid, currentSystemConfig().wifi.password);
+  rediscoverPreferred = state == STATE_CONNECTING;
+  // Explicit connects restart the backoff; background retries keep growing it.
+  rediscoveryDelayMs = rediscovery ? delayMs : 0;
 }
 
 void WifiManager::connectTo(const char *ssid, const char *password) {
+  rediscoverPreferred = false;
+  rediscoveryDelayMs = 0;
   if (ssid == nullptr || ssid[0] == '\0') {
     state = STATE_FAILED;
     timeSync.setStatus("No SSID");
@@ -95,6 +103,8 @@ void WifiManager::disconnect() {
     net::stopStationInterface();
   }
   staStarted = false;
+  rediscoverPreferred = false;
+  rediscoveryDelayMs = 0;
   state = STATE_IDLE;
   timeSync.reset();
   timeSync.setStatus("WiFi off");
@@ -134,7 +144,7 @@ WifiDisplayState WifiManager::displayState() const {
   if (WiFi.status() == WL_CONNECTED) {
     return WIFI_DISPLAY_CONNECTED;
   }
-  if (state == STATE_IDLE || state == STATE_FAILED) {
+  if (state == STATE_IDLE || (state == STATE_FAILED && !staStarted)) {
     return WIFI_DISPLAY_OFF;
   }
   return WIFI_DISPLAY_ON;
@@ -149,25 +159,46 @@ bool WifiManager::update() {
 
   if (state == STATE_CONNECTING && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
+    rediscoveryDelayMs = 0;
     net::applyTetherRouting();
     return true;
   }
 
   if (state == STATE_CONNECTING && millis() - startedAt > CONNECT_TIMEOUT_MS) {
-    disconnect();
+    // Abort only the association attempt. Station mode stays up so callers
+    // can rediscover networks instead of finding the radio switched off.
+    WiFi.disconnect(false, false);
     state = STATE_FAILED;
+    startedAt = millis();
+    if (rediscoverPreferred) {
+      const unsigned long next = rediscoveryDelayMs * 2;
+      rediscoveryDelayMs = next < REDISCOVERY_MIN_MS   ? REDISCOVERY_MIN_MS
+                           : next > REDISCOVERY_MAX_MS ? REDISCOVERY_MAX_MS
+                                                       : next;
+    }
     timeSync.setStatus("Connect timeout");
+    return true;
+  }
+
+  if (state == STATE_FAILED && rediscoverPreferred && staStarted &&
+      WiFi.status() != WL_CONNECTED &&
+      millis() - startedAt >= rediscoveryDelayMs) {
+    connectPreferred(true);
     return true;
   }
 
   if (state != STATE_CONNECTED && WiFi.status() == WL_CONNECTED) {
     state = STATE_CONNECTED;
+    rediscoveryDelayMs = 0;
     net::applyTetherRouting();
     return true;
   }
 
   if (state == STATE_CONNECTED && WiFi.status() != WL_CONNECTED) {
     state = STATE_FAILED;
+    // The driver reconnects on its own first; rediscovery is the fallback.
+    startedAt = millis();
+    rediscoveryDelayMs = REDISCOVERY_MIN_MS;
     net::applyTetherRouting();
     timeSync.setStatus("Disconnected");
     return true;
