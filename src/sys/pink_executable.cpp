@@ -640,13 +640,13 @@ void hostSetFont(uint8_t font) {
 
 void hostSetTextSize(uint8_t size) {
   if (pinkDrawTarget != nullptr) {
-    pinkDrawTarget->setTextSize(size);
+    systemFontSetTextSize(*pinkDrawTarget, size);
   }
 }
 
 void hostSetTextColor(uint16_t color) {
   if (pinkDrawTarget != nullptr) {
-    pinkDrawTarget->setTextColor(color);
+    systemFontSetTextColor(*pinkDrawTarget, color);
   }
 }
 
@@ -658,7 +658,7 @@ void hostSetCursor(int16_t x, int16_t y) {
 
 void hostPrint(const char *text) {
   if (pinkDrawTarget != nullptr && text != nullptr) {
-    pinkDrawTarget->print(text);
+    systemFontPrint(*pinkDrawTarget, text);
   }
 }
 

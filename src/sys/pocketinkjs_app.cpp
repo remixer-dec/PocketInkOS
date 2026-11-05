@@ -1017,7 +1017,7 @@ PocketInkJS::Value nativeUiSetTextSize(PocketInkJS::Runtime &runtime,
                                   const PocketInkJS::Value *args, size_t argc,
                                   void *) {
   if (numericArguments(runtime, args, argc, 1) && PocketInkJSDrawTarget != nullptr) {
-    PocketInkJSDrawTarget->setTextSize(toU8(runtime.toNumber(args[0])));
+    systemFontSetTextSize(*PocketInkJSDrawTarget, toU8(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
 }
@@ -1026,7 +1026,7 @@ PocketInkJS::Value nativeUiSetTextColor(PocketInkJS::Runtime &runtime,
                                    const PocketInkJS::Value *args, size_t argc,
                                    void *) {
   if (numericArguments(runtime, args, argc, 1) && PocketInkJSDrawTarget != nullptr) {
-    PocketInkJSDrawTarget->setTextColor(toU16(runtime.toNumber(args[0])));
+    systemFontSetTextColor(*PocketInkJSDrawTarget, toU16(runtime.toNumber(args[0])));
   }
   return runtime.undefined();
 }
@@ -1051,14 +1051,11 @@ PocketInkJS::Value nativeUiPrint(PocketInkJS::Runtime &runtime,
   }
   if (runtime.isString(args[0])) {
     const PocketInkJS::StringView text = runtime.stringView(args[0]);
-    for (size_t i = 0; i < text.size; i++) {
-      char character[2] = {text.data[i], '\0'};
-      PocketInkJSDrawTarget->print(character);
-    }
+    systemFontPrint(*PocketInkJSDrawTarget, text.data, text.size);
   } else {
     char text[96];
     runtime.format(args[0], text, sizeof(text));
-    PocketInkJSDrawTarget->print(text);
+    systemFontPrint(*PocketInkJSDrawTarget, text);
   }
   return runtime.undefined();
 }

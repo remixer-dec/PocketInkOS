@@ -32,6 +32,11 @@ public:
   void setTextColor(uint16_t color) { textColor = color; }
   void setTextSize(uint8_t size) { textSize = size; }
   void setCursor(int16_t x, int16_t y) { cursorX = x; cursorY = y; }
+  int16_t getCursorX() const { return cursorX; }
+  int16_t getCursorY() const { return cursorY; }
+  int16_t width() const { return 200; }
+  int16_t height() const { return 200; }
+  virtual void drawFastHLine(int16_t, int16_t, int16_t, uint16_t) {}
   void print(const char *) {
     if (textCallCount < sizeof(textCalls) / sizeof(textCalls[0])) {
       textCalls[textCallCount++] = {textColor, cursorX, cursorY, textSize};
