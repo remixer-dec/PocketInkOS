@@ -193,6 +193,10 @@ FILES=( \
   "$ROOT/src/sys/rtc_context.cpp" \
   "$ROOT/src/sys/services/sd_storage.cpp" \
   "$ROOT/src/sys/system_fonts.cpp" \
+  "$ROOT/src/ui/inkfont/inkfont.cpp" \
+  "$ROOT/src/ui/inkfont/inkfont_system.cpp" \
+  "$ROOT/src/ui/inkfont/inkshape.cpp" \
+  "$ROOT/src/ui/inkfont/inktext.cpp" \
   "$ROOT/src/shell/screenshot.cpp" \
   "$ROOT/src/shell/wallpaper.cpp" \
   "$ROOT/src/sys/video/avi_encoder.cpp" \

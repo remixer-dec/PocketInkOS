@@ -1,5 +1,6 @@
 #include "sys/services/sd_storage.h"
 #include "sys/drivers/sd_card.h"
+#include "ui/inkfont/inkfont.h"
 
 #include <Arduino.h>
 
@@ -51,6 +52,9 @@ bool refreshSnapshot() {
 
   const bool changed = snapshotsDiffer(snapshot, next);
   snapshot = next;
+  // Idempotent; repeating it on every poll also picks up a font file copied
+  // onto an already mounted card.
+  inkFontStorageChanged(snapshot.mounted);
   return changed;
 }
 
@@ -85,6 +89,7 @@ void sdStorageBegin() {
 }
 
 void sdStorageEnd() {
+  inkFontStorageChanged(false);
   sdCardUnmount();
   snapshot = SdStorageSnapshot{};
   nextPollAt = 0;
