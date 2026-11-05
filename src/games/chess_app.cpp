@@ -1995,7 +1995,7 @@ ChessApp::Move ChessApp::chooseAiMoveLevel3(unsigned long budgetMs) {
   unsigned long deadlineMs = millis() + budgetMs;
 
   for (uint8_t depth = 1; depth <= AI3_MAX_DEPTH; ++depth) {
-    if (millis() >= deadlineMs) {
+    if (millisReached(deadlineMs)) {
       break;
     }
 
@@ -2023,7 +2023,7 @@ ChessApp::Move ChessApp::chooseAiMoveLevel3(unsigned long budgetMs) {
     }
 
     for (int i = 0; i < storedCount; ++i) {
-      if (millis() >= deadlineMs) {
+      if (millisReached(deadlineMs)) {
         timedOut = true;
         break;
       }
@@ -2053,7 +2053,7 @@ ChessApp::Move ChessApp::chooseAiMoveLevel3(unsigned long budgetMs) {
 int ChessApp::alphaBetaSearch(uint8_t depth, int alpha, int beta,
                               PieceColor aiColor, uint8_t ply,
                               unsigned long deadlineMs, bool &timedOut) {
-  if (timedOut || millis() >= deadlineMs) {
+  if (timedOut || millisReached(deadlineMs)) {
     timedOut = true;
     return evaluateBoard(aiColor);
   }
@@ -2106,7 +2106,7 @@ int ChessApp::alphaBetaSearch(uint8_t depth, int alpha, int beta,
   int explored = 0;
 
   for (int i = 0; i < storedCount; ++i) {
-    if (millis() >= deadlineMs) {
+    if (millisReached(deadlineMs)) {
       timedOut = true;
       break;
     }

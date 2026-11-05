@@ -259,7 +259,7 @@ bool DateTimePickerComponent::update() {
   if (yearKeyboardOpen && yearKeyboard.update()) {
     return true;
   }
-  if (pressedControl == CONTROL_NONE || millis() < pressedUntil) {
+  if (pressedControl == CONTROL_NONE || !millisReached(pressedUntil)) {
     return false;
   }
   pressedControl = CONTROL_NONE;

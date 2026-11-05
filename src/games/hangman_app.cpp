@@ -77,7 +77,7 @@ void HangmanApp::draw(Adafruit_GFX &gfx) {
 }
 
 bool HangmanApp::update() {
-  if (pendingAction != PENDING_NONE && millis() >= press.until) {
+  if (pendingAction != PENDING_NONE && millisReached(press.until)) {
     const PendingAction action = pendingAction;
     pendingAction = PENDING_NONE;
     press.clear();

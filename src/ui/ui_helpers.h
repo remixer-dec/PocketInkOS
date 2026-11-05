@@ -8,6 +8,12 @@
 static const unsigned long UI_PRESS_FEEDBACK_MS = 180;
 static const uint8_t UI_TOUCH_ASSIST_PX = 2;
 
+/// True once millis() has reached deadline; stays correct across the
+/// 49.7-day millis() wraparound.
+inline bool millisReached(unsigned long deadline) {
+  return static_cast<long>(millis() - deadline) >= 0;
+}
+
 /// Small helper for pressed feedback in screens without a full component.
 ///
 /// Screens store an integer control id, call press() from hit testing, and call
@@ -31,12 +37,12 @@ struct UiPressFeedback {
 
   /// Checks whether a control id should currently draw as pressed.
   bool isPressed(int8_t queryId) const {
-    return id == queryId && millis() < until;
+    return id == queryId && !millisReached(until);
   }
 
   /// Expires feedback and reports whether the screen should redraw.
   bool update() {
-    if (id < 0 || millis() < until) {
+    if (id < 0 || !millisReached(until)) {
       return false;
     }
     clear();

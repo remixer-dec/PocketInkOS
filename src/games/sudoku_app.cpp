@@ -469,7 +469,7 @@ bool SudokuApp::handleTouch(const TouchPoint &point) {
 }
 
 bool SudokuApp::update() {
-  if (pendingDifficulty >= 0 && millis() >= press.until) {
+  if (pendingDifficulty >= 0 && millisReached(press.until)) {
     const Difficulty nextDifficulty =
         static_cast<Difficulty>(pendingDifficulty);
     pendingDifficulty = -1;
