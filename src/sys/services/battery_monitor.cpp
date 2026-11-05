@@ -1,7 +1,18 @@
 #include "sys/services/battery_monitor.h"
 #include "sys/global.h"
+#include "sys/system_config.h"
+
+#if __has_include(<esp_attr.h>)
+#include <esp_attr.h>
+#endif
+
+#ifndef RTC_DATA_ATTR
+#define RTC_DATA_ATTR
+#endif
 
 namespace {
+
+RTC_DATA_ATTR float retainedVoltageScale = 1.0f;
 
 constexpr BatterySocPoint kDefaultSocCurve[] = {
     {BATTERY_EMPTY_VOLTAGE, 0}, {2.95f, 5},  {3.10f, 10},
@@ -113,9 +124,22 @@ void BatteryMonitor::refresh() {
       (average / config_.adcMaxReading) * config_.adcReferenceVoltage *
       config_.dividerScale;
 
+  const float scale = validVoltageScale(retainedVoltageScale)
+                          ? retainedVoltageScale
+                          : 1.0f;
   data_.valid = true;
-  data_.voltage = batteryVoltage;
-  data_.percentage = estimatePercentageFromCurve(batteryVoltage, config_);
+  data_.rawVoltage = batteryVoltage;
+  data_.voltage = batteryVoltage * scale;
+  data_.percentage = estimatePercentageFromCurve(data_.voltage, config_);
 }
 
 const BatterySnapshot &BatteryMonitor::snapshot() const { return data_; }
+
+void BatteryMonitor::applyConfig() {
+  const float scale = currentSystemConfig().battery.voltageScale;
+  retainedVoltageScale = validVoltageScale(scale) ? scale : 1.0f;
+}
+
+bool BatteryMonitor::validVoltageScale(float scale) {
+  return scale >= BATTERY_SCALE_MIN && scale <= BATTERY_SCALE_MAX;
+}

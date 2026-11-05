@@ -2,6 +2,7 @@
 
 #include "shell/shell_home_layout.h"
 #include "sys/audio/audio_power.h"
+#include "sys/services/battery_monitor.h"
 #include "sys/services/sd_storage.h"
 #include "sys/system_config.h"
 
@@ -11,6 +12,7 @@ void SystemStageService::initialize() {
   }
   sdStorageBegin();
   configBegin();
+  batteryMonitor.applyConfig();
   shellLayoutConfigReload();
   audioPowerBegin();
   started = true;

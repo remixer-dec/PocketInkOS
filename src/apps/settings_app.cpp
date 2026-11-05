@@ -7,6 +7,8 @@
 #include "sys/audio/notification_sound.h"
 #include "sys/builtin_apps.h"
 #include "sys/global.h"
+#include "sys/drivers/usb_status.h"
+#include "sys/services/battery_monitor.h"
 #include "sys/services/device_controls.h"
 #include "sys/system_config.h"
 #include "ui/components/list_component.h"
@@ -67,6 +69,7 @@ enum SettingId : uint8_t {
   SETTING_SYNC_SERVER,
   SETTING_TIMEZONE,
   SETTING_BATTERY_CALIBRATION,
+  SETTING_BATTERY_MARK_FULL,
   SETTING_TEMPERATURE_OFFSET,
   SETTING_WIFI_SSID,
   SETTING_WIFI_PASSWORD,
@@ -102,7 +105,6 @@ enum class SettingKind : uint8_t {
   IconPicker,
   AppPicker,
   ReadOnly,
-  Reserved,
   Action,
 };
 
@@ -260,8 +262,10 @@ const SettingDefinition kTimeSettings[] = {
 };
 
 const SettingDefinition kCalibrationSettings[] = {
-    {SETTING_BATTERY_CALIBRATION, "Battery calibration", nullptr,
-     SettingKind::Reserved, nullptr, 0, 0},
+    {SETTING_BATTERY_CALIBRATION, "Battery voltage", "battery.voltageScale",
+     SettingKind::Numeric, nullptr, 0, 6},
+    {SETTING_BATTERY_MARK_FULL, "Mark battery full", nullptr,
+     SettingKind::Action, nullptr, 0, 0},
     {SETTING_TEMPERATURE_OFFSET, "Temperature offset", "sensor.tempOffsetC",
      SettingKind::Numeric, nullptr, 0, 16},
 };
@@ -687,7 +691,43 @@ bool settingCurrentValue(const SettingDefinition &setting, char *out,
              static_cast<unsigned>(deviceControlsSelectedCpuMhz()));
     return true;
   }
+  if (setting.id == SETTING_BATTERY_CALIBRATION) {
+    // Shows and edits the calibrated voltage; the stored key is the factor.
+    const BatterySnapshot &battery = batteryMonitor.snapshot();
+    if (battery.valid) {
+      snprintf(out, outSize, "%.2f", battery.voltage);
+    } else {
+      out[0] = '\0';
+    }
+    return battery.valid;
+  }
   return setting.key != nullptr && configGet(setting.key, out, outSize);
+}
+
+/// Stores the factor that makes the current raw reading equal targetVoltage.
+/// A zero target clears calibration. Returns a short popup message.
+const char *saveBatteryCalibration(float targetVoltage) {
+  if (targetVoltage == 0.0f) {
+    const bool removed = configRemove("battery.voltageScale");
+    batteryMonitor.applyConfig();
+    batteryMonitor.refresh();
+    return removed ? "CALIBRATION RESET" : "SAVE FAILED";
+  }
+  batteryMonitor.refresh();
+  const BatterySnapshot &battery = batteryMonitor.snapshot();
+  if (!battery.valid || battery.rawVoltage <= 0.0f) {
+    return "NO READING";
+  }
+  const float scale = targetVoltage / battery.rawVoltage;
+  if (!BatteryMonitor::validVoltageScale(scale)) {
+    return "OUT OF RANGE";
+  }
+  char value[16] = {};
+  snprintf(value, sizeof(value), "%.4f", scale);
+  const bool saved = configSet("battery.voltageScale", value);
+  batteryMonitor.applyConfig();
+  batteryMonitor.refresh();
+  return saved ? "CALIBRATED" : "SAVE FAILED";
 }
 
 const char *appOptionLabel(const AppConfigSetting &setting, const char *value) {
@@ -976,9 +1016,7 @@ void SettingsApp::draw(Adafruit_GFX &gfx) {
     } else if (page == Page::Group && settings != nullptr) {
       const SettingDefinition &setting = settings[index];
       label = setting.label;
-      if (setting.kind == SettingKind::Reserved) {
-        value = "reserved";
-      } else if (setting.kind == SettingKind::Action) {
+      if (setting.kind == SettingKind::Action) {
         value = ">";
       } else if (setting.kind == SettingKind::ReadOnly) {
         snprintf(pickerLabel, sizeof(pickerLabel), "%u%%",
@@ -1241,8 +1279,11 @@ void SettingsApp::activateListIndex(uint16_t index) {
       return;
     }
     const SettingDefinition &setting = settings[index];
-    if (setting.kind == SettingKind::Reserved) {
-      showPopup("RESERVED");
+    if (setting.id == SETTING_BATTERY_MARK_FULL) {
+      // Full charge is only meaningful while the charger is attached.
+      showPopup(usbConnected()
+                    ? saveBatteryCalibration(BATTERY_FULL_VOLTAGE)
+                    : "CONNECT USB FIRST");
     } else if (setting.kind == SettingKind::Action) {
       const WallpaperTarget target =
           setting.id == SETTING_HOME_REMOVE_WALLPAPER
@@ -1402,6 +1443,19 @@ void SettingsApp::saveAppSetting(const char *value) {
 void SettingsApp::saveSetting(const char *value) {
   const SettingDefinition *setting = settingById(editingSetting);
   if (setting == nullptr || setting->key == nullptr) {
+    return;
+  }
+
+  if (setting->id == SETTING_BATTERY_CALIBRATION) {
+    char *end = nullptr;
+    const float voltage = strtof(value != nullptr ? value : "", &end);
+    const char *message = end != value && end != nullptr && *end == '\0'
+                              ? saveBatteryCalibration(voltage)
+                              : "INVALID VOLTAGE";
+    releaseInput();
+    page = Page::Group;
+    resetList();
+    showPopup(message);
     return;
   }
 
