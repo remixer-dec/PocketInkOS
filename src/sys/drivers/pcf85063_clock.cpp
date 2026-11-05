@@ -12,7 +12,10 @@ Pcf85063Clock rtcClock;
 namespace {
 
 static const uint8_t RTC_ADDRESS = 0x51;
+static const uint8_t RTC_CONTROL_1 = 0x00;
+static const uint8_t RTC_CAP_SEL = 0x01;
 static i2c_master_dev_handle_t rtcDevice = NULL;
+static bool crystalLoadApplied = false;
 
 bool ensureRtcDevice() {
   if (rtcDevice != NULL) {
@@ -33,10 +36,35 @@ bool ensureRtcDevice() {
   return sharedI2cAddDevice(&devConfig, &rtcDevice) == ESP_OK;
 }
 
+// Control_1 is battery-backed, so this normally writes once per RTC power-up.
+void applyCrystalLoad() {
+  if (crystalLoadApplied) {
+    return;
+  }
+  uint8_t reg = RTC_CONTROL_1;
+  uint8_t control = 0;
+  if (sharedI2cTransmitReceive(rtcDevice, &reg, sizeof(reg), &control,
+                               sizeof(control), 100) != ESP_OK) {
+    return;
+  }
+  const uint8_t wanted = RTC_CRYSTAL_LOAD_12PF5
+                             ? static_cast<uint8_t>(control | RTC_CAP_SEL)
+                             : static_cast<uint8_t>(control & ~RTC_CAP_SEL);
+  if (wanted != control) {
+    const uint8_t raw[2] = {RTC_CONTROL_1, wanted};
+    if (sharedI2cTransmit(rtcDevice, raw, sizeof(raw), 100) != ESP_OK) {
+      return;
+    }
+  }
+  crystalLoadApplied = true;
+}
+
 } // namespace
 
 void Pcf85063Clock::begin() {
-  ensureRtcDevice();
+  if (ensureRtcDevice()) {
+    applyCrystalLoad();
+  }
 }
 
 bool Pcf85063Clock::readLocalUnix(int64_t &localUnix) {
